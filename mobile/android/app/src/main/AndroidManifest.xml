@@ -15,7 +15,7 @@
     <application
         android:label="GO-ON"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher"
+        android:icon="@drawable/ic_launcher_foreground"
         android:enableOnBackInvokedCallback="true">
 
         <!-- Google Maps API Key -->
