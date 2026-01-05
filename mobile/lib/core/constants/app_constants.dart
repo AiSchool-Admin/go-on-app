@@ -9,13 +9,11 @@ class AppConstants {
   static const String appVersion = '1.0.0';
 
   // Supabase Configuration
-  // TODO: Replace with actual values from environment
-  static const String supabaseUrl = 'https://your-project.supabase.co';
-  static const String supabaseAnonKey = 'your-anon-key';
+  static const String supabaseUrl = 'https://dlblimtigeiqhjebqken.supabase.co';
+  static const String supabaseAnonKey = 'sb_publishable_2n0QoHCnJwNFmyTEFMmGzg_8If3NZw0';
 
   // Google Maps
-  // TODO: Replace with actual API key
-  static const String googleMapsApiKey = 'your-google-maps-api-key';
+  static const String googleMapsApiKey = 'AIzaSyCbznPtCPWycj73Hbvj0NFXy77Uffk5L7Y';
 
   // API Endpoints
   static const String railwayBaseUrl = 'https://your-railway-app.railway.app';
