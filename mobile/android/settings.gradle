@@ -22,15 +22,4 @@ plugins {
     id "org.jetbrains.kotlin.android" version "1.9.22" apply false
 }
 
-// Apply compileSdkVersion to all Flutter plugins
-gradle.projectsEvaluated {
-    rootProject.subprojects.each { subproject ->
-        if (subproject.plugins.hasPlugin('com.android.library')) {
-            subproject.android {
-                compileSdkVersion rootProject.ext.compileSdkVersion
-            }
-        }
-    }
-}
-
 include ":app"
