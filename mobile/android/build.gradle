@@ -27,8 +27,7 @@ allprojects {
         flutter = [
             compileSdkVersion: 35,
             targetSdkVersion: 35,
-            minSdkVersion: 23,
-            ndkVersion: "26.1.10909125"
+            minSdkVersion: 23
         ]
     }
 }

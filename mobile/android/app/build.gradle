@@ -25,7 +25,6 @@ if (flutterVersionName == null) {
 android {
     namespace "com.goon.app"
     compileSdk 35
-    ndkVersion = "26.1.10909125"
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
