@@ -36,8 +36,8 @@ dependencies:
   flutter_spinkit: ^5.2.0
 
   # Forms & Validation
-  flutter_form_builder: ^9.1.1
-  form_builder_validators: ^9.1.0
+  flutter_form_builder: ^9.2.0
+  form_builder_validators: ^11.0.0
 
   # Local Storage
   shared_preferences: ^2.2.2
