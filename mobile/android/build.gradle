@@ -22,6 +22,14 @@ allprojects {
         compileSdkVersion = 35
         targetSdkVersion = 35
         minSdkVersion = 23
+
+        // Create flutter object for plugins that need it
+        flutter = [
+            compileSdkVersion: 35,
+            targetSdkVersion: 35,
+            minSdkVersion: 23,
+            ndkVersion: "26.1.10909125"
+        ]
     }
 }
 
