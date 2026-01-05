@@ -16,6 +16,15 @@ allprojects {
         google()
         mavenCentral()
     }
+
+    // Make flutter properties available to all subprojects
+    ext {
+        set('flutter.sdk', System.getenv('FLUTTER_ROOT') ?: '')
+        set('flutter.compileSdkVersion', 35)
+        set('flutter.targetSdkVersion', 35)
+        set('flutter.minSdkVersion', 23)
+        set('flutter.ndkVersion', '26.1.10909125')
+    }
 }
 
 rootProject.buildDir = '../build'
@@ -32,6 +41,15 @@ subprojects {
                 if (namespace == null) {
                     namespace = project.group.toString()
                 }
+                compileSdkVersion 35
+            }
+        }
+    }
+
+    // Force flutter extension properties for all Android library projects
+    project.plugins.whenPluginAdded { plugin ->
+        if (plugin.class.name == 'com.android.build.gradle.LibraryPlugin') {
+            project.android {
                 compileSdkVersion 35
             }
         }
