@@ -24,8 +24,8 @@ if (flutterVersionName == null) {
 
 android {
     namespace "com.goon.app"
-    compileSdk 34
-    ndkVersion flutter.ndkVersion
+    compileSdk 35
+    ndkVersion = "26.1.10909125"
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
@@ -43,7 +43,7 @@ android {
     defaultConfig {
         applicationId "com.goon.app"
         minSdk 23
-        targetSdk 34
+        targetSdk 35
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
         multiDexEnabled true
