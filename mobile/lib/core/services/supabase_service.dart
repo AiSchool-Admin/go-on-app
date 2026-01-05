@@ -87,11 +87,11 @@ class SupabaseService {
     String? column,
     dynamic value,
   }) {
-    var stream = _client.from(table).stream(primaryKey: ['id']);
+    final baseStream = _client.from(table).stream(primaryKey: ['id']);
     if (column != null && value != null) {
-      stream = stream.eq(column, value);
+      return baseStream.eq(column, value);
     }
-    return stream;
+    return baseStream;
   }
 }
 
