@@ -15,7 +15,7 @@ dependencies:
     sdk: flutter
 
   # Supabase
-  supabase_flutter: ^2.3.0
+  supabase_flutter: ^2.8.0
 
   # State Management
   flutter_riverpod: ^2.4.9
