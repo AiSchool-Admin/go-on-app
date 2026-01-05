@@ -9,8 +9,8 @@
 تطبيق تجميع خدمات النقل الذكي - ركاب وبضائع في تطبيق واحد
 
 [![Flutter](https://img.shields.io/badge/Flutter-3.x-02569B?logo=flutter)](https://flutter.dev)
-[![Firebase](https://img.shields.io/badge/Firebase-Backend-FFCA28?logo=firebase)](https://firebase.google.com)
-[![License](https://img.shields.io/badge/License-Proprietary-red)]()
+[![Supabase](https://img.shields.io/badge/Supabase-Backend-3ECF8E?logo=supabase)](https://supabase.com)
+[![Railway](https://img.shields.io/badge/Railway-APIs-0B0D0E?logo=railway)](https://railway.app)
 
 </div>
 
@@ -36,7 +36,7 @@ GO-ON هو تطبيق ذكي يجمع كل خدمات النقل في مصر ف�
 
 ### للشحن
 - ✅ مقارنة شركات الشحن والسائقين
-- ✅ تتبع حي للشحنات
+- ✅ تتبع حي للشحنات (Realtime)
 - ✅ الدفع عند الاستلام (COD)
 - ✅ صور إثبات الاستلام
 
@@ -51,12 +51,15 @@ GO-ON هو تطبيق ذكي يجمع كل خدمات النقل في مصر ف�
 
 | Component | Technology |
 |-----------|------------|
-| Frontend | Flutter (Dart) |
-| Backend | Firebase |
-| Database | Cloud Firestore |
-| Auth | Firebase Authentication |
-| Maps | Google Maps Platform |
-| Payments | Paymob API |
+| **Mobile App** | Flutter (Dart) - Android Only |
+| **Database** | Supabase (PostgreSQL) |
+| **Auth** | Supabase Auth (Phone OTP) |
+| **Realtime** | Supabase Realtime |
+| **Storage** | Supabase Storage |
+| **Additional APIs** | Railway (Node.js) |
+| **Admin Dashboard** | Next.js on Vercel |
+| **Maps** | Google Maps Platform |
+| **Payments** | Paymob API |
 
 ---
 
@@ -64,12 +67,15 @@ GO-ON هو تطبيق ذكي يجمع كل خدمات النقل في مصر ف�
 
 ```
 go-on-app/
-├── 📄 README.md              # This file
-├── 📄 GO-ON_PRD.md           # Product Requirements
-├── 📄 CLAUDE.md              # Claude Code Instructions
-├── 📄 DATABASE_SCHEMA.md     # Database Structure
-├── 📄 GETTING_STARTED.md     # Setup Guide
-└── 📁 [Flutter project files will be here]
+├── 📁 mobile/              # Flutter Mobile App
+├── 📁 backend/             # Railway Backend (OCR, WhatsApp)
+├── 📁 admin/               # Next.js Admin Dashboard
+├── 📁 supabase/            # Database migrations & functions
+├── 📁 docs/                # Documentation
+├── 📄 GO-ON_PRD.md         # Product Requirements
+├── 📄 CLAUDE.md            # Claude Code Instructions
+├── 📄 DATABASE_SCHEMA.md   # PostgreSQL Schema
+└── 📄 GETTING_STARTED.md   # Setup Guide
 ```
 
 ---
@@ -77,8 +83,8 @@ go-on-app/
 ## 🚀 Getting Started
 
 1. Read `GETTING_STARTED.md` for setup instructions
-2. Use Claude Code to start development
-3. Follow the PRD for feature implementation
+2. Connect repository to Claude Code
+3. Follow the prompts to start development
 
 ---
 
@@ -88,7 +94,7 @@ go-on-app/
 |----------|-------------|
 | [GO-ON_PRD.md](./GO-ON_PRD.md) | Product Requirements Document |
 | [CLAUDE.md](./CLAUDE.md) | Instructions for Claude Code |
-| [DATABASE_SCHEMA.md](./DATABASE_SCHEMA.md) | Firestore Database Schema |
+| [DATABASE_SCHEMA.md](./DATABASE_SCHEMA.md) | PostgreSQL/Supabase Schema |
 | [GETTING_STARTED.md](./GETTING_STARTED.md) | Setup & Development Guide |
 
 ---
@@ -109,5 +115,7 @@ This project is proprietary. All rights reserved.
 <div align="center">
 
 **Built with ❤️ for Egypt**
+
+Powered by **Supabase** | **Flutter** | **Claude Code**
 
 </div>
