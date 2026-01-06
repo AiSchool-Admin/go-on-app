@@ -6,7 +6,7 @@ buildscript {
     }
 
     dependencies {
-        classpath 'com.android.tools.build:gradle:8.2.2'
+        classpath 'com.android.tools.build:gradle:8.9.1'
         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
     }
 }
@@ -19,13 +19,13 @@ allprojects {
 
     // Define SDK versions globally for all subprojects
     ext {
-        compileSdkVersion = 35
+        compileSdkVersion = 36
         targetSdkVersion = 35
         minSdkVersion = 23
 
         // Create flutter object for plugins that need it
         flutter = [
-            compileSdkVersion: 35,
+            compileSdkVersion: 36,
             targetSdkVersion: 35,
             minSdkVersion: 23
         ]

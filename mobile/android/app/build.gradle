@@ -24,7 +24,7 @@ if (flutterVersionName == null) {
 
 android {
     namespace "com.goon.app"
-    compileSdk 35
+    compileSdk 36
 
     compileOptions {
         coreLibraryDesugaringEnabled true
