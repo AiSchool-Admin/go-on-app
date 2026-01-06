@@ -38,16 +38,17 @@ final appRouterProvider = Provider<GoRouter>((ref) {
     debugLogDiagnostics: true,
     redirect: (context, state) {
       final isLoggedIn = authState.valueOrNull != null;
+      final isOnSplash = state.matchedLocation == AppRoutes.splash;
       final isLoggingIn = state.matchedLocation == AppRoutes.login ||
           state.matchedLocation == AppRoutes.otp;
 
-      // If not logged in and not on login page, redirect to login
+      // If not logged in and not on login/otp page, redirect to login
       if (!isLoggedIn && !isLoggingIn) {
         return AppRoutes.login;
       }
 
-      // If logged in and on login page, redirect to home
-      if (isLoggedIn && isLoggingIn) {
+      // If logged in and on login/otp/splash page, redirect to home
+      if (isLoggedIn && (isLoggingIn || isOnSplash)) {
         return AppRoutes.home;
       }
 
