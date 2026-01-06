@@ -75,6 +75,11 @@ class PriceOption {
         return 'uber://?action=setPickup&pickup[latitude]=$originLat&pickup[longitude]=$originLng&dropoff[latitude]=$destLat&dropoff[longitude]=$destLng';
       case 'careem':
         return 'careem://booking?pickup_lat=$originLat&pickup_lng=$originLng&dropoff_lat=$destLat&dropoff_lng=$destLng';
+      case 'indriver':
+        // InDriver deep link
+        return 'indriver://';
+      case 'didi':
+        return 'didiglobal://';
       default:
         return null;
     }

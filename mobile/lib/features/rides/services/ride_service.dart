@@ -284,7 +284,7 @@ class RideService {
       DriverModel(
         id: 'mock-1',
         name: 'أحمد محمد',
-        phone: '+201001234567',
+        phone: '+201094458873',
         rating: 4.8,
         totalRides: 230,
         distanceKm: 0.5,
@@ -297,7 +297,7 @@ class RideService {
       DriverModel(
         id: 'mock-2',
         name: 'محمود علي',
-        phone: '+201002345678',
+        phone: '+201094458873',
         rating: 4.9,
         totalRides: 180,
         distanceKm: 1.2,

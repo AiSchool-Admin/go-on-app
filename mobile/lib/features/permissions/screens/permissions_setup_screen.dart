@@ -17,13 +17,14 @@ class _PermissionsSetupScreenState extends ConsumerState<PermissionsSetupScreen>
     with WidgetsBindingObserver {
   bool _accessibilityEnabled = false;
   bool _overlayEnabled = false;
-  bool _isChecking = true;
+  bool _isChecking = false; // Start with false to show cards immediately
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _checkPermissions();
+    // Check permissions after a short delay to ensure UI is built
+    Future.delayed(const Duration(milliseconds: 500), _checkPermissions);
   }
 
   @override
@@ -41,22 +42,24 @@ class _PermissionsSetupScreenState extends ConsumerState<PermissionsSetupScreen>
   }
 
   Future<void> _checkPermissions() async {
-    setState(() => _isChecking = true);
+    try {
+      final nativeServices = ref.read(nativeServicesProvider);
+      final status = await nativeServices.checkAllPermissions();
 
-    final nativeServices = ref.read(nativeServicesProvider);
-    final status = await nativeServices.checkAllPermissions();
+      if (mounted) {
+        setState(() {
+          _accessibilityEnabled = status.accessibility;
+          _overlayEnabled = status.overlay;
+        });
 
-    if (mounted) {
-      setState(() {
-        _accessibilityEnabled = status.accessibility;
-        _overlayEnabled = status.overlay;
-        _isChecking = false;
-      });
-
-      // If all permissions are granted, proceed to home
-      if (status.allGranted) {
-        _proceedToHome();
+        // If all permissions are granted, proceed to home
+        if (status.allGranted) {
+          _proceedToHome();
+        }
       }
+    } catch (e) {
+      // If error occurs, just keep permissions as false (buttons will show)
+      debugPrint('Error checking permissions: $e');
     }
   }
 
@@ -134,39 +137,37 @@ class _PermissionsSetupScreenState extends ConsumerState<PermissionsSetupScreen>
 
               const SizedBox(height: 32),
 
-              // Permission Cards
+              // Permission Cards - Always show
               Expanded(
-                child: _isChecking
-                    ? const Center(child: CircularProgressIndicator())
-                    : ListView(
-                        children: [
-                          // Accessibility Permission
-                          _PermissionCard(
-                            title: 'خدمة إمكانية الوصول',
-                            description:
-                                'تسمح لـ GO-ON بقراءة أسعار الرحلات من أوبر وكريم وغيرها',
-                            icon: Icons.accessibility_new,
-                            isEnabled: _accessibilityEnabled,
-                            onEnable: () async {
-                              await nativeServices.openAccessibilitySettings();
-                            },
-                          ),
+                child: ListView(
+                  children: [
+                    // Accessibility Permission
+                    _PermissionCard(
+                      title: 'خدمة إمكانية الوصول',
+                      description:
+                          'تسمح لـ GO-ON بقراءة أسعار الرحلات من أوبر وكريم وغيرها',
+                      icon: Icons.accessibility_new,
+                      isEnabled: _accessibilityEnabled,
+                      onEnable: () async {
+                        await nativeServices.openAccessibilitySettings();
+                      },
+                    ),
 
-                          const SizedBox(height: 16),
+                    const SizedBox(height: 16),
 
-                          // Overlay Permission
-                          _PermissionCard(
-                            title: 'العرض فوق التطبيقات',
-                            description:
-                                'تسمح بعرض فقاعة تظهر لك سعر أفضل أثناء استخدام التطبيقات الأخرى',
-                            icon: Icons.picture_in_picture,
-                            isEnabled: _overlayEnabled,
-                            onEnable: () async {
-                              await nativeServices.openOverlaySettings();
-                            },
-                          ),
-                        ],
-                      ),
+                    // Overlay Permission
+                    _PermissionCard(
+                      title: 'العرض فوق التطبيقات',
+                      description:
+                          'تسمح بعرض فقاعة تظهر لك سعر أفضل أثناء استخدام التطبيقات الأخرى',
+                      icon: Icons.picture_in_picture,
+                      isEnabled: _overlayEnabled,
+                      onEnable: () async {
+                        await nativeServices.openOverlaySettings();
+                      },
+                    ),
+                  ],
+                ),
               ),
 
               // Continue Button
