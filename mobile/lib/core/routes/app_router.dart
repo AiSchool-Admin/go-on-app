@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 import '../../features/auth/screens/login_screen.dart';
 import '../../features/auth/screens/otp_screen.dart';
@@ -85,7 +86,18 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: AppRoutes.priceComparison,
-        builder: (context, state) => const PriceComparisonScreen(),
+        builder: (context, state) {
+          final data = state.extra as Map<String, dynamic>?;
+          if (data == null) {
+            return const ErrorScreen(error: null);
+          }
+          return PriceComparisonScreen(
+            origin: data['origin'] as LatLng,
+            destination: data['destination'] as LatLng,
+            originAddress: data['originAddress'] as String,
+            destinationAddress: data['destinationAddress'] as String,
+          );
+        },
       ),
       GoRoute(
         path: AppRoutes.freight,

@@ -1,22 +1,34 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/constants/app_colors.dart';
-import '../../../models/price_option.dart';
-import '../../../models/ride.dart';
-import '../widgets/price_card.dart';
+import '../services/ride_service.dart';
+import '../models/price_option.dart';
 
 class PriceComparisonScreen extends ConsumerStatefulWidget {
-  const PriceComparisonScreen({super.key});
+  final LatLng origin;
+  final LatLng destination;
+  final String originAddress;
+  final String destinationAddress;
+
+  const PriceComparisonScreen({
+    super.key,
+    required this.origin,
+    required this.destination,
+    required this.originAddress,
+    required this.destinationAddress,
+  });
 
   @override
-  ConsumerState<PriceComparisonScreen> createState() =>
-      _PriceComparisonScreenState();
+  ConsumerState<PriceComparisonScreen> createState() => _PriceComparisonScreenState();
 }
 
 class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
+  List<PriceOption>? _priceOptions;
   bool _isLoading = true;
-  List<PriceOption> _prices = [];
+  String? _error;
 
   @override
   void initState() {
@@ -25,47 +37,40 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
   }
 
   Future<void> _loadPrices() async {
-    // Simulate loading prices
-    await Future.delayed(const Duration(seconds: 2));
-
-    // Mock data - will be replaced with actual API calls
     setState(() {
-      _prices = [
-        PriceOption(
-          source: RideSource.independent,
-          price: 65,
-          etaMinutes: 5,
-          driverName: 'أحمد محمد',
-          driverRating: 4.8,
-          driverTotalRides: 230,
-          vehicleType: 'تويوتا كورولا',
-        ),
-        PriceOption(
-          source: RideSource.indriver,
-          price: 75,
-          etaMinutes: 4,
-          vehicleType: 'Economy',
-        ),
-        PriceOption(
-          source: RideSource.careem,
-          price: 90,
-          etaMinutes: 4,
-          vehicleType: 'Go',
-        ),
-        PriceOption(
-          source: RideSource.uber,
-          price: 95,
-          etaMinutes: 3,
-          vehicleType: 'UberX',
-          originalPrice: 110,
-        ),
-      ].sortByPrice();
-      _isLoading = false;
+      _isLoading = true;
+      _error = null;
     });
+
+    try {
+      final rideService = ref.read(rideServiceProvider);
+      final options = await rideService.getPriceComparison(
+        origin: widget.origin,
+        destination: widget.destination,
+      );
+
+      if (mounted) {
+        setState(() {
+          _priceOptions = options;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = e.toString();
+          _isLoading = false;
+        });
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final rideService = ref.read(rideServiceProvider);
+    final distance = rideService.calculateDistance(widget.origin, widget.destination);
+    final minutes = rideService.calculateEstimatedMinutes(distance);
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('مقارنة الأسعار'),
@@ -75,73 +80,88 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
       ),
       body: Column(
         children: [
-          // Trip Summary
+          // Route Info Header
           Container(
             padding: const EdgeInsets.all(16),
             color: AppColors.surface,
             child: Column(
               children: [
+                // Origin
                 Row(
                   children: [
-                    Column(
-                      children: [
-                        Container(
-                          width: 12,
-                          height: 12,
-                          decoration: const BoxDecoration(
-                            color: AppColors.success,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                        Container(
-                          width: 2,
-                          height: 30,
-                          color: AppColors.border,
-                        ),
-                        const Icon(
-                          Icons.location_on,
-                          color: AppColors.error,
-                          size: 16,
-                        ),
-                      ],
-                    ),
+                    const Icon(Icons.circle, color: AppColors.success, size: 12),
                     const SizedBox(width: 12),
-                    const Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'المعادي',
-                            style: TextStyle(fontWeight: FontWeight.w600),
-                          ),
-                          SizedBox(height: 20),
-                          Text(
-                            'التجمع الخامس',
-                            style: TextStyle(fontWeight: FontWeight.w600),
-                          ),
-                        ],
+                    Expanded(
+                      child: Text(
+                        widget.originAddress,
+                        style: const TextStyle(fontSize: 14),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+                // Vertical line
+                Container(
+                  margin: const EdgeInsets.only(left: 5),
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 2,
+                        height: 20,
+                        color: AppColors.divider,
+                      ),
+                    ],
+                  ),
+                ),
+                // Destination
+                Row(
+                  children: [
+                    const Icon(Icons.location_on, color: AppColors.error, size: 14),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        widget.destinationAddress,
+                        style: const TextStyle(fontSize: 14),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 12),
-                const Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.straighten, size: 16, color: AppColors.textSecondary),
-                    SizedBox(width: 4),
-                    Text(
-                      '25 كم',
-                      style: TextStyle(color: AppColors.textSecondary),
-                    ),
-                    SizedBox(width: 16),
-                    Icon(Icons.access_time, size: 16, color: AppColors.textSecondary),
-                    SizedBox(width: 4),
-                    Text(
-                      '35 دقيقة',
-                      style: TextStyle(color: AppColors.textSecondary),
-                    ),
-                  ],
+                // Distance & Time
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: AppColors.background,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.straighten, size: 16, color: AppColors.textSecondary),
+                      const SizedBox(width: 4),
+                      Text(
+                        '${distance.toStringAsFixed(1)} كم',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      const Icon(Icons.access_time, size: 16, color: AppColors.textSecondary),
+                      const SizedBox(width: 4),
+                      Text(
+                        '$minutes دقيقة',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -160,78 +180,365 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
                       ],
                     ),
                   )
-                : ListView.builder(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: _prices.length,
-                    itemBuilder: (context, index) {
-                      final price = _prices[index];
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: PriceCard(
-                          option: price,
-                          onTap: () => _onPriceSelected(price),
+                : _error != null
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(Icons.error_outline, size: 48, color: AppColors.error),
+                            const SizedBox(height: 16),
+                            Text('حدث خطأ: $_error'),
+                            const SizedBox(height: 16),
+                            ElevatedButton(
+                              onPressed: _loadPrices,
+                              child: const Text('إعادة المحاولة'),
+                            ),
+                          ],
                         ),
-                      );
-                    },
-                  ),
+                      )
+                    : RefreshIndicator(
+                        onRefresh: _loadPrices,
+                        child: ListView.builder(
+                          padding: const EdgeInsets.all(16),
+                          itemCount: _priceOptions?.length ?? 0,
+                          itemBuilder: (context, index) {
+                            final option = _priceOptions![index];
+                            return _buildPriceCard(option, index == 0);
+                          },
+                        ),
+                      ),
           ),
         ],
       ),
     );
   }
 
-  void _onPriceSelected(PriceOption option) {
-    showModalBottomSheet(
-      context: context,
-      builder: (context) => Container(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              'حجز مع ${option.source.displayName}',
-              style: const TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
+  Widget _buildPriceCard(PriceOption option, bool isBest) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: isBest
+            ? Border.all(color: AppColors.success, width: 2)
+            : null,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          // Best price badge
+          if (isBest)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              decoration: const BoxDecoration(
+                color: AppColors.success,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(14)),
+              ),
+              child: const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.star, color: Colors.white, size: 16),
+                  SizedBox(width: 4),
+                  Text(
+                    'أفضل سعر',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
               children: [
-                const Text('السعر المتوقع'),
-                Text(
-                  option.formattedPrice,
-                  style: const TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.primary,
+                // Provider Icon
+                Container(
+                  width: 50,
+                  height: 50,
+                  decoration: BoxDecoration(
+                    color: _getProviderColor(option.provider).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
                   ),
+                  child: Center(
+                    child: Text(
+                      option.providerIcon,
+                      style: const TextStyle(fontSize: 24),
+                    ),
+                  ),
+                ),
+
+                const SizedBox(width: 12),
+
+                // Info
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Text(
+                            option.name,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                          ),
+                          if (option.isEstimate)
+                            Container(
+                              margin: const EdgeInsets.only(right: 8),
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: AppColors.warning.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: const Text(
+                                'تقديري',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: AppColors.warning,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          if (option.vehicleInfo != null) ...[
+                            Text(
+                              option.vehicleInfo!,
+                              style: const TextStyle(
+                                color: AppColors.textSecondary,
+                                fontSize: 12,
+                              ),
+                            ),
+                            const Text(' • ', style: TextStyle(color: AppColors.textSecondary)),
+                          ],
+                          if (option.category != null)
+                            Text(
+                              option.category!,
+                              style: const TextStyle(
+                                color: AppColors.textSecondary,
+                                fontSize: 12,
+                              ),
+                            ),
+                          Text(
+                            ' • ${option.etaMinutes} د',
+                            style: const TextStyle(
+                              color: AppColors.textSecondary,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (option.rating != null) ...[
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            const Icon(Icons.star, color: AppColors.secondary, size: 14),
+                            const SizedBox(width: 2),
+                            Text(
+                              option.formattedRating,
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                            if (option.totalRides != null) ...[
+                              const Text(' • ', style: TextStyle(color: AppColors.textSecondary)),
+                              Text(
+                                '${option.totalRides} رحلة',
+                                style: const TextStyle(
+                                  color: AppColors.textSecondary,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+
+                // Price
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    if (option.discount != null) ...[
+                      Text(
+                        '${(option.price * (1 + option.discount! / 100)).round()} ج.م',
+                        style: const TextStyle(
+                          decoration: TextDecoration.lineThrough,
+                          color: AppColors.textSecondary,
+                          fontSize: 12,
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: AppColors.error.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          '-${option.discount}%',
+                          style: const TextStyle(
+                            color: AppColors.error,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
+                    Text(
+                      option.formattedPrice,
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 20,
+                        color: isBest ? AppColors.success : AppColors.textPrimary,
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
-            const SizedBox(height: 24),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pop(context);
-                // TODO: Book the ride
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('جاري الحجز...'),
-                    backgroundColor: AppColors.success,
-                  ),
-                );
-              },
-              child: const Text('تأكيد الحجز'),
+          ),
+
+          // Action Button
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: ElevatedButton(
+              onPressed: () => _onSelectOption(option),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _getProviderColor(option.provider),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: Text(
+                option.provider == 'GO-ON' ? 'تواصل عبر واتساب' : 'افتح ${option.name}',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
             ),
-            const SizedBox(height: 12),
-            OutlinedButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('إلغاء'),
-            ),
-          ],
-        ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Color _getProviderColor(String provider) {
+    switch (provider.toLowerCase()) {
+      case 'uber':
+        return const Color(0xFF000000);
+      case 'careem':
+        return const Color(0xFF4CAF50);
+      case 'indriver':
+        return const Color(0xFF2196F3);
+      case 'go-on':
+        return AppColors.primary;
+      default:
+        return AppColors.primary;
+    }
+  }
+
+  Future<void> _onSelectOption(PriceOption option) async {
+    if (option.provider == 'GO-ON') {
+      // Independent driver - open WhatsApp
+      if (option.driverPhone != null) {
+        final message = '''
+مرحباً، أريد حجز رحلة عبر GO-ON
+من: ${widget.originAddress}
+إلى: ${widget.destinationAddress}
+السعر المتوقع: ${option.formattedPrice}
+''';
+        final whatsappUrl = option.getWhatsAppLink(message);
+        if (whatsappUrl != null) {
+          final uri = Uri.parse(whatsappUrl);
+          if (await canLaunchUrl(uri)) {
+            await launchUrl(uri, mode: LaunchMode.externalApplication);
+          } else {
+            _showError('لا يمكن فتح واتساب');
+          }
+        }
+      } else {
+        _showError('رقم السائق غير متوفر');
+      }
+    } else {
+      // External app - try deep link
+      final deepLink = option.getDeepLink(
+        originLat: widget.origin.latitude,
+        originLng: widget.origin.longitude,
+        destLat: widget.destination.latitude,
+        destLng: widget.destination.longitude,
+      );
+
+      if (deepLink != null) {
+        final uri = Uri.parse(deepLink);
+        if (await canLaunchUrl(uri)) {
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+        } else {
+          // App not installed - try Play Store
+          _showAppNotInstalled(option.provider);
+        }
+      } else {
+        _showError('لا يمكن فتح ${option.name}');
+      }
+    }
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: AppColors.error),
+    );
+  }
+
+  void _showAppNotInstalled(String provider) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('$provider غير مثبت'),
+        content: Text('يرجى تثبيت تطبيق $provider من المتجر'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('حسناً'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              String? storeUrl;
+              switch (provider.toLowerCase()) {
+                case 'uber':
+                  storeUrl = 'https://play.google.com/store/apps/details?id=com.ubercab';
+                  break;
+                case 'careem':
+                  storeUrl = 'https://play.google.com/store/apps/details?id=com.careem.acma';
+                  break;
+                case 'indriver':
+                  storeUrl = 'https://play.google.com/store/apps/details?id=sinet.startup.inDriver';
+                  break;
+              }
+              if (storeUrl != null) {
+                final uri = Uri.parse(storeUrl);
+                if (await canLaunchUrl(uri)) {
+                  await launchUrl(uri, mode: LaunchMode.externalApplication);
+                }
+              }
+            },
+            child: const Text('فتح المتجر'),
+          ),
+        ],
       ),
     );
   }
