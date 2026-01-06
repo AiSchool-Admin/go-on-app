@@ -77,7 +77,8 @@ class PriceReaderService : AccessibilityService() {
                 UBER_PACKAGE,
                 CAREEM_PACKAGE,
                 INDRIVER_PACKAGE,
-                DIDI_PACKAGE
+                DIDI_PACKAGE,
+                BOLT_PACKAGE
             )
 
             notificationTimeout = 100
@@ -109,7 +110,8 @@ class PriceReaderService : AccessibilityService() {
             UBER_PACKAGE,
             CAREEM_PACKAGE,
             INDRIVER_PACKAGE,
-            DIDI_PACKAGE
+            DIDI_PACKAGE,
+            BOLT_PACKAGE
         )
     }
 
@@ -122,6 +124,7 @@ class PriceReaderService : AccessibilityService() {
                 CAREEM_PACKAGE -> extractCareemPrices(rootNode)
                 INDRIVER_PACKAGE -> extractInDriverPrices(rootNode)
                 DIDI_PACKAGE -> extractDiDiPrices(rootNode)
+                BOLT_PACKAGE -> extractBoltPrices(rootNode)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error processing $packageName: ${e.message}")
@@ -226,6 +229,44 @@ class PriceReaderService : AccessibilityService() {
                 updatePrice(priceInfo)
                 Log.d(TAG, "DiDi price detected: $price EGP")
             }
+        }
+    }
+
+    /**
+     * Extract prices from Bolt app
+     */
+    private fun extractBoltPrices(rootNode: AccessibilityNodeInfo) {
+        val allText = getAllTextFromNode(rootNode)
+
+        for (text in allText) {
+            val price = extractPrice(text)
+            if (price != null && price > 0) {
+                val serviceType = detectBoltServiceType(allText)
+
+                val priceInfo = PriceInfo(
+                    appName = "Bolt",
+                    packageName = BOLT_PACKAGE,
+                    price = price,
+                    serviceType = serviceType,
+                    eta = extractETA(allText)
+                )
+
+                updatePrice(priceInfo)
+                Log.d(TAG, "Bolt price detected: $price EGP ($serviceType)")
+            }
+        }
+    }
+
+    /**
+     * Detect Bolt service type
+     */
+    private fun detectBoltServiceType(texts: List<String>): String {
+        val combined = texts.joinToString(" ").lowercase()
+        return when {
+            combined.contains("bolt") && combined.contains("xl") -> "Bolt XL"
+            combined.contains("comfort") -> "Comfort"
+            combined.contains("economy") || combined.contains("lite") -> "Lite"
+            else -> "Bolt"
         }
     }
 

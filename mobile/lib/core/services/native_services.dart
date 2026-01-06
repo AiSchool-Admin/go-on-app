@@ -209,6 +209,34 @@ class NativeServicesManager {
     }
   }
 
+  /// Open an app with trip details (pickup/dropoff locations)
+  /// This will try to create the trip automatically in the other app
+  Future<bool> openAppWithTrip({
+    required String packageName,
+    required double pickupLat,
+    required double pickupLng,
+    required double dropoffLat,
+    required double dropoffLng,
+    String pickupAddress = '',
+    String dropoffAddress = '',
+  }) async {
+    try {
+      final result = await _channel.invokeMethod<bool>('openAppWithTrip', {
+        'packageName': packageName,
+        'pickupLat': pickupLat,
+        'pickupLng': pickupLng,
+        'dropoffLat': dropoffLat,
+        'dropoffLng': dropoffLng,
+        'pickupAddress': pickupAddress,
+        'dropoffAddress': dropoffAddress,
+      });
+      return result ?? false;
+    } on PlatformException catch (e) {
+      print('Error opening app with trip: ${e.message}');
+      return false;
+    }
+  }
+
   /// Get list of installed ride-hailing apps
   Future<List<String>> getInstalledRideApps() async {
     try {

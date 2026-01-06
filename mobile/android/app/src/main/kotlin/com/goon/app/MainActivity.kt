@@ -101,6 +101,23 @@ class MainActivity : FlutterActivity() {
                     result.success(openApp(packageName))
                 }
 
+                "openAppWithTrip" -> {
+                    val packageName = call.argument<String>("packageName") ?: ""
+                    val pickupLat = call.argument<Double>("pickupLat") ?: 0.0
+                    val pickupLng = call.argument<Double>("pickupLng") ?: 0.0
+                    val dropoffLat = call.argument<Double>("dropoffLat") ?: 0.0
+                    val dropoffLng = call.argument<Double>("dropoffLng") ?: 0.0
+                    val pickupAddress = call.argument<String>("pickupAddress") ?: ""
+                    val dropoffAddress = call.argument<String>("dropoffAddress") ?: ""
+
+                    result.success(openAppWithTrip(
+                        packageName,
+                        pickupLat, pickupLng,
+                        dropoffLat, dropoffLng,
+                        pickupAddress, dropoffAddress
+                    ))
+                }
+
                 "getInstalledRideApps" -> {
                     result.success(getInstalledRideApps())
                 }
@@ -190,6 +207,96 @@ class MainActivity : FlutterActivity() {
     }
 
     /**
+     * Open an app with trip details (pickup/dropoff locations)
+     * Uses deep links specific to each ride-hailing app
+     */
+    private fun openAppWithTrip(
+        packageName: String,
+        pickupLat: Double,
+        pickupLng: Double,
+        dropoffLat: Double,
+        dropoffLng: Double,
+        pickupAddress: String,
+        dropoffAddress: String
+    ): Boolean {
+        return try {
+            val deepLink = when (packageName) {
+                PriceReaderService.UBER_PACKAGE -> {
+                    // Uber deep link format
+                    "uber://?action=setPickup" +
+                    "&pickup[latitude]=$pickupLat" +
+                    "&pickup[longitude]=$pickupLng" +
+                    "&pickup[nickname]=${android.net.Uri.encode(pickupAddress)}" +
+                    "&dropoff[latitude]=$dropoffLat" +
+                    "&dropoff[longitude]=$dropoffLng" +
+                    "&dropoff[nickname]=${android.net.Uri.encode(dropoffAddress)}"
+                }
+                PriceReaderService.CAREEM_PACKAGE -> {
+                    // Careem deep link format
+                    "careem://booking?" +
+                    "pickup_lat=$pickupLat" +
+                    "&pickup_lng=$pickupLng" +
+                    "&dropoff_lat=$dropoffLat" +
+                    "&dropoff_lng=$dropoffLng" +
+                    "&pickup_name=${android.net.Uri.encode(pickupAddress)}" +
+                    "&dropoff_name=${android.net.Uri.encode(dropoffAddress)}"
+                }
+                PriceReaderService.INDRIVER_PACKAGE -> {
+                    // InDriver - use intent with location data
+                    // InDriver doesn't have a public deep link API, so we open the app
+                    // and the user needs to enter the destination manually
+                    null
+                }
+                PriceReaderService.DIDI_PACKAGE -> {
+                    // DiDi deep link
+                    "didiglobal://ridenow?" +
+                    "olat=$pickupLat" +
+                    "&olng=$pickupLng" +
+                    "&dlat=$dropoffLat" +
+                    "&dlng=$dropoffLng" +
+                    "&oname=${android.net.Uri.encode(pickupAddress)}" +
+                    "&dname=${android.net.Uri.encode(dropoffAddress)}"
+                }
+                PriceReaderService.BOLT_PACKAGE -> {
+                    // Bolt deep link
+                    "bolt://ride?" +
+                    "pickup_lat=$pickupLat" +
+                    "&pickup_lng=$pickupLng" +
+                    "&dest_lat=$dropoffLat" +
+                    "&dest_lng=$dropoffLng" +
+                    "&pickup_addr=${android.net.Uri.encode(pickupAddress)}" +
+                    "&dest_addr=${android.net.Uri.encode(dropoffAddress)}"
+                }
+                else -> null
+            }
+
+            if (deepLink != null) {
+                val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(deepLink))
+                intent.setPackage(packageName)
+                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+
+                // Check if the app can handle this deep link
+                if (intent.resolveActivity(packageManager) != null) {
+                    startActivity(intent)
+                    Log.d(TAG, "Opened $packageName with deep link: $deepLink")
+                    return true
+                } else {
+                    // Fallback to regular app launch
+                    Log.w(TAG, "Deep link not supported by $packageName, using regular launch")
+                    return openApp(packageName)
+                }
+            } else {
+                // No deep link available, just open the app
+                return openApp(packageName)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error opening app with trip: $packageName - ${e.message}")
+            // Fallback to regular app open
+            return openApp(packageName)
+        }
+    }
+
+    /**
      * Get list of installed ride-hailing apps
      */
     private fun getInstalledRideApps(): List<String> {
@@ -197,7 +304,8 @@ class MainActivity : FlutterActivity() {
             PriceReaderService.UBER_PACKAGE,
             PriceReaderService.CAREEM_PACKAGE,
             PriceReaderService.INDRIVER_PACKAGE,
-            PriceReaderService.DIDI_PACKAGE
+            PriceReaderService.DIDI_PACKAGE,
+            PriceReaderService.BOLT_PACKAGE
         )
 
         return rideApps.filter { isAppInstalled(it) }

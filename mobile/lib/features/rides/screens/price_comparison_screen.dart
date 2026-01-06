@@ -503,8 +503,16 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
       }
 
       if (packageName != null) {
-        // Try to open app using native method
-        final opened = await nativeServices.openApp(packageName);
+        // Try to open app with trip details using native method
+        final opened = await nativeServices.openAppWithTrip(
+          packageName: packageName,
+          pickupLat: widget.origin.latitude,
+          pickupLng: widget.origin.longitude,
+          dropoffLat: widget.destination.latitude,
+          dropoffLng: widget.destination.longitude,
+          pickupAddress: widget.originAddress,
+          dropoffAddress: widget.destinationAddress,
+        );
         if (!opened) {
           // App not installed - show store dialog
           _showAppNotInstalled(option.provider);
