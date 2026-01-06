@@ -4,6 +4,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/constants/app_colors.dart';
+import '../../../core/services/native_services.dart';
 import '../services/ride_service.dart';
 import '../models/price_option.dart';
 
@@ -453,6 +454,8 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
   }
 
   Future<void> _onSelectOption(PriceOption option) async {
+    final nativeServices = ref.read(nativeServicesProvider);
+
     if (option.provider == 'GO-ON') {
       // Independent driver - open WhatsApp
       if (option.driverPhone != null) {
@@ -475,24 +478,47 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
         _showError('رقم السائق غير متوفر');
       }
     } else {
-      // External app - try deep link
-      final deepLink = option.getDeepLink(
-        originLat: widget.origin.latitude,
-        originLng: widget.origin.longitude,
-        destLat: widget.destination.latitude,
-        destLng: widget.destination.longitude,
-      );
+      // External app - use native method to open app directly
+      String? packageName;
+      switch (option.provider.toLowerCase()) {
+        case 'uber':
+          packageName = NativeServicesManager.uberPackage;
+          break;
+        case 'careem':
+          packageName = NativeServicesManager.careemPackage;
+          break;
+        case 'indriver':
+          packageName = NativeServicesManager.indriverPackage;
+          break;
+        case 'didi':
+          packageName = NativeServicesManager.didiPackage;
+          break;
+      }
 
-      if (deepLink != null) {
-        final uri = Uri.parse(deepLink);
-        if (await canLaunchUrl(uri)) {
-          await launchUrl(uri, mode: LaunchMode.externalApplication);
-        } else {
-          // App not installed - try Play Store
+      if (packageName != null) {
+        // Try to open app using native method
+        final opened = await nativeServices.openApp(packageName);
+        if (!opened) {
+          // App not installed - show store dialog
           _showAppNotInstalled(option.provider);
         }
       } else {
-        _showError('لا يمكن فتح ${option.name}');
+        // Fallback to deep link for unknown providers
+        final deepLink = option.getDeepLink(
+          originLat: widget.origin.latitude,
+          originLng: widget.origin.longitude,
+          destLat: widget.destination.latitude,
+          destLng: widget.destination.longitude,
+        );
+
+        if (deepLink != null) {
+          final uri = Uri.parse(deepLink);
+          if (await canLaunchUrl(uri)) {
+            await launchUrl(uri, mode: LaunchMode.externalApplication);
+          } else {
+            _showError('لا يمكن فتح ${option.name}');
+          }
+        }
       }
     }
   }
