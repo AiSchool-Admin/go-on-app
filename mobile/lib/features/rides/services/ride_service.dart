@@ -4,14 +4,16 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 import '../../../core/services/supabase_service.dart';
+import '../../../core/services/native_services.dart';
 import '../models/driver_model.dart';
 import '../models/price_option.dart';
 
 /// Service for ride-related operations
 class RideService {
   final SupabaseClient _client;
+  final NativeServicesManager _nativeServices;
 
-  RideService(this._client);
+  RideService(this._client, this._nativeServices);
 
   /// Calculate distance between two points in km
   double calculateDistance(LatLng origin, LatLng destination) {
@@ -126,6 +128,13 @@ class RideService {
     // Get nearby drivers for independent option
     final nearbyDrivers = await findNearbyDrivers(userLocation: origin);
 
+    // Try to get real prices from accessibility service
+    final realPrices = await _nativeServices.getLatestPrices();
+    final realPricesMap = <String, double>{};
+    for (final price in realPrices) {
+      realPricesMap[price.packageName] = price.price;
+    }
+
     final options = <PriceOption>[];
 
     // 1. Independent Drivers (from our database)
@@ -150,53 +159,76 @@ class RideService {
         isAvailable: true,
         isBestPrice: true,
       ));
+
+      // Set GO-ON best price for overlay comparison
+      _nativeServices.setGoonBestPrice(independentPrice);
     }
 
-    // 2. Estimated prices for other apps (based on our pricing model + markup)
-    // In real implementation, these would come from OCR/Accessibility Services
+    // 2. Prices from other apps
+    // Use REAL prices from accessibility service if available
+    // Otherwise use estimates based on our pricing model + markup
 
-    // InDrive estimate (usually 10-15% more than independent)
+    // InDrive
+    final indriverRealPrice = realPricesMap[NativeServicesManager.indriverPackage];
     options.add(PriceOption(
       id: 'indriver',
       name: 'إندرايف',
       provider: 'InDriver',
-      price: calculateIndependentDriverPrice(distanceKm) * 1.15,
+      price: indriverRealPrice ?? calculateIndependentDriverPrice(distanceKm) * 1.15,
       currency: 'EGP',
       estimatedMinutes: estimatedMinutes,
       etaMinutes: 4,
       isAvailable: true,
-      isEstimate: true,
+      isEstimate: indriverRealPrice == null, // Mark as estimate if no real price
       category: 'Economy',
     ));
 
-    // Careem estimate (usually 30-40% more than independent)
+    // Careem
+    final careemRealPrice = realPricesMap[NativeServicesManager.careemPackage];
     options.add(PriceOption(
       id: 'careem',
       name: 'كريم',
       provider: 'Careem',
-      price: calculateIndependentDriverPrice(distanceKm) * 1.38,
+      price: careemRealPrice ?? calculateIndependentDriverPrice(distanceKm) * 1.38,
       currency: 'EGP',
       estimatedMinutes: estimatedMinutes,
       etaMinutes: 4,
       isAvailable: true,
-      isEstimate: true,
+      isEstimate: careemRealPrice == null,
       category: 'Go',
     ));
 
-    // Uber estimate (usually 40-50% more than independent)
+    // Uber
+    final uberRealPrice = realPricesMap[NativeServicesManager.uberPackage];
     options.add(PriceOption(
       id: 'uber',
       name: 'أوبر',
       provider: 'Uber',
-      price: calculateIndependentDriverPrice(distanceKm) * 1.46,
+      price: uberRealPrice ?? calculateIndependentDriverPrice(distanceKm) * 1.46,
       currency: 'EGP',
       estimatedMinutes: estimatedMinutes,
       etaMinutes: 3,
       isAvailable: true,
-      isEstimate: true,
+      isEstimate: uberRealPrice == null,
       category: 'UberX',
-      discount: 14,
     ));
+
+    // DiDi
+    final didiRealPrice = realPricesMap[NativeServicesManager.didiPackage];
+    if (didiRealPrice != null) {
+      options.add(PriceOption(
+        id: 'didi',
+        name: 'ديدي',
+        provider: 'DiDi',
+        price: didiRealPrice,
+        currency: 'EGP',
+        estimatedMinutes: estimatedMinutes,
+        etaMinutes: 5,
+        isAvailable: true,
+        isEstimate: false,
+        category: 'DiDi Express',
+      ));
+    }
 
     // Sort by price
     options.sort((a, b) => a.price.compareTo(b.price));
@@ -282,5 +314,6 @@ class RideService {
 /// Provider for RideService
 final rideServiceProvider = Provider<RideService>((ref) {
   final client = ref.watch(supabaseClientProvider);
-  return RideService(client);
+  final nativeServices = ref.watch(nativeServicesProvider);
+  return RideService(client, nativeServices);
 });

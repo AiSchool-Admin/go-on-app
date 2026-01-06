@@ -49,6 +49,24 @@
             android:name="flutterEmbedding"
             android:value="2"/>
 
+        <!-- Price Reader Accessibility Service -->
+        <service
+            android:name=".services.PriceReaderService"
+            android:exported="true"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService"/>
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config"/>
+        </service>
+
+        <!-- Floating Overlay Service -->
+        <service
+            android:name=".services.FloatingOverlayService"
+            android:exported="false"/>
+
     </application>
 
     <!-- Required for API level 28+ -->
@@ -65,6 +83,16 @@
             <action android:name="android.intent.action.VIEW"/>
             <data android:scheme="sms"/>
         </intent>
+        <!-- WhatsApp for driver communication -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="whatsapp"/>
+        </intent>
+        <!-- Ride-hailing apps for price comparison -->
+        <package android:name="com.ubercab"/>
+        <package android:name="com.careem.acma"/>
+        <package android:name="sinet.startup.inDriver"/>
+        <package android:name="com.didiglobal.passenger"/>
     </queries>
 
 </manifest>

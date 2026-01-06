@@ -12,6 +12,7 @@ import '../../features/freight/screens/freight_screen.dart';
 import '../../features/tracking/screens/tracking_screen.dart';
 import '../../features/wallet/screens/wallet_screen.dart';
 import '../../features/profile/screens/profile_screen.dart';
+import '../../features/permissions/screens/permissions_setup_screen.dart';
 import '../../providers/auth_provider.dart';
 
 /// Route names
@@ -21,6 +22,7 @@ class AppRoutes {
   static const String splash = '/';
   static const String login = '/login';
   static const String otp = '/otp';
+  static const String permissionsSetup = '/permissions-setup';
   static const String home = '/home';
   static const String rideSearch = '/ride-search';
   static const String priceComparison = '/price-comparison';
@@ -42,15 +44,16 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       final isOnSplash = state.matchedLocation == AppRoutes.splash;
       final isLoggingIn = state.matchedLocation == AppRoutes.login ||
           state.matchedLocation == AppRoutes.otp;
+      final isOnPermissions = state.matchedLocation == AppRoutes.permissionsSetup;
 
       // If not logged in and not on login/otp page, redirect to login
       if (!isLoggedIn && !isLoggingIn) {
         return AppRoutes.login;
       }
 
-      // If logged in and on login/otp/splash page, redirect to home
+      // If logged in and on login/otp/splash page, redirect to permissions setup
       if (isLoggedIn && (isLoggingIn || isOnSplash)) {
-        return AppRoutes.home;
+        return AppRoutes.permissionsSetup;
       }
 
       return null;
@@ -73,6 +76,12 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           final phone = state.extra as String? ?? '';
           return OtpScreen(phoneNumber: phone);
         },
+      ),
+
+      // Permissions Setup
+      GoRoute(
+        path: AppRoutes.permissionsSetup,
+        builder: (context, state) => const PermissionsSetupScreen(),
       ),
 
       // Main Routes
