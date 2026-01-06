@@ -215,20 +215,33 @@ class RideService {
 
     // DiDi
     final didiRealPrice = realPricesMap[NativeServicesManager.didiPackage];
-    if (didiRealPrice != null) {
-      options.add(PriceOption(
-        id: 'didi',
-        name: 'ديدي',
-        provider: 'DiDi',
-        price: didiRealPrice,
-        currency: 'EGP',
-        estimatedMinutes: estimatedMinutes,
-        etaMinutes: 5,
-        isAvailable: true,
-        isEstimate: false,
-        category: 'DiDi Express',
-      ));
-    }
+    options.add(PriceOption(
+      id: 'didi',
+      name: 'ديدي',
+      provider: 'DiDi',
+      price: didiRealPrice ?? calculateIndependentDriverPrice(distanceKm) * 1.25,
+      currency: 'EGP',
+      estimatedMinutes: estimatedMinutes,
+      etaMinutes: 5,
+      isAvailable: true,
+      isEstimate: didiRealPrice == null,
+      category: 'DiDi Express',
+    ));
+
+    // Bolt
+    final boltRealPrice = realPricesMap[NativeServicesManager.boltPackage];
+    options.add(PriceOption(
+      id: 'bolt',
+      name: 'بولت',
+      provider: 'Bolt',
+      price: boltRealPrice ?? calculateIndependentDriverPrice(distanceKm) * 1.20,
+      currency: 'EGP',
+      estimatedMinutes: estimatedMinutes,
+      etaMinutes: 4,
+      isAvailable: true,
+      isEstimate: boltRealPrice == null,
+      category: 'Bolt',
+    ));
 
     // Sort by price
     options.sort((a, b) => a.price.compareTo(b.price));

@@ -242,4 +242,5 @@ class NativeServicesManager {
   static const String careemPackage = 'com.careem.acma';
   static const String indriverPackage = 'sinet.startup.inDriver';
   static const String didiPackage = 'com.didiglobal.passenger';
+  static const String boltPackage = 'ee.mtakso.client';
 }

@@ -93,6 +93,7 @@
         <package android:name="com.careem.acma"/>
         <package android:name="sinet.startup.inDriver"/>
         <package android:name="com.didiglobal.passenger"/>
+        <package android:name="ee.mtakso.client"/>
     </queries>
 
 </manifest>

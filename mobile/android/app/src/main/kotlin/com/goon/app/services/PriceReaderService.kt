@@ -27,6 +27,7 @@ class PriceReaderService : AccessibilityService() {
         const val CAREEM_PACKAGE = "com.careem.acma"
         const val INDRIVER_PACKAGE = "sinet.startup.inDriver"
         const val DIDI_PACKAGE = "com.didiglobal.passenger"
+        const val BOLT_PACKAGE = "ee.mtakso.client"
 
         // Broadcast action for price updates
         const val ACTION_PRICE_UPDATE = "com.goon.app.PRICE_UPDATE"

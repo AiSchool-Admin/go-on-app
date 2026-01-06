@@ -446,6 +446,10 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
         return const Color(0xFF4CAF50);
       case 'indriver':
         return const Color(0xFF2196F3);
+      case 'didi':
+        return const Color(0xFFFF6600);
+      case 'bolt':
+        return const Color(0xFF34D186);
       case 'go-on':
         return AppColors.primary;
       default:
@@ -492,6 +496,9 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
           break;
         case 'didi':
           packageName = NativeServicesManager.didiPackage;
+          break;
+        case 'bolt':
+          packageName = NativeServicesManager.boltPackage;
           break;
       }
 
@@ -553,6 +560,12 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
                   break;
                 case 'indriver':
                   storeUrl = 'https://play.google.com/store/apps/details?id=sinet.startup.inDriver';
+                  break;
+                case 'didi':
+                  storeUrl = 'https://play.google.com/store/apps/details?id=com.didiglobal.passenger';
+                  break;
+                case 'bolt':
+                  storeUrl = 'https://play.google.com/store/apps/details?id=ee.mtakso.client';
                   break;
               }
               if (storeUrl != null) {

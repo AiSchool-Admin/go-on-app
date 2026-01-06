@@ -9,6 +9,7 @@ import '../../../core/constants/app_colors.dart';
 import '../../../core/routes/app_router.dart';
 import '../services/ride_service.dart';
 import '../models/price_option.dart';
+import 'map_location_picker_screen.dart';
 
 // Providers for location state
 final originLocationProvider = StateProvider<LatLng?>((ref) => null);
@@ -502,11 +503,37 @@ class _RideSearchScreenState extends ConsumerState<RideSearchScreen> {
               ),
             ),
             const SizedBox(height: 16),
+            // Map Picker Button
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    _openMapPicker(isOrigin: isOrigin);
+                  },
+                  icon: const Icon(Icons.map),
+                  label: const Text('اختر من الخريطة'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: isOrigin ? AppColors.success : AppColors.primary,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Divider(height: 1),
             Expanded(
               child: ListView(
                 controller: scrollController,
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 children: [
+                  const SizedBox(height: 12),
                   if (isOrigin) ...[
                     _buildPlaceOption(
                       icon: Icons.my_location,
@@ -551,6 +578,38 @@ class _RideSearchScreenState extends ConsumerState<RideSearchScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _openMapPicker({required bool isOrigin}) async {
+    final currentLocation = isOrigin
+        ? ref.read(originLocationProvider)
+        : ref.read(destinationLocationProvider);
+    final currentAddress = isOrigin
+        ? ref.read(originAddressProvider)
+        : ref.read(destinationAddressProvider);
+
+    final result = await Navigator.push<Map<String, dynamic>>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => MapLocationPickerScreen(
+          isOrigin: isOrigin,
+          initialLocation: currentLocation,
+          initialAddress: currentAddress.isNotEmpty ? currentAddress : null,
+        ),
+      ),
+    );
+
+    if (result != null && mounted) {
+      final location = result['location'] as LatLng;
+      final address = result['address'] as String;
+
+      _selectPlace(
+        address.length > 30 ? '${address.substring(0, 30)}...' : address,
+        location,
+        address,
+        isOrigin,
+      );
+    }
   }
 
   Widget _buildPlaceOption({

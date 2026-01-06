@@ -56,6 +56,10 @@ class PriceOption {
         return '🚖';
       case 'indriver':
         return '🚗';
+      case 'didi':
+        return '🚙';
+      case 'bolt':
+        return '⚡';
       case 'go-on':
         return '🚐';
       default:
@@ -80,6 +84,8 @@ class PriceOption {
         return 'indriver://';
       case 'didi':
         return 'didiglobal://';
+      case 'bolt':
+        return 'bolt://';
       default:
         return null;
     }
