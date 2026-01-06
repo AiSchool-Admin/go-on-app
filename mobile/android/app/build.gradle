@@ -42,7 +42,7 @@ android {
 
     defaultConfig {
         applicationId "com.goon.app"
-        minSdk 23
+        minSdk 24
         targetSdk 35
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName

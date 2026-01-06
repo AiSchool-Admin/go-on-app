@@ -21,13 +21,13 @@ allprojects {
     ext {
         compileSdkVersion = 36
         targetSdkVersion = 35
-        minSdkVersion = 23
+        minSdkVersion = 24
 
         // Create flutter object for plugins that need it
         flutter = [
             compileSdkVersion: 36,
             targetSdkVersion: 35,
-            minSdkVersion: 23
+            minSdkVersion: 24
         ]
     }
 }
