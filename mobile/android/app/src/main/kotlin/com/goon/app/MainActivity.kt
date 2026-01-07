@@ -118,6 +118,35 @@ class MainActivity : FlutterActivity() {
                     ))
                 }
 
+                "fetchPriceFromApp" -> {
+                    val packageName = call.argument<String>("packageName") ?: ""
+                    val pickupLat = call.argument<Double>("pickupLat") ?: 0.0
+                    val pickupLng = call.argument<Double>("pickupLng") ?: 0.0
+                    val dropoffLat = call.argument<Double>("dropoffLat") ?: 0.0
+                    val dropoffLng = call.argument<Double>("dropoffLng") ?: 0.0
+                    val pickupAddress = call.argument<String>("pickupAddress") ?: ""
+                    val dropoffAddress = call.argument<String>("dropoffAddress") ?: ""
+
+                    // Open app with trip details
+                    openAppWithTrip(
+                        packageName,
+                        pickupLat, pickupLng,
+                        dropoffLat, dropoffLng,
+                        pickupAddress, dropoffAddress
+                    )
+                    result.success(true)
+                }
+
+                "returnToApp" -> {
+                    // Bring GO-ON back to foreground
+                    val intent = packageManager.getLaunchIntentForPackage(packageName)
+                    intent?.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    if (intent != null) {
+                        startActivity(intent)
+                    }
+                    result.success(true)
+                }
+
                 "getInstalledRideApps" -> {
                     result.success(getInstalledRideApps())
                 }

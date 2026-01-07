@@ -237,6 +237,112 @@ class NativeServicesManager {
     }
   }
 
+  /// Fetch price from a specific app by opening it with trip details
+  /// Returns after opening the app - price will be captured by accessibility service
+  Future<bool> fetchPriceFromApp({
+    required String packageName,
+    required double pickupLat,
+    required double pickupLng,
+    required double dropoffLat,
+    required double dropoffLng,
+    String pickupAddress = '',
+    String dropoffAddress = '',
+  }) async {
+    try {
+      final result = await _channel.invokeMethod<bool>('fetchPriceFromApp', {
+        'packageName': packageName,
+        'pickupLat': pickupLat,
+        'pickupLng': pickupLng,
+        'dropoffLat': dropoffLat,
+        'dropoffLng': dropoffLng,
+        'pickupAddress': pickupAddress,
+        'dropoffAddress': dropoffAddress,
+      });
+      return result ?? false;
+    } on PlatformException catch (e) {
+      print('Error fetching price from app: ${e.message}');
+      return false;
+    }
+  }
+
+  /// Return to GO-ON app (bring to foreground)
+  Future<void> returnToApp() async {
+    try {
+      await _channel.invokeMethod('returnToApp');
+    } on PlatformException catch (e) {
+      print('Error returning to app: ${e.message}');
+    }
+  }
+
+  /// Fetch real prices from all installed apps
+  /// Opens each app sequentially, waits for price, then returns
+  Future<Map<String, double>> fetchAllRealPrices({
+    required double pickupLat,
+    required double pickupLng,
+    required double dropoffLat,
+    required double dropoffLng,
+    String pickupAddress = '',
+    String dropoffAddress = '',
+    Function(String appName, int current, int total)? onProgress,
+  }) async {
+    final installedApps = await getInstalledRideApps();
+    final prices = <String, double>{};
+
+    // Clear old prices
+    await clearPrices();
+
+    for (int i = 0; i < installedApps.length; i++) {
+      final packageName = installedApps[i];
+      final appName = _getAppName(packageName);
+
+      onProgress?.call(appName, i + 1, installedApps.length);
+
+      // Open the app with trip details
+      await fetchPriceFromApp(
+        packageName: packageName,
+        pickupLat: pickupLat,
+        pickupLng: pickupLng,
+        dropoffLat: dropoffLat,
+        dropoffLng: dropoffLng,
+        pickupAddress: pickupAddress,
+        dropoffAddress: dropoffAddress,
+      );
+
+      // Wait for app to load and show prices
+      await Future.delayed(const Duration(seconds: 4));
+
+      // Get the captured price
+      final latestPrices = await getLatestPrices();
+      final appPrice = latestPrices.where((p) => p.packageName == packageName).firstOrNull;
+      if (appPrice != null) {
+        prices[packageName] = appPrice.price;
+      }
+
+      // Return to GO-ON
+      await returnToApp();
+      await Future.delayed(const Duration(milliseconds: 500));
+    }
+
+    return prices;
+  }
+
+  String _getAppName(String packageName) {
+    switch (packageName) {
+      case uberPackage:
+        return 'Uber';
+      case careemPackage:
+        return 'Careem';
+      case indriverPackage:
+        return 'InDriver';
+      case didiPackage:
+        return 'DiDi';
+      case boltPackage:
+        return 'Bolt';
+      default:
+        return packageName;
+    }
+  }
+
   /// Get list of installed ride-hailing apps
   Future<List<String>> getInstalledRideApps() async {
     try {

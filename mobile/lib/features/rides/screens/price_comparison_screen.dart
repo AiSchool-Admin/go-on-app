@@ -30,6 +30,11 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
   List<PriceOption>? _priceOptions;
   bool _isLoading = true;
   String? _error;
+  bool _isFetchingRealPrices = false;
+  String _fetchingAppName = '';
+  int _fetchingCurrent = 0;
+  int _fetchingTotal = 0;
+  Map<String, double> _realPrices = {};
 
   @override
   void initState() {
@@ -64,6 +69,130 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
         });
       }
     }
+  }
+
+  Future<void> _fetchRealPrices() async {
+    final nativeServices = ref.read(nativeServicesProvider);
+
+    // Check if accessibility service is enabled
+    final isEnabled = await nativeServices.isAccessibilityEnabled();
+    if (!isEnabled) {
+      _showAccessibilityDialog();
+      return;
+    }
+
+    setState(() {
+      _isFetchingRealPrices = true;
+      _fetchingCurrent = 0;
+      _fetchingTotal = 0;
+    });
+
+    try {
+      final prices = await nativeServices.fetchAllRealPrices(
+        pickupLat: widget.origin.latitude,
+        pickupLng: widget.origin.longitude,
+        dropoffLat: widget.destination.latitude,
+        dropoffLng: widget.destination.longitude,
+        pickupAddress: widget.originAddress,
+        dropoffAddress: widget.destinationAddress,
+        onProgress: (appName, current, total) {
+          if (mounted) {
+            setState(() {
+              _fetchingAppName = appName;
+              _fetchingCurrent = current;
+              _fetchingTotal = total;
+            });
+          }
+        },
+      );
+
+      if (mounted) {
+        setState(() {
+          _realPrices = prices;
+          _isFetchingRealPrices = false;
+        });
+
+        // Update price options with real prices
+        _updatePricesWithReal(prices);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isFetchingRealPrices = false;
+        });
+        _showError('فشل في جلب الأسعار الحقيقية');
+      }
+    }
+  }
+
+  void _updatePricesWithReal(Map<String, double> realPrices) {
+    if (_priceOptions == null) return;
+
+    final nativeServices = ref.read(nativeServicesProvider);
+    final updatedOptions = _priceOptions!.map((option) {
+      String? packageName;
+      switch (option.provider.toLowerCase()) {
+        case 'uber':
+          packageName = NativeServicesManager.uberPackage;
+          break;
+        case 'careem':
+          packageName = NativeServicesManager.careemPackage;
+          break;
+        case 'indriver':
+          packageName = NativeServicesManager.indriverPackage;
+          break;
+        case 'didi':
+          packageName = NativeServicesManager.didiPackage;
+          break;
+        case 'bolt':
+          packageName = NativeServicesManager.boltPackage;
+          break;
+      }
+
+      if (packageName != null && realPrices.containsKey(packageName)) {
+        return option.copyWith(
+          price: realPrices[packageName]!,
+          isEstimate: false,
+        );
+      }
+      return option;
+    }).toList();
+
+    // Sort by price
+    updatedOptions.sort((a, b) => a.price.compareTo(b.price));
+
+    setState(() {
+      _priceOptions = updatedOptions;
+    });
+  }
+
+  void _showAccessibilityDialog() {
+    final nativeServices = ref.read(nativeServicesProvider);
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('تفعيل خدمة إمكانية الوصول'),
+        content: const Text(
+          'لجلب الأسعار الحقيقية من التطبيقات الأخرى، يجب تفعيل خدمة إمكانية الوصول لـ GO-ON.\n\n'
+          'اذهب إلى:\n'
+          'الإعدادات ← إمكانية الوصول ← الخدمات المثبتة ← GO-ON Price Reader ← تفعيل',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('لاحقاً'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              nativeServices.openAccessibilitySettings();
+            },
+            child: const Text('فتح الإعدادات'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -167,6 +296,55 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
               ],
             ),
           ),
+
+          // Fetch Real Prices Button
+          if (!_isLoading && _error == null && !_isFetchingRealPrices)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _fetchRealPrices,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('جلب الأسعار الحقيقية'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.secondary,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+          // Fetching Progress
+          if (_isFetchingRealPrices)
+            Container(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  const CircularProgressIndicator(),
+                  const SizedBox(height: 12),
+                  Text(
+                    'جاري جلب السعر من $_fetchingAppName...',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '$_fetchingCurrent من $_fetchingTotal',
+                    style: const TextStyle(color: AppColors.textSecondary),
+                  ),
+                  const SizedBox(height: 8),
+                  LinearProgressIndicator(
+                    value: _fetchingTotal > 0 ? _fetchingCurrent / _fetchingTotal : 0,
+                    backgroundColor: AppColors.divider,
+                    valueColor: const AlwaysStoppedAnimation<Color>(AppColors.primary),
+                  ),
+                ],
+              ),
+            ),
 
           // Price List
           Expanded(
@@ -308,6 +486,22 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
                                 style: TextStyle(
                                   fontSize: 10,
                                   color: AppColors.warning,
+                                ),
+                              ),
+                            )
+                          else if (option.provider.toLowerCase() != 'go-on')
+                            Container(
+                              margin: const EdgeInsets.only(right: 8),
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: AppColors.success.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: const Text(
+                                'حقيقي',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: AppColors.success,
                                 ),
                               ),
                             ),
