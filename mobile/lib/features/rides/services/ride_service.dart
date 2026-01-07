@@ -59,6 +59,16 @@ class RideService {
     return ((distanceKm / avgSpeed) * 60).round();
   }
 
+  /// Calculate approximate price for independent drivers
+  double calculateIndependentDriverPrice(double distanceKm) {
+    final estimatedMinutes = calculateEstimatedMinutes(distanceKm);
+    return EgyptPricingService.calculateIndependentPrice(
+      distanceKm: distanceKm,
+      estimatedMinutes: estimatedMinutes,
+      tripTime: DateTime.now(),
+    );
+  }
+
   /// Find nearby drivers from Supabase
   Future<List<DriverModel>> findNearbyDrivers({
     required LatLng userLocation,
