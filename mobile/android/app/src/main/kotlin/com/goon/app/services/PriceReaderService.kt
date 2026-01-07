@@ -3,6 +3,8 @@ package com.goon.app.services
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -10,10 +12,14 @@ import org.json.JSONObject
 import java.util.regex.Pattern
 
 /**
- * GO-ON Price Reader Accessibility Service
+ * GO-ON Price Reader Accessibility Service - ENHANCED VERSION
  *
- * This service reads prices from ride-hailing apps (Uber, Careem, InDriver, DiDi, Bolt)
- * when the user is viewing price estimates.
+ * This service AGGRESSIVELY reads prices from ride-hailing apps
+ * using multiple strategies:
+ * 1. Event-based monitoring (passive)
+ * 2. Active periodic scanning (aggressive)
+ * 3. App-specific element targeting (precise)
+ * 4. Full tree traversal (comprehensive)
  *
  * IMPORTANT: This requires explicit user permission in Accessibility Settings
  */
@@ -33,22 +39,29 @@ class PriceReaderService : AccessibilityService() {
         const val ACTION_PRICE_UPDATE = "com.goon.app.PRICE_UPDATE"
         const val EXTRA_PRICE_DATA = "price_data"
 
-        // Price patterns for Egyptian Pounds (multiple formats)
+        // Price patterns for Egyptian Pounds - COMPREHENSIVE
         private val PRICE_PATTERNS = listOf(
-            // EGP XX or XX EGP
+            // EGP formats
             Pattern.compile("EGP\\s*(\\d+[.,]?\\d*)", Pattern.CASE_INSENSITIVE),
             Pattern.compile("(\\d+[.,]?\\d*)\\s*EGP", Pattern.CASE_INSENSITIVE),
-            // ج.م XX or XX ج.م
+            // ج.م formats (Egyptian Arabic)
             Pattern.compile("ج\\.?م\\.?\\s*(\\d+[.,]?\\d*)"),
             Pattern.compile("(\\d+[.,]?\\d*)\\s*ج\\.?م\\.?"),
-            // جنيه XX or XX جنيه
+            // جنيه (Guinee)
             Pattern.compile("جنيه\\s*(\\d+[.,]?\\d*)"),
             Pattern.compile("(\\d+[.,]?\\d*)\\s*جنيه"),
-            // LE XX or XX LE
+            // LE formats
             Pattern.compile("LE\\s*(\\d+[.,]?\\d*)", Pattern.CASE_INSENSITIVE),
             Pattern.compile("(\\d+[.,]?\\d*)\\s*LE", Pattern.CASE_INSENSITIVE),
-            // Just numbers in price context (50-500 range typically)
-            Pattern.compile("^(\\d{2,3})$")
+            // E£ format
+            Pattern.compile("E£\\s*(\\d+[.,]?\\d*)"),
+            Pattern.compile("(\\d+[.,]?\\d*)\\s*E£"),
+            // Price with range (e.g., "65-75")
+            Pattern.compile("(\\d+)\\s*[-–]\\s*\\d+\\s*(?:EGP|ج\\.?م|جنيه|LE)?", Pattern.CASE_INSENSITIVE),
+            // Price in format "Fare: 65" or "السعر: 65"
+            Pattern.compile("(?:fare|price|السعر|الأجرة)[:\\s]*(\\d+)", Pattern.CASE_INSENSITIVE),
+            // Standalone numbers in specific format (2-3 digits)
+            Pattern.compile("^\\s*(\\d{2,3})\\s*$")
         )
 
         // Singleton instance for Flutter communication
@@ -58,9 +71,11 @@ class PriceReaderService : AccessibilityService() {
         // Latest prices from each app
         val latestPrices = mutableMapOf<String, PriceInfo>()
 
-        // Flag to indicate active scanning mode
-        var isScanning = false
-        var currentScanPackage: String? = null
+        // Active monitoring state
+        var isActiveMonitoring = false
+        var monitoringPackage: String? = null
+        private var scanHandler: Handler? = null
+        private var scanRunnable: Runnable? = null
     }
 
     data class PriceInfo(
@@ -70,45 +85,297 @@ class PriceReaderService : AccessibilityService() {
         val currency: String = "EGP",
         val serviceType: String = "",
         val eta: Int = 0,
-        val timestamp: Long = System.currentTimeMillis()
+        val timestamp: Long = System.currentTimeMillis(),
+        val allPricesFound: List<Double> = emptyList(),
+        val rawTexts: List<String> = emptyList()
     )
 
     private var isServiceActive = false
     private var lastProcessedTime = 0L
-    private val processDebounce = 500L // ms
+    private val processDebounce = 100L // REDUCED for faster response
+    private val handler = Handler(Looper.getMainLooper())
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
         isServiceActive = true
 
-        Log.i(TAG, "✓ GO-ON Price Reader Service Connected and Active")
+        Log.i(TAG, "✓ GO-ON Price Reader Service Connected - ENHANCED VERSION")
 
-        // Configure the service
+        // Configure the service for MAXIMUM visibility
         val info = AccessibilityServiceInfo().apply {
+            // Listen to ALL relevant events
             eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
                         AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
                         AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED or
-                        AccessibilityEvent.TYPE_VIEW_SCROLLED
+                        AccessibilityEvent.TYPE_VIEW_SCROLLED or
+                        AccessibilityEvent.TYPE_VIEW_FOCUSED or
+                        AccessibilityEvent.TYPE_VIEW_CLICKED or
+                        AccessibilityEvent.TYPES_ALL_MASK
 
             feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
 
-            // Only monitor ride-hailing apps
-            packageNames = arrayOf(
-                UBER_PACKAGE,
-                CAREEM_PACKAGE,
-                INDRIVER_PACKAGE,
-                DIDI_PACKAGE,
-                BOLT_PACKAGE
-            )
+            // Monitor ALL apps initially - we'll filter in code
+            // This allows us to detect when user switches to ride apps
+            packageNames = null  // null = all apps
 
-            notificationTimeout = 50
+            notificationTimeout = 10  // FAST response
             flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
                    AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS or
-                   AccessibilityServiceInfo.FLAG_REQUEST_ENHANCED_WEB_ACCESSIBILITY
+                   AccessibilityServiceInfo.FLAG_REQUEST_ENHANCED_WEB_ACCESSIBILITY or
+                   AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
         }
 
         serviceInfo = info
+
+        // Initialize scan handler
+        scanHandler = Handler(Looper.getMainLooper())
+    }
+
+    /**
+     * START ACTIVE MONITORING - Called from Flutter when user opens a ride app
+     * This will aggressively scan for prices every 500ms
+     */
+    fun startActiveMonitoring(packageName: String) {
+        Log.i(TAG, "🔍 Starting ACTIVE monitoring for: $packageName")
+        isActiveMonitoring = true
+        monitoringPackage = packageName
+
+        // Stop any existing scan
+        stopActiveMonitoring()
+
+        // Create a runnable that scans every 500ms
+        scanRunnable = object : Runnable {
+            override fun run() {
+                if (isActiveMonitoring) {
+                    Log.d(TAG, "⏱ Active scan tick for $packageName")
+                    performAggressiveScan(packageName)
+                    scanHandler?.postDelayed(this, 500)
+                }
+            }
+        }
+
+        // Start scanning immediately
+        scanHandler?.post(scanRunnable!!)
+    }
+
+    /**
+     * STOP ACTIVE MONITORING - Called when user returns to GO-ON
+     */
+    fun stopActiveMonitoring() {
+        Log.i(TAG, "⏹ Stopping active monitoring")
+        isActiveMonitoring = false
+        monitoringPackage = null
+        scanRunnable?.let { scanHandler?.removeCallbacks(it) }
+        scanRunnable = null
+    }
+
+    /**
+     * AGGRESSIVE SCAN - The core price extraction function
+     */
+    private fun performAggressiveScan(targetPackage: String): PriceInfo? {
+        val rootNode = rootInActiveWindow ?: run {
+            Log.w(TAG, "No active window available")
+            return null
+        }
+
+        try {
+            val currentPackage = rootNode.packageName?.toString() ?: return null
+
+            // Check if we're in the target app
+            if (currentPackage != targetPackage) {
+                Log.d(TAG, "Current app ($currentPackage) != target ($targetPackage)")
+                return null
+            }
+
+            Log.d(TAG, "🔍 Aggressive scanning $currentPackage...")
+
+            // Strategy 1: Look for specific price elements by resource ID
+            val priceById = findPriceByResourceId(rootNode, currentPackage)
+            if (priceById != null && priceById > 0) {
+                Log.i(TAG, "✓ Found price by resource ID: $priceById")
+                return savePriceInfo(currentPackage, priceById, "resource_id")
+            }
+
+            // Strategy 2: Look for price by content description patterns
+            val priceByDesc = findPriceByContentDescription(rootNode)
+            if (priceByDesc != null && priceByDesc > 0) {
+                Log.i(TAG, "✓ Found price by content description: $priceByDesc")
+                return savePriceInfo(currentPackage, priceByDesc, "content_desc")
+            }
+
+            // Strategy 3: Full text scan with all patterns
+            val allText = getAllTextFromNode(rootNode)
+            val prices = mutableListOf<Double>()
+            val priceTexts = mutableListOf<String>()
+
+            for (text in allText) {
+                val price = extractPrice(text)
+                if (price != null && price in 10.0..5000.0) {
+                    prices.add(price)
+                    priceTexts.add(text)
+                    Log.d(TAG, "Found potential price: $price in '$text'")
+                }
+            }
+
+            if (prices.isNotEmpty()) {
+                val bestPrice = selectBestPrice(prices, currentPackage)
+                Log.i(TAG, "✓ Found ${prices.size} prices, best: $bestPrice EGP")
+                return savePriceInfo(currentPackage, bestPrice, "text_scan", prices, priceTexts)
+            }
+
+            Log.w(TAG, "No prices found in $currentPackage (scanned ${allText.size} elements)")
+            return null
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in aggressive scan: ${e.message}")
+            return null
+        } finally {
+            try { rootNode.recycle() } catch (e: Exception) {}
+        }
+    }
+
+    /**
+     * Find price by resource ID - App specific targeting
+     */
+    private fun findPriceByResourceId(rootNode: AccessibilityNodeInfo, packageName: String): Double? {
+        val priceResourceIds = when (packageName) {
+            UBER_PACKAGE -> listOf(
+                "com.ubercab:id/fare_estimate_text",
+                "com.ubercab:id/price_text",
+                "com.ubercab:id/trip_price",
+                "com.ubercab:id/fare_text",
+                "com.ubercab:id/estimate_fare",
+                "com.ubercab:id/upfront_fare"
+            )
+            CAREEM_PACKAGE -> listOf(
+                "com.careem.acma:id/price_text",
+                "com.careem.acma:id/fare_amount",
+                "com.careem.acma:id/ride_price",
+                "com.careem.acma:id/total_price"
+            )
+            INDRIVER_PACKAGE -> listOf(
+                "sinet.startup.inDriver:id/price",
+                "sinet.startup.inDriver:id/offer_price",
+                "sinet.startup.inDriver:id/ride_price"
+            )
+            DIDI_PACKAGE -> listOf(
+                "com.didiglobal.passenger:id/price",
+                "com.didiglobal.passenger:id/fare_text",
+                "com.didiglobal.passenger:id/estimated_price"
+            )
+            BOLT_PACKAGE -> listOf(
+                "ee.mtakso.client:id/price",
+                "ee.mtakso.client:id/fare",
+                "ee.mtakso.client:id/ride_price"
+            )
+            else -> emptyList()
+        }
+
+        for (resourceId in priceResourceIds) {
+            try {
+                val nodes = rootNode.findAccessibilityNodeInfosByViewId(resourceId)
+                for (node in nodes) {
+                    val text = node.text?.toString() ?: node.contentDescription?.toString()
+                    if (text != null) {
+                        val price = extractPrice(text)
+                        if (price != null && price > 0) {
+                            node.recycle()
+                            return price
+                        }
+                    }
+                    node.recycle()
+                }
+            } catch (e: Exception) {
+                // Resource ID not found, continue
+            }
+        }
+
+        return null
+    }
+
+    /**
+     * Find price by scanning content descriptions for price keywords
+     */
+    private fun findPriceByContentDescription(node: AccessibilityNodeInfo): Double? {
+        val desc = node.contentDescription?.toString()
+        if (desc != null) {
+            // Look for price-related content descriptions
+            if (desc.contains("price", ignoreCase = true) ||
+                desc.contains("fare", ignoreCase = true) ||
+                desc.contains("سعر") ||
+                desc.contains("أجرة") ||
+                desc.contains("EGP", ignoreCase = true) ||
+                desc.contains("ج.م")) {
+                val price = extractPrice(desc)
+                if (price != null && price > 0) return price
+            }
+        }
+
+        // Recursively check children
+        for (i in 0 until node.childCount) {
+            try {
+                val child = node.getChild(i)
+                if (child != null) {
+                    val childPrice = findPriceByContentDescription(child)
+                    child.recycle()
+                    if (childPrice != null) return childPrice
+                }
+            } catch (e: Exception) {}
+        }
+
+        return null
+    }
+
+    /**
+     * Select the best price from candidates based on app-specific logic
+     */
+    private fun selectBestPrice(prices: List<Double>, packageName: String): Double {
+        if (prices.isEmpty()) return 0.0
+        if (prices.size == 1) return prices[0]
+
+        // Filter to reasonable ride prices (15-1000 EGP typically)
+        val reasonable = prices.filter { it in 15.0..1000.0 }
+        if (reasonable.isEmpty()) return prices.minOrNull() ?: 0.0
+
+        return when (packageName) {
+            // InDriver shows suggested price prominently
+            INDRIVER_PACKAGE -> reasonable.minOrNull() ?: reasonable[0]
+            // Most apps show the main price first
+            else -> reasonable[0]
+        }
+    }
+
+    /**
+     * Save and broadcast price info
+     */
+    private fun savePriceInfo(
+        packageName: String,
+        price: Double,
+        source: String,
+        allPrices: List<Double> = listOf(price),
+        rawTexts: List<String> = emptyList()
+    ): PriceInfo {
+        val appName = getAppName(packageName)
+        val priceInfo = PriceInfo(
+            appName = appName,
+            packageName = packageName,
+            price = price,
+            allPricesFound = allPrices,
+            rawTexts = rawTexts
+        )
+
+        latestPrices[packageName] = priceInfo
+
+        // Broadcast to app
+        val intent = Intent(ACTION_PRICE_UPDATE).apply {
+            putExtra(EXTRA_PRICE_DATA, priceInfoToJson(priceInfo))
+            putExtra("source", source)
+        }
+        sendBroadcast(intent)
+
+        Log.i(TAG, "✅ PRICE CAPTURED: $appName = $price EGP (via $source)")
+        return priceInfo
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {

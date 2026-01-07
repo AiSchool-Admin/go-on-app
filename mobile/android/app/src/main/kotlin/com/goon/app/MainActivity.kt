@@ -67,11 +67,32 @@ class MainActivity : FlutterActivity() {
                             "packageName" to priceInfo.packageName,
                             "price" to priceInfo.price,
                             "serviceType" to priceInfo.serviceType,
-                            "eta" to priceInfo.eta
+                            "eta" to priceInfo.eta,
+                            "allPricesFound" to priceInfo.allPricesFound,
+                            "rawTexts" to priceInfo.rawTexts.take(20)
                         ))
                     } else {
                         result.success(null)
                     }
+                }
+
+                "startActiveMonitoring" -> {
+                    val packageName = call.argument<String>("packageName") ?: ""
+                    PriceReaderService.instance?.startActiveMonitoring(packageName)
+                    result.success(true)
+                }
+
+                "stopActiveMonitoring" -> {
+                    PriceReaderService.instance?.stopActiveMonitoring()
+                    result.success(true)
+                }
+
+                "isActivelyMonitoring" -> {
+                    result.success(PriceReaderService.isActiveMonitoring)
+                }
+
+                "getMonitoringPackage" -> {
+                    result.success(PriceReaderService.monitoringPackage)
                 }
 
                 "getPriceForApp" -> {

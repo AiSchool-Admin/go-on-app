@@ -163,6 +163,95 @@ class NativeServicesManager {
     }
   }
 
+  // ============ ACTIVE MONITORING - NEW TECHNICAL SOLUTION ============
+
+  /// Start active monitoring for a specific app
+  /// This will aggressively scan for prices every 500ms while user is in the app
+  Future<void> startActiveMonitoring(String packageName) async {
+    try {
+      await _channel.invokeMethod('startActiveMonitoring', {
+        'packageName': packageName,
+      });
+      print('✓ Started active monitoring for $packageName');
+    } on PlatformException catch (e) {
+      print('Error starting active monitoring: ${e.message}');
+    }
+  }
+
+  /// Stop active monitoring
+  Future<void> stopActiveMonitoring() async {
+    try {
+      await _channel.invokeMethod('stopActiveMonitoring');
+      print('✓ Stopped active monitoring');
+    } on PlatformException catch (e) {
+      print('Error stopping active monitoring: ${e.message}');
+    }
+  }
+
+  /// Check if we're actively monitoring
+  Future<bool> isActivelyMonitoring() async {
+    try {
+      final result = await _channel.invokeMethod<bool>('isActivelyMonitoring');
+      return result ?? false;
+    } on PlatformException catch (e) {
+      print('Error checking monitoring status: ${e.message}');
+      return false;
+    }
+  }
+
+  /// Get the package currently being monitored
+  Future<String?> getMonitoringPackage() async {
+    try {
+      final result = await _channel.invokeMethod<String>('getMonitoringPackage');
+      return result;
+    } on PlatformException catch (e) {
+      print('Error getting monitoring package: ${e.message}');
+      return null;
+    }
+  }
+
+  /// Open app and start active monitoring - the core method for getting REAL prices
+  /// 1. Opens the ride app
+  /// 2. Starts aggressive price monitoring
+  /// 3. Returns immediately - user sets up trip manually
+  /// 4. When user returns, call getCapturedPrice() to get the real price
+  Future<bool> openAppAndMonitor(String packageName) async {
+    try {
+      // Clear old prices for this app
+      await clearPrices();
+
+      // Start active monitoring BEFORE opening the app
+      await startActiveMonitoring(packageName);
+
+      // Open the app
+      final opened = await openApp(packageName);
+      if (!opened) {
+        await stopActiveMonitoring();
+        return false;
+      }
+
+      print('✓ Opened $packageName with active monitoring');
+      return true;
+    } catch (e) {
+      print('Error opening app and monitoring: $e');
+      await stopActiveMonitoring();
+      return false;
+    }
+  }
+
+  /// Get the captured price after user returns from ride app
+  /// Call this after user comes back from the other app
+  Future<double?> getCapturedPrice(String packageName) async {
+    // Stop monitoring
+    await stopActiveMonitoring();
+
+    // Wait a moment for any final scans
+    await Future.delayed(const Duration(milliseconds: 300));
+
+    // Get the captured price
+    return await getPriceForApp(packageName);
+  }
+
   /// Clear captured prices
   Future<void> clearPrices() async {
     try {

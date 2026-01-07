@@ -26,30 +26,51 @@ class PriceComparisonScreen extends ConsumerStatefulWidget {
   ConsumerState<PriceComparisonScreen> createState() => _PriceComparisonScreenState();
 }
 
-class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
+class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen>
+    with WidgetsBindingObserver {
   List<PriceOption>? _priceOptions;
   bool _isLoading = true;
   String? _error;
-  bool _isFetchingRealPrices = false;
-  String _fetchingAppName = '';
-  int _fetchingCurrent = 0;
-  int _fetchingTotal = 0;
   Map<String, double> _realPrices = {};
+
+  // Manual price capture state
+  String? _pendingPackage;
+  bool _awaitingReturn = false;
+  String? _fetchingApp;
 
   @override
   void initState() {
     super.initState();
-    _loadPricesAndFetchReal();
+    WidgetsBinding.instance.addObserver(this);
+    _loadEstimatedPrices();
   }
 
-  Future<void> _loadPricesAndFetchReal() async {
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    // Stop any ongoing monitoring
+    ref.read(nativeServicesProvider).stopActiveMonitoring();
+    super.dispose();
+  }
+
+  /// Called when app comes back to foreground
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed && _awaitingReturn && _pendingPackage != null) {
+      // User returned from ride app - capture the price!
+      _onReturnedFromApp(_pendingPackage!);
+    }
+  }
+
+  /// Load ESTIMATED prices only (no automatic real price fetching)
+  Future<void> _loadEstimatedPrices() async {
     setState(() {
       _isLoading = true;
       _error = null;
     });
 
     try {
-      // First load estimated prices
       final rideService = ref.read(rideServiceProvider);
       final options = await rideService.getPriceComparison(
         origin: widget.origin,
@@ -61,9 +82,6 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
           _priceOptions = options;
           _isLoading = false;
         });
-
-        // Then automatically fetch real prices
-        _fetchRealPrices();
       }
     } catch (e) {
       if (mounted) {
@@ -76,35 +94,37 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
   }
 
   Future<void> _loadPrices() async {
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
+    await _loadEstimatedPrices();
+  }
 
-    try {
-      final rideService = ref.read(rideServiceProvider);
-      final options = await rideService.getPriceComparison(
-        origin: widget.origin,
-        destination: widget.destination,
-      );
-
-      if (mounted) {
-        setState(() {
-          _priceOptions = options;
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _error = e.toString();
-          _isLoading = false;
-        });
-      }
+  /// Get the package name for a provider
+  String? _getPackageName(String provider) {
+    switch (provider.toLowerCase()) {
+      case 'uber':
+        return NativeServicesManager.uberPackage;
+      case 'careem':
+        return NativeServicesManager.careemPackage;
+      case 'indriver':
+        return NativeServicesManager.indriverPackage;
+      case 'didi':
+        return NativeServicesManager.didiPackage;
+      case 'bolt':
+        return NativeServicesManager.boltPackage;
+      default:
+        return null;
     }
   }
 
-  Future<void> _fetchRealPrices() async {
+  /// MANUAL PRICE CAPTURE - The core technical solution
+  /// 1. User taps "جلب السعر الحقيقي"
+  /// 2. Opens the ride app with active monitoring
+  /// 3. User sets up trip manually
+  /// 4. User returns to GO-ON
+  /// 5. Real price is captured and displayed
+  Future<void> _fetchRealPriceFor(PriceOption option) async {
+    final packageName = _getPackageName(option.provider);
+    if (packageName == null) return;
+
     final nativeServices = ref.read(nativeServicesProvider);
 
     // Check if accessibility service is enabled
@@ -115,76 +135,160 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
     }
 
     setState(() {
-      _isFetchingRealPrices = true;
-      _fetchingCurrent = 0;
-      _fetchingTotal = 0;
+      _fetchingApp = option.name;
+      _pendingPackage = packageName;
+      _awaitingReturn = true;
     });
 
-    try {
-      final prices = await nativeServices.fetchAllRealPrices(
-        pickupLat: widget.origin.latitude,
-        pickupLng: widget.origin.longitude,
-        dropoffLat: widget.destination.latitude,
-        dropoffLng: widget.destination.longitude,
-        pickupAddress: widget.originAddress,
-        dropoffAddress: widget.destinationAddress,
-        onProgress: (appName, current, total) {
-          if (mounted) {
-            setState(() {
-              _fetchingAppName = appName;
-              _fetchingCurrent = current;
-              _fetchingTotal = total;
-            });
-          }
-        },
-      );
-
-      if (mounted) {
-        setState(() {
-          _realPrices = prices;
-          _isFetchingRealPrices = false;
-        });
-
-        // Update price options with real prices
-        _updatePricesWithReal(prices);
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isFetchingRealPrices = false;
-        });
-        _showError('فشل في جلب الأسعار الحقيقية');
-      }
-    }
+    // Show instruction dialog
+    _showPriceCaptureInstructions(option, packageName);
   }
 
-  void _updatePricesWithReal(Map<String, double> realPrices) {
+  void _showPriceCaptureInstructions(PriceOption option, String packageName) {
+    final nativeServices = ref.read(nativeServicesProvider);
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Text(option.providerIcon, style: const TextStyle(fontSize: 24)),
+            const SizedBox(width: 8),
+            Text('جلب سعر ${option.name}'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'سيتم فتح التطبيق. قم بـ:',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
+            _buildInstructionStep('1', 'أدخل نقطة الانطلاق'),
+            _buildInstructionStep('2', 'أدخل نقطة الوصول'),
+            _buildInstructionStep('3', 'انتظر حتى يظهر السعر'),
+            _buildInstructionStep('4', 'ارجع إلى GO-ON'),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.success.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppColors.success.withOpacity(0.3)),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.auto_awesome, color: AppColors.success, size: 20),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'سيتم التقاط السعر الحقيقي تلقائياً!',
+                      style: TextStyle(
+                        color: AppColors.success,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              setState(() {
+                _fetchingApp = null;
+                _pendingPackage = null;
+                _awaitingReturn = false;
+              });
+            },
+            child: const Text('إلغاء'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              // Start monitoring and open app
+              await nativeServices.openAppAndMonitor(packageName);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _getProviderColor(option.provider),
+            ),
+            child: const Text('افتح التطبيق'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInstructionStep(String number, String text) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Container(
+            width: 24,
+            height: 24,
+            decoration: const BoxDecoration(
+              color: AppColors.primary,
+              shape: BoxShape.circle,
+            ),
+            child: Center(
+              child: Text(
+                number,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Text(text, style: const TextStyle(fontSize: 14)),
+        ],
+      ),
+    );
+  }
+
+  /// Called when user returns from ride app
+  Future<void> _onReturnedFromApp(String packageName) async {
+    final nativeServices = ref.read(nativeServicesProvider);
+
+    setState(() {
+      _awaitingReturn = false;
+    });
+
+    // Get the captured price
+    final price = await nativeServices.getCapturedPrice(packageName);
+
+    if (price != null && price > 0) {
+      // SUCCESS! Update the price
+      _updateSinglePrice(packageName, price);
+      _showSuccess('تم التقاط السعر الحقيقي: ${price.round()} ج.م');
+    } else {
+      // No price captured - show helpful message
+      _showNoPriceCaptured();
+    }
+
+    setState(() {
+      _fetchingApp = null;
+      _pendingPackage = null;
+    });
+  }
+
+  void _updateSinglePrice(String packageName, double price) {
     if (_priceOptions == null) return;
 
-    final nativeServices = ref.read(nativeServicesProvider);
     final updatedOptions = _priceOptions!.map((option) {
-      String? packageName;
-      switch (option.provider.toLowerCase()) {
-        case 'uber':
-          packageName = NativeServicesManager.uberPackage;
-          break;
-        case 'careem':
-          packageName = NativeServicesManager.careemPackage;
-          break;
-        case 'indriver':
-          packageName = NativeServicesManager.indriverPackage;
-          break;
-        case 'didi':
-          packageName = NativeServicesManager.didiPackage;
-          break;
-        case 'bolt':
-          packageName = NativeServicesManager.boltPackage;
-          break;
-      }
-
-      if (packageName != null && realPrices.containsKey(packageName)) {
+      final optionPackage = _getPackageName(option.provider);
+      if (optionPackage == packageName) {
         return option.copyWith(
-          price: realPrices[packageName]!,
+          price: price,
           isEstimate: false,
         );
       }
@@ -196,7 +300,58 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
 
     setState(() {
       _priceOptions = updatedOptions;
+      _realPrices[packageName] = price;
     });
+  }
+
+  void _showNoPriceCaptured() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('لم يتم التقاط السعر'),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('تأكد من:'),
+            SizedBox(height: 8),
+            Text('• إدخال نقطتي الانطلاق والوصول'),
+            Text('• انتظار ظهور السعر على الشاشة'),
+            Text('• تفعيل خدمة إمكانية الوصول'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('حسناً'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              final nativeServices = ref.read(nativeServicesProvider);
+              nativeServices.openAccessibilitySettings();
+            },
+            child: const Text('إعدادات الوصول'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showSuccess(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.check_circle, color: Colors.white),
+            const SizedBox(width: 8),
+            Text(message),
+          ],
+        ),
+        backgroundColor: AppColors.success,
+        duration: const Duration(seconds: 3),
+      ),
+    );
   }
 
   void _showAccessibilityDialog() {
@@ -330,8 +485,8 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
             ),
           ),
 
-          // Fetching Progress - shows automatically
-          if (_isFetchingRealPrices)
+          // Awaiting return indicator
+          if (_awaitingReturn && _fetchingApp != null)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -349,32 +504,24 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
                   ),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'جاري جلب الأسعار الحقيقية من $_fetchingAppName',
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 13,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        LinearProgressIndicator(
-                          value: _fetchingTotal > 0 ? _fetchingCurrent / _fetchingTotal : 0,
-                          backgroundColor: AppColors.divider,
-                          valueColor: const AlwaysStoppedAnimation<Color>(AppColors.primary),
-                        ),
-                      ],
+                    child: Text(
+                      'في انتظار العودة من $_fetchingApp',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                      ),
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Text(
-                    '$_fetchingCurrent/$_fetchingTotal',
-                    style: const TextStyle(
-                      color: AppColors.textSecondary,
-                      fontSize: 12,
-                    ),
+                  TextButton(
+                    onPressed: () {
+                      setState(() {
+                        _awaitingReturn = false;
+                        _fetchingApp = null;
+                        _pendingPackage = null;
+                      });
+                      ref.read(nativeServicesProvider).stopActiveMonitoring();
+                    },
+                    child: const Text('إلغاء'),
                   ),
                 ],
               ),
@@ -641,24 +788,56 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
             ),
           ),
 
-          // Action Button
+          // Action Buttons
           Container(
             width: double.infinity,
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            child: ElevatedButton(
-              onPressed: () => _onSelectOption(option),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _getProviderColor(option.provider),
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+            child: Column(
+              children: [
+                // Fetch Real Price button - only for estimated prices from external apps
+                if (option.isEstimate && option.provider != 'GO-ON')
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: _awaitingReturn ? null : () => _fetchRealPriceFor(option),
+                        icon: const Icon(Icons.price_check, size: 18),
+                        label: const Text(
+                          'جلب السعر الحقيقي',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.primary,
+                          side: const BorderSide(color: AppColors.primary),
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                // Main action button
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => _onSelectOption(option),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _getProviderColor(option.provider),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: Text(
+                      option.provider == 'GO-ON' ? 'تواصل عبر واتساب' : 'افتح ${option.name}',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ),
                 ),
-              ),
-              child: Text(
-                option.provider == 'GO-ON' ? 'تواصل عبر واتساب' : 'افتح ${option.name}',
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
+              ],
             ),
           ),
         ],
