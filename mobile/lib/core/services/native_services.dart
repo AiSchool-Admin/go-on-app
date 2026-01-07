@@ -252,6 +252,100 @@ class NativeServicesManager {
     return await getPriceForApp(packageName);
   }
 
+  // ============ FULL AUTOMATION - أتمتة كاملة ============
+
+  /// Fully automated price fetching:
+  /// 1. Opens the ride app
+  /// 2. AUTOMATICALLY enters the destination
+  /// 3. AUTOMATICALLY selects the suggestion
+  /// 4. AUTOMATICALLY captures the price
+  /// 5. User just returns to GO-ON
+  Future<bool> automateGetPrice({
+    required String packageName,
+    required String pickup,
+    required String destination,
+    required double pickupLat,
+    required double pickupLng,
+    required double destLat,
+    required double destLng,
+  }) async {
+    try {
+      // Clear old prices
+      await clearPrices();
+
+      // Call the automation method
+      final result = await _channel.invokeMethod<bool>('automateGetPrice', {
+        'packageName': packageName,
+        'pickup': pickup,
+        'destination': destination,
+        'pickupLat': pickupLat,
+        'pickupLng': pickupLng,
+        'destLat': destLat,
+        'destLng': destLng,
+      });
+
+      print('🤖 Started FULL AUTOMATION for $packageName');
+      return result ?? false;
+    } on PlatformException catch (e) {
+      print('Error in automation: ${e.message}');
+      return false;
+    }
+  }
+
+  /// Get the current automation state
+  Future<String> getAutomationState() async {
+    try {
+      final result = await _channel.invokeMethod<String>('getAutomationState');
+      return result ?? 'IDLE';
+    } on PlatformException catch (e) {
+      print('Error getting automation state: ${e.message}');
+      return 'ERROR';
+    }
+  }
+
+  /// Check if automation is complete
+  Future<bool> isAutomationComplete() async {
+    try {
+      final result = await _channel.invokeMethod<bool>('isAutomationComplete');
+      return result ?? false;
+    } on PlatformException catch (e) {
+      print('Error checking automation: ${e.message}');
+      return false;
+    }
+  }
+
+  /// Reset automation state
+  Future<void> resetAutomation() async {
+    try {
+      await _channel.invokeMethod('resetAutomation');
+    } on PlatformException catch (e) {
+      print('Error resetting automation: ${e.message}');
+    }
+  }
+
+  /// Wait for automation to complete and get the price
+  Future<double?> waitForAutomationAndGetPrice(String packageName) async {
+    // Poll for completion (max 15 seconds)
+    for (int i = 0; i < 30; i++) {
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      final complete = await isAutomationComplete();
+      if (complete) {
+        final state = await getAutomationState();
+        print('Automation completed with state: $state');
+
+        if (state == 'PRICE_CAPTURED') {
+          return await getPriceForApp(packageName);
+        } else {
+          return null; // Failed
+        }
+      }
+    }
+
+    print('Automation timeout');
+    return null;
+  }
+
   /// Clear captured prices
   Future<void> clearPrices() async {
     try {

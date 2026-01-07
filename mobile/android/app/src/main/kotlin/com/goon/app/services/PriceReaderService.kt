@@ -76,6 +76,14 @@ class PriceReaderService : AccessibilityService() {
         var monitoringPackage: String? = null
         private var scanHandler: Handler? = null
         private var scanRunnable: Runnable? = null
+
+        // Trip details for automation
+        var pickupAddress: String = ""
+        var destinationAddress: String = ""
+        var pickupLat: Double = 0.0
+        var pickupLng: Double = 0.0
+        var destLat: Double = 0.0
+        var destLng: Double = 0.0
     }
 
     data class PriceInfo(
@@ -157,6 +165,417 @@ class PriceReaderService : AccessibilityService() {
 
         // Start scanning immediately
         scanHandler?.post(scanRunnable!!)
+    }
+
+    // ==========================================================================
+    // AUTOMATION ENGINE - Automatically enter trip details and get real prices
+    // ==========================================================================
+
+    private var automationState = AutomationState.IDLE
+    private var automationStep = 0
+    private var automationRetries = 0
+    private val MAX_RETRIES = 3
+
+    enum class AutomationState {
+        IDLE,
+        WAITING_FOR_APP,
+        FINDING_DESTINATION_FIELD,
+        ENTERING_DESTINATION,
+        WAITING_FOR_SUGGESTIONS,
+        SELECTING_SUGGESTION,
+        WAITING_FOR_PRICE,
+        PRICE_CAPTURED,
+        FAILED
+    }
+
+    /**
+     * FULLY AUTOMATED PRICE FETCH
+     * Opens app, enters destination, captures price, returns to GO-ON
+     */
+    fun automateGetPrice(
+        packageName: String,
+        pickup: String,
+        destination: String,
+        pickupLatitude: Double,
+        pickupLongitude: Double,
+        destLatitude: Double,
+        destLongitude: Double
+    ) {
+        Log.i(TAG, "🤖 Starting AUTOMATION for $packageName")
+        Log.i(TAG, "   From: $pickup")
+        Log.i(TAG, "   To: $destination")
+
+        // Store trip details
+        pickupAddress = pickup
+        destinationAddress = destination
+        pickupLat = pickupLatitude
+        pickupLng = pickupLongitude
+        destLat = destLatitude
+        destLng = destLongitude
+
+        // Reset state
+        automationState = AutomationState.WAITING_FOR_APP
+        automationStep = 0
+        automationRetries = 0
+        monitoringPackage = packageName
+        isActiveMonitoring = true
+
+        // Start automation loop
+        startAutomationLoop(packageName)
+    }
+
+    private fun startAutomationLoop(packageName: String) {
+        scanRunnable = object : Runnable {
+            override fun run() {
+                if (isActiveMonitoring && automationState != AutomationState.IDLE) {
+                    performAutomationStep(packageName)
+
+                    // Continue if not done
+                    if (automationState != AutomationState.PRICE_CAPTURED &&
+                        automationState != AutomationState.FAILED &&
+                        automationState != AutomationState.IDLE) {
+                        scanHandler?.postDelayed(this, 800) // Check every 800ms
+                    }
+                }
+            }
+        }
+        scanHandler?.post(scanRunnable!!)
+    }
+
+    private fun performAutomationStep(packageName: String) {
+        val rootNode = rootInActiveWindow ?: run {
+            Log.w(TAG, "No active window")
+            return
+        }
+
+        try {
+            val currentPackage = rootNode.packageName?.toString() ?: return
+
+            // Wait for target app to be in foreground
+            if (currentPackage != packageName) {
+                Log.d(TAG, "Waiting for $packageName (currently: $currentPackage)")
+                return
+            }
+
+            when (automationState) {
+                AutomationState.WAITING_FOR_APP -> {
+                    Log.i(TAG, "✓ App is active, finding destination field...")
+                    automationState = AutomationState.FINDING_DESTINATION_FIELD
+                }
+
+                AutomationState.FINDING_DESTINATION_FIELD -> {
+                    val found = findAndClickDestinationField(rootNode, packageName)
+                    if (found) {
+                        Log.i(TAG, "✓ Found destination field, entering address...")
+                        automationState = AutomationState.ENTERING_DESTINATION
+                    } else {
+                        automationRetries++
+                        if (automationRetries > MAX_RETRIES) {
+                            Log.e(TAG, "✗ Failed to find destination field")
+                            automationState = AutomationState.FAILED
+                        }
+                    }
+                }
+
+                AutomationState.ENTERING_DESTINATION -> {
+                    val entered = enterDestinationText(rootNode, packageName)
+                    if (entered) {
+                        Log.i(TAG, "✓ Entered destination, waiting for suggestions...")
+                        automationState = AutomationState.WAITING_FOR_SUGGESTIONS
+                        automationRetries = 0
+                    }
+                }
+
+                AutomationState.WAITING_FOR_SUGGESTIONS -> {
+                    // Wait a moment then try to select
+                    automationStep++
+                    if (automationStep > 3) { // Wait ~2.4 seconds for suggestions
+                        automationState = AutomationState.SELECTING_SUGGESTION
+                        automationStep = 0
+                    }
+                }
+
+                AutomationState.SELECTING_SUGGESTION -> {
+                    val selected = selectFirstSuggestion(rootNode, packageName)
+                    if (selected) {
+                        Log.i(TAG, "✓ Selected suggestion, waiting for price...")
+                        automationState = AutomationState.WAITING_FOR_PRICE
+                        automationRetries = 0
+                    } else {
+                        automationRetries++
+                        if (automationRetries > MAX_RETRIES) {
+                            // Try scanning for price anyway
+                            automationState = AutomationState.WAITING_FOR_PRICE
+                        }
+                    }
+                }
+
+                AutomationState.WAITING_FOR_PRICE -> {
+                    val priceInfo = performAggressiveScan(packageName)
+                    if (priceInfo != null && priceInfo.price > 0) {
+                        Log.i(TAG, "✓ PRICE CAPTURED: ${priceInfo.price} EGP")
+                        automationState = AutomationState.PRICE_CAPTURED
+                        // Notify Flutter
+                        notifyPriceCaptured(priceInfo)
+                    } else {
+                        automationStep++
+                        if (automationStep > 10) { // Wait ~8 seconds for price
+                            Log.w(TAG, "✗ Timeout waiting for price")
+                            automationState = AutomationState.FAILED
+                        }
+                    }
+                }
+
+                else -> {}
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Automation error: ${e.message}")
+        } finally {
+            try { rootNode.recycle() } catch (e: Exception) {}
+        }
+    }
+
+    /**
+     * Find and click on the destination/search field
+     */
+    private fun findAndClickDestinationField(rootNode: AccessibilityNodeInfo, packageName: String): Boolean {
+        // App-specific field identifiers
+        val searchTexts = when (packageName) {
+            UBER_PACKAGE -> listOf("Where to?", "إلى أين؟", "Search", "بحث", "Enter destination")
+            CAREEM_PACKAGE -> listOf("Where to?", "إلى أين؟", "Search destination", "وجهتك")
+            INDRIVER_PACKAGE -> listOf("Where to?", "إلى أين؟", "To", "إلى")
+            DIDI_PACKAGE -> listOf("Where to?", "إلى أين؟", "Destination")
+            BOLT_PACKAGE -> listOf("Where to?", "إلى أين؟", "Search", "Enter destination")
+            else -> listOf("Where to?", "إلى أين؟", "Search", "Destination")
+        }
+
+        // Try to find by text
+        for (searchText in searchTexts) {
+            val nodes = rootNode.findAccessibilityNodeInfosByText(searchText)
+            for (node in nodes) {
+                if (node.isClickable || node.isEnabled) {
+                    val clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    if (clicked) {
+                        Log.i(TAG, "Clicked on: $searchText")
+                        node.recycle()
+                        return true
+                    }
+                }
+                // Try clicking parent if node isn't clickable
+                val parent = node.parent
+                if (parent != null && parent.isClickable) {
+                    val clicked = parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    parent.recycle()
+                    if (clicked) {
+                        Log.i(TAG, "Clicked on parent of: $searchText")
+                        node.recycle()
+                        return true
+                    }
+                }
+                node.recycle()
+            }
+        }
+
+        // Try to find EditText fields
+        return findAndClickEditText(rootNode)
+    }
+
+    private fun findAndClickEditText(node: AccessibilityNodeInfo): Boolean {
+        // Check if this is an editable field
+        if (node.className?.toString()?.contains("EditText") == true ||
+            node.isEditable) {
+            val hint = node.hintText?.toString()?.lowercase() ?: ""
+            val text = node.text?.toString()?.lowercase() ?: ""
+
+            // Look for destination-related fields
+            if (hint.contains("where") || hint.contains("destination") || hint.contains("إلى") ||
+                hint.contains("وجهة") || hint.contains("search") || hint.contains("بحث") ||
+                text.contains("where") || text.contains("إلى")) {
+
+                node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+                node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                Log.i(TAG, "Found and clicked EditText field")
+                return true
+            }
+        }
+
+        // Recursively check children
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (findAndClickEditText(child)) {
+                child.recycle()
+                return true
+            }
+            child.recycle()
+        }
+
+        return false
+    }
+
+    /**
+     * Enter destination text into focused field
+     */
+    private fun enterDestinationText(rootNode: AccessibilityNodeInfo, packageName: String): Boolean {
+        val focusedNode = rootNode.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        if (focusedNode != null) {
+            // Clear existing text
+            val args = android.os.Bundle()
+            args.putCharSequence(
+                AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                destinationAddress
+            )
+            val result = focusedNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+            focusedNode.recycle()
+
+            if (result) {
+                Log.i(TAG, "Entered destination: $destinationAddress")
+                return true
+            }
+        }
+
+        // Fallback: find any editable field and enter text
+        return enterTextIntoAnyEditText(rootNode, destinationAddress)
+    }
+
+    private fun enterTextIntoAnyEditText(node: AccessibilityNodeInfo, text: String): Boolean {
+        if (node.isEditable || node.className?.toString()?.contains("EditText") == true) {
+            val args = android.os.Bundle()
+            args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+            if (node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) {
+                Log.i(TAG, "Entered text into EditText")
+                return true
+            }
+        }
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (enterTextIntoAnyEditText(child, text)) {
+                child.recycle()
+                return true
+            }
+            child.recycle()
+        }
+
+        return false
+    }
+
+    /**
+     * Select the first search suggestion
+     */
+    private fun selectFirstSuggestion(rootNode: AccessibilityNodeInfo, packageName: String): Boolean {
+        // Look for suggestion list items
+        val suggestionClasses = listOf(
+            "android.widget.TextView",
+            "android.widget.LinearLayout",
+            "android.widget.RelativeLayout",
+            "android.widget.FrameLayout"
+        )
+
+        // Find RecyclerView or ListView containing suggestions
+        val listNode = findSuggestionList(rootNode)
+        if (listNode != null) {
+            // Get first visible item
+            for (i in 0 until minOf(listNode.childCount, 3)) {
+                val child = listNode.getChild(i) ?: continue
+                if (child.isClickable) {
+                    child.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    Log.i(TAG, "Clicked first suggestion from list")
+                    child.recycle()
+                    listNode.recycle()
+                    return true
+                }
+                // Try clicking child's child
+                for (j in 0 until child.childCount) {
+                    val grandChild = child.getChild(j) ?: continue
+                    if (grandChild.isClickable) {
+                        grandChild.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        grandChild.recycle()
+                        child.recycle()
+                        listNode.recycle()
+                        Log.i(TAG, "Clicked suggestion grandchild")
+                        return true
+                    }
+                    grandChild.recycle()
+                }
+                child.recycle()
+            }
+            listNode.recycle()
+        }
+
+        // Fallback: find any clickable item that contains part of destination
+        return clickFirstMatchingSuggestion(rootNode)
+    }
+
+    private fun findSuggestionList(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val className = node.className?.toString() ?: ""
+        if (className.contains("RecyclerView") || className.contains("ListView")) {
+            return AccessibilityNodeInfo.obtain(node)
+        }
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = findSuggestionList(child)
+            if (found != null) {
+                child.recycle()
+                return found
+            }
+            child.recycle()
+        }
+
+        return null
+    }
+
+    private fun clickFirstMatchingSuggestion(node: AccessibilityNodeInfo): Boolean {
+        // Look for items that might be suggestions
+        val text = node.text?.toString() ?: ""
+        val desc = node.contentDescription?.toString() ?: ""
+
+        // If this looks like a location suggestion
+        if ((text.isNotEmpty() || desc.isNotEmpty()) && node.isClickable) {
+            // Check if it's not just a label
+            val combined = "$text $desc".lowercase()
+            if (!combined.contains("where") && !combined.contains("search") &&
+                !combined.contains("إلى أين") && !combined.contains("بحث") &&
+                combined.length > 5) {
+                node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                Log.i(TAG, "Clicked matching suggestion: $text")
+                return true
+            }
+        }
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (clickFirstMatchingSuggestion(child)) {
+                child.recycle()
+                return true
+            }
+            child.recycle()
+        }
+
+        return false
+    }
+
+    private fun notifyPriceCaptured(priceInfo: PriceInfo) {
+        val intent = Intent(ACTION_PRICE_UPDATE).apply {
+            putExtra(EXTRA_PRICE_DATA, priceInfoToJson(priceInfo))
+            putExtra("automation_complete", true)
+            putExtra("source", "automation")
+        }
+        sendBroadcast(intent)
+    }
+
+    fun getAutomationState(): String = automationState.name
+
+    fun isAutomationComplete(): Boolean =
+        automationState == AutomationState.PRICE_CAPTURED ||
+        automationState == AutomationState.FAILED
+
+    fun resetAutomation() {
+        automationState = AutomationState.IDLE
+        automationStep = 0
+        automationRetries = 0
+        isActiveMonitoring = false
+        monitoringPackage = null
     }
 
     /**

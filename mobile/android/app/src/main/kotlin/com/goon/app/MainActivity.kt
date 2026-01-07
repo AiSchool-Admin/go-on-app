@@ -95,6 +95,43 @@ class MainActivity : FlutterActivity() {
                     result.success(PriceReaderService.monitoringPackage)
                 }
 
+                // ========== FULL AUTOMATION - إدخال تلقائي للوجهة ==========
+                "automateGetPrice" -> {
+                    val packageName = call.argument<String>("packageName") ?: ""
+                    val pickup = call.argument<String>("pickup") ?: ""
+                    val destination = call.argument<String>("destination") ?: ""
+                    val pickupLat = call.argument<Double>("pickupLat") ?: 0.0
+                    val pickupLng = call.argument<Double>("pickupLng") ?: 0.0
+                    val destLat = call.argument<Double>("destLat") ?: 0.0
+                    val destLng = call.argument<Double>("destLng") ?: 0.0
+
+                    Log.i(TAG, "🤖 Starting FULL AUTOMATION for $packageName")
+                    Log.i(TAG, "   Destination: $destination")
+
+                    // Start automation (will automatically enter destination & read price)
+                    PriceReaderService.instance?.automateGetPrice(
+                        packageName, pickup, destination,
+                        pickupLat, pickupLng, destLat, destLng
+                    )
+
+                    // Open the app
+                    val opened = openApp(packageName)
+                    result.success(opened)
+                }
+
+                "getAutomationState" -> {
+                    result.success(PriceReaderService.instance?.getAutomationState() ?: "IDLE")
+                }
+
+                "isAutomationComplete" -> {
+                    result.success(PriceReaderService.instance?.isAutomationComplete() ?: false)
+                }
+
+                "resetAutomation" -> {
+                    PriceReaderService.instance?.resetAutomation()
+                    result.success(true)
+                }
+
                 "getPriceForApp" -> {
                     val packageName = call.argument<String>("packageName") ?: ""
                     val price = PriceReaderService.instance?.getPriceForApp(packageName)

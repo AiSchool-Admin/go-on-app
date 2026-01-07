@@ -115,12 +115,13 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen>
     }
   }
 
-  /// MANUAL PRICE CAPTURE - The core technical solution
+  /// FULL AUTOMATION - The REAL technical solution
   /// 1. User taps "جلب السعر الحقيقي"
-  /// 2. Opens the ride app with active monitoring
-  /// 3. User sets up trip manually
-  /// 4. User returns to GO-ON
-  /// 5. Real price is captured and displayed
+  /// 2. Opens the ride app
+  /// 3. AUTOMATICALLY enters destination
+  /// 4. AUTOMATICALLY selects suggestion
+  /// 5. AUTOMATICALLY captures price
+  /// 6. User returns to GO-ON to see the price
   Future<void> _fetchRealPriceFor(PriceOption option) async {
     final packageName = _getPackageName(option.provider);
     if (packageName == null) return;
@@ -140,11 +141,11 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen>
       _awaitingReturn = true;
     });
 
-    // Show instruction dialog
-    _showPriceCaptureInstructions(option, packageName);
+    // Show automation dialog and start
+    _showAutomationDialog(option, packageName);
   }
 
-  void _showPriceCaptureInstructions(PriceOption option, String packageName) {
+  void _showAutomationDialog(PriceOption option, String packageName) {
     final nativeServices = ref.read(nativeServicesProvider);
 
     showDialog(
@@ -155,45 +156,60 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen>
           children: [
             Text(option.providerIcon, style: const TextStyle(fontSize: 24)),
             const SizedBox(width: 8),
-            Text('جلب سعر ${option.name}'),
+            Expanded(child: Text('جلب سعر ${option.name}')),
           ],
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'سيتم فتح التطبيق. قم بـ:',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 12),
-            _buildInstructionStep('1', 'أدخل نقطة الانطلاق'),
-            _buildInstructionStep('2', 'أدخل نقطة الوصول'),
-            _buildInstructionStep('3', 'انتظر حتى يظهر السعر'),
-            _buildInstructionStep('4', 'ارجع إلى GO-ON'),
-            const SizedBox(height: 16),
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 color: AppColors.success.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: AppColors.success.withOpacity(0.3)),
               ),
-              child: const Row(
+              child: Column(
                 children: [
-                  Icon(Icons.auto_awesome, color: AppColors.success, size: 20),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'سيتم التقاط السعر الحقيقي تلقائياً!',
-                      style: TextStyle(
-                        color: AppColors.success,
-                        fontWeight: FontWeight.bold,
-                      ),
+                  const Icon(Icons.auto_fix_high, color: AppColors.success, size: 40),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'أتمتة كاملة!',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.success,
                     ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'سيتم إدخال الوجهة تلقائياً:',
+                    style: TextStyle(
+                      color: Colors.grey[700],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    widget.destinationAddress,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                    ),
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ],
               ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'فقط ارجع إلى GO-ON بعد ظهور السعر',
+              style: TextStyle(
+                fontSize: 13,
+                color: AppColors.textSecondary,
+              ),
+              textAlign: TextAlign.center,
             ),
           ],
         ),
@@ -209,47 +225,26 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen>
             },
             child: const Text('إلغاء'),
           ),
-          ElevatedButton(
+          ElevatedButton.icon(
             onPressed: () async {
               Navigator.pop(context);
-              // Start monitoring and open app
-              await nativeServices.openAppAndMonitor(packageName);
+              // Start FULL AUTOMATION
+              await nativeServices.automateGetPrice(
+                packageName: packageName,
+                pickup: widget.originAddress,
+                destination: widget.destinationAddress,
+                pickupLat: widget.origin.latitude,
+                pickupLng: widget.origin.longitude,
+                destLat: widget.destination.latitude,
+                destLng: widget.destination.longitude,
+              );
             },
+            icon: const Icon(Icons.play_arrow),
+            label: const Text('ابدأ'),
             style: ElevatedButton.styleFrom(
               backgroundColor: _getProviderColor(option.provider),
             ),
-            child: const Text('افتح التطبيق'),
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildInstructionStep(String number, String text) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        children: [
-          Container(
-            width: 24,
-            height: 24,
-            decoration: const BoxDecoration(
-              color: AppColors.primary,
-              shape: BoxShape.circle,
-            ),
-            child: Center(
-              child: Text(
-                number,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 12,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Text(text, style: const TextStyle(fontSize: 14)),
         ],
       ),
     );
