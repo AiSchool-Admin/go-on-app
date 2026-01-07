@@ -278,79 +278,132 @@ class MainActivity : FlutterActivity() {
         dropoffAddress: String
     ): Boolean {
         return try {
-            val deepLink = when (packageName) {
+            when (packageName) {
                 PriceReaderService.UBER_PACKAGE -> {
-                    // Uber deep link format
-                    "uber://?action=setPickup" +
-                    "&pickup[latitude]=$pickupLat" +
-                    "&pickup[longitude]=$pickupLng" +
-                    "&pickup[nickname]=${android.net.Uri.encode(pickupAddress)}" +
-                    "&dropoff[latitude]=$dropoffLat" +
-                    "&dropoff[longitude]=$dropoffLng" +
-                    "&dropoff[nickname]=${android.net.Uri.encode(dropoffAddress)}"
+                    // Uber deep link - this works well
+                    val deepLink = "uber://?action=setPickup" +
+                        "&pickup[latitude]=$pickupLat" +
+                        "&pickup[longitude]=$pickupLng" +
+                        "&pickup[nickname]=${android.net.Uri.encode(pickupAddress)}" +
+                        "&dropoff[latitude]=$dropoffLat" +
+                        "&dropoff[longitude]=$dropoffLng" +
+                        "&dropoff[nickname]=${android.net.Uri.encode(dropoffAddress)}"
+                    openDeepLink(deepLink, packageName)
                 }
                 PriceReaderService.CAREEM_PACKAGE -> {
-                    // Careem deep link format
-                    "careem://booking?" +
-                    "pickup_lat=$pickupLat" +
-                    "&pickup_lng=$pickupLng" +
-                    "&dropoff_lat=$dropoffLat" +
-                    "&dropoff_lng=$dropoffLng" +
-                    "&pickup_name=${android.net.Uri.encode(pickupAddress)}" +
-                    "&dropoff_name=${android.net.Uri.encode(dropoffAddress)}"
+                    // Try multiple Careem deep link formats
+                    val success = tryMultipleDeepLinks(packageName, listOf(
+                        // Format 1: careem://booking
+                        "careem://booking?pickup_lat=$pickupLat&pickup_lng=$pickupLng" +
+                            "&dropoff_lat=$dropoffLat&dropoff_lng=$dropoffLng",
+                        // Format 2: careem://ride
+                        "careem://ride?pickup_latitude=$pickupLat&pickup_longitude=$pickupLng" +
+                            "&dropoff_latitude=$dropoffLat&dropoff_longitude=$dropoffLng",
+                        // Format 3: https scheme
+                        "https://app.careem.com/ride?pickup_lat=$pickupLat&pickup_lng=$pickupLng" +
+                            "&dropoff_lat=$dropoffLat&dropoff_lng=$dropoffLng"
+                    ))
+                    if (!success) openApp(packageName) else true
                 }
                 PriceReaderService.INDRIVER_PACKAGE -> {
-                    // InDriver - use intent with location data
-                    // InDriver doesn't have a public deep link API, so we open the app
-                    // and the user needs to enter the destination manually
-                    null
+                    // InDriver: Try geo intent then regular open
+                    val success = tryMultipleDeepLinks(packageName, listOf(
+                        // Try geo intent format
+                        "geo:$dropoffLat,$dropoffLng?q=$dropoffLat,$dropoffLng(${android.net.Uri.encode(dropoffAddress)})",
+                        // Try indriver scheme
+                        "indriver://order?from_lat=$pickupLat&from_lng=$pickupLng" +
+                            "&to_lat=$dropoffLat&to_lng=$dropoffLng"
+                    ))
+                    if (!success) openApp(packageName) else true
                 }
                 PriceReaderService.DIDI_PACKAGE -> {
-                    // DiDi deep link
-                    "didiglobal://ridenow?" +
-                    "olat=$pickupLat" +
-                    "&olng=$pickupLng" +
-                    "&dlat=$dropoffLat" +
-                    "&dlng=$dropoffLng" +
-                    "&oname=${android.net.Uri.encode(pickupAddress)}" +
-                    "&dname=${android.net.Uri.encode(dropoffAddress)}"
+                    // DiDi: Try multiple formats
+                    val success = tryMultipleDeepLinks(packageName, listOf(
+                        // Format 1
+                        "didiglobal://passenger?olat=$pickupLat&olng=$pickupLng" +
+                            "&dlat=$dropoffLat&dlng=$dropoffLng",
+                        // Format 2
+                        "didi://passenger/order?flat=$pickupLat&flng=$pickupLng" +
+                            "&tlat=$dropoffLat&tlng=$dropoffLng",
+                        // Format 3: HTTPS universal link
+                        "https://d.didiglobal.com/passenger?action=setPickup" +
+                            "&flat=$pickupLat&flng=$pickupLng&tlat=$dropoffLat&tlng=$dropoffLng"
+                    ))
+                    if (!success) openApp(packageName) else true
                 }
                 PriceReaderService.BOLT_PACKAGE -> {
-                    // Bolt deep link
-                    "bolt://ride?" +
-                    "pickup_lat=$pickupLat" +
-                    "&pickup_lng=$pickupLng" +
-                    "&dest_lat=$dropoffLat" +
-                    "&dest_lng=$dropoffLng" +
-                    "&pickup_addr=${android.net.Uri.encode(pickupAddress)}" +
-                    "&dest_addr=${android.net.Uri.encode(dropoffAddress)}"
+                    // Bolt: Try multiple formats
+                    val success = tryMultipleDeepLinks(packageName, listOf(
+                        // Format 1: bolt scheme with destination
+                        "bolt://r?pickup_lat=$pickupLat&pickup_lng=$pickupLng" +
+                            "&destination_lat=$dropoffLat&destination_lng=$dropoffLng",
+                        // Format 2
+                        "bolt://open?pickup_lat=$pickupLat&pickup_lng=$pickupLng" +
+                            "&drop_lat=$dropoffLat&drop_lng=$dropoffLng",
+                        // Format 3: HTTPS universal link
+                        "https://bolt.eu/ride?pickup_lat=$pickupLat&pickup_lng=$pickupLng" +
+                            "&destination_lat=$dropoffLat&destination_lng=$dropoffLng"
+                    ))
+                    if (!success) openApp(packageName) else true
                 }
-                else -> null
-            }
-
-            if (deepLink != null) {
-                val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(deepLink))
-                intent.setPackage(packageName)
-                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-
-                // Check if the app can handle this deep link
-                if (intent.resolveActivity(packageManager) != null) {
-                    startActivity(intent)
-                    Log.d(TAG, "Opened $packageName with deep link: $deepLink")
-                    return true
-                } else {
-                    // Fallback to regular app launch
-                    Log.w(TAG, "Deep link not supported by $packageName, using regular launch")
-                    return openApp(packageName)
-                }
-            } else {
-                // No deep link available, just open the app
-                return openApp(packageName)
+                else -> openApp(packageName)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error opening app with trip: $packageName - ${e.message}")
-            // Fallback to regular app open
-            return openApp(packageName)
+            openApp(packageName)
+        }
+    }
+
+    /**
+     * Try multiple deep link formats until one works
+     */
+    private fun tryMultipleDeepLinks(packageName: String, deepLinks: List<String>): Boolean {
+        for (deepLink in deepLinks) {
+            try {
+                val uri = android.net.Uri.parse(deepLink)
+                val intent = Intent(Intent.ACTION_VIEW, uri)
+
+                // For geo: intents, set the package to prefer the ride app
+                if (deepLink.startsWith("geo:")) {
+                    intent.setPackage(packageName)
+                } else {
+                    intent.setPackage(packageName)
+                }
+
+                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+
+                if (intent.resolveActivity(packageManager) != null) {
+                    startActivity(intent)
+                    Log.i(TAG, "✓ Opened $packageName with: $deepLink")
+                    return true
+                }
+            } catch (e: Exception) {
+                Log.d(TAG, "Deep link failed: $deepLink - ${e.message}")
+            }
+        }
+        return false
+    }
+
+    /**
+     * Open a single deep link
+     */
+    private fun openDeepLink(deepLink: String, packageName: String): Boolean {
+        return try {
+            val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(deepLink))
+            intent.setPackage(packageName)
+            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+
+            if (intent.resolveActivity(packageManager) != null) {
+                startActivity(intent)
+                Log.i(TAG, "✓ Opened $packageName with deep link")
+                true
+            } else {
+                Log.w(TAG, "Deep link not supported, opening app normally")
+                openApp(packageName)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Deep link error: ${e.message}")
+            openApp(packageName)
         }
     }
 
