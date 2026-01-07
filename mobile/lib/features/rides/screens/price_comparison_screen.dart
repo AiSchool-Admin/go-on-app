@@ -39,7 +39,40 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
   @override
   void initState() {
     super.initState();
-    _loadPrices();
+    _loadPricesAndFetchReal();
+  }
+
+  Future<void> _loadPricesAndFetchReal() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      // First load estimated prices
+      final rideService = ref.read(rideServiceProvider);
+      final options = await rideService.getPriceComparison(
+        origin: widget.origin,
+        destination: widget.destination,
+      );
+
+      if (mounted) {
+        setState(() {
+          _priceOptions = options;
+          _isLoading = false;
+        });
+
+        // Then automatically fetch real prices
+        _fetchRealPrices();
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = e.toString();
+          _isLoading = false;
+        });
+      }
+    }
   }
 
   Future<void> _loadPrices() async {
@@ -297,50 +330,51 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
             ),
           ),
 
-          // Fetch Real Prices Button
-          if (!_isLoading && _error == null && !_isFetchingRealPrices)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: _fetchRealPrices,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('جلب الأسعار الحقيقية'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.secondary,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-
-          // Fetching Progress
+          // Fetching Progress - shows automatically
           if (_isFetchingRealPrices)
             Container(
-              padding: const EdgeInsets.all(16),
-              child: Column(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppColors.primary.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.primary.withOpacity(0.3)),
+              ),
+              child: Row(
                 children: [
-                  const CircularProgressIndicator(),
-                  const SizedBox(height: 12),
-                  Text(
-                    'جاري جلب السعر من $_fetchingAppName...',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  const SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(strokeWidth: 2),
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '$_fetchingCurrent من $_fetchingTotal',
-                    style: const TextStyle(color: AppColors.textSecondary),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'جاري جلب الأسعار الحقيقية من $_fetchingAppName',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        LinearProgressIndicator(
+                          value: _fetchingTotal > 0 ? _fetchingCurrent / _fetchingTotal : 0,
+                          backgroundColor: AppColors.divider,
+                          valueColor: const AlwaysStoppedAnimation<Color>(AppColors.primary),
+                        ),
+                      ],
+                    ),
                   ),
-                  const SizedBox(height: 8),
-                  LinearProgressIndicator(
-                    value: _fetchingTotal > 0 ? _fetchingCurrent / _fetchingTotal : 0,
-                    backgroundColor: AppColors.divider,
-                    valueColor: const AlwaysStoppedAnimation<Color>(AppColors.primary),
+                  const SizedBox(width: 8),
+                  Text(
+                    '$_fetchingCurrent/$_fetchingTotal',
+                    style: const TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 12,
+                    ),
                   ),
                 ],
               ),
@@ -652,6 +686,127 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
   }
 
   Future<void> _onSelectOption(PriceOption option) async {
+    // Show booking confirmation bottom sheet
+    _showBookingConfirmation(option);
+  }
+
+  void _showBookingConfirmation(PriceOption option) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => Container(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Handle
+            Container(
+              width: 40,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: 20),
+              decoration: BoxDecoration(
+                color: AppColors.divider,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            // Title
+            Text(
+              'حجز مع ${option.name}',
+              style: const TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 20),
+            // Price
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'السعر',
+                  style: TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 16,
+                  ),
+                ),
+                Text(
+                  option.formattedPrice,
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: _getProviderColor(option.provider),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            // Badge
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: option.isEstimate
+                        ? AppColors.warning.withOpacity(0.1)
+                        : AppColors.success.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    option.isEstimate ? 'سعر تقديري' : 'سعر حقيقي',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: option.isEstimate ? AppColors.warning : AppColors.success,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+            // Confirm Button
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  _confirmBooking(option);
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _getProviderColor(option.provider),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: Text(
+                  option.provider == 'GO-ON' ? 'تواصل عبر واتساب' : 'تأكيد الحجز',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            // Cancel Button
+            SizedBox(
+              width: double.infinity,
+              child: TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('إلغاء'),
+              ),
+            ),
+            SizedBox(height: MediaQuery.of(context).padding.bottom),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmBooking(PriceOption option) async {
     final nativeServices = ref.read(nativeServicesProvider);
 
     if (option.provider == 'GO-ON') {
