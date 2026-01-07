@@ -18,6 +18,7 @@ class PriceOption {
   final bool isAvailable;
   final bool isBestPrice;
   final bool isEstimate;
+  final double surgeMultiplier;
 
   PriceOption({
     required this.id,
@@ -38,6 +39,7 @@ class PriceOption {
     this.isAvailable = true,
     this.isBestPrice = false,
     this.isEstimate = false,
+    this.surgeMultiplier = 1.0,
   });
 
   String get formattedPrice => '${price.round()} ج.م';
@@ -47,6 +49,10 @@ class PriceOption {
   String get formattedDuration => '$estimatedMinutes دقيقة';
 
   String get formattedRating => rating?.toStringAsFixed(1) ?? '-';
+
+  bool get hasSurge => surgeMultiplier > 1.05;
+
+  int get surgePercent => ((surgeMultiplier - 1) * 100).round();
 
   String get providerIcon {
     switch (provider.toLowerCase()) {
@@ -118,6 +124,7 @@ class PriceOption {
     bool? isAvailable,
     bool? isBestPrice,
     bool? isEstimate,
+    double? surgeMultiplier,
   }) {
     return PriceOption(
       id: id ?? this.id,
@@ -138,6 +145,7 @@ class PriceOption {
       isAvailable: isAvailable ?? this.isAvailable,
       isBestPrice: isBestPrice ?? this.isBestPrice,
       isEstimate: isEstimate ?? this.isEstimate,
+      surgeMultiplier: surgeMultiplier ?? this.surgeMultiplier,
     );
   }
 }

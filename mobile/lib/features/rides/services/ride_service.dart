@@ -7,6 +7,7 @@ import '../../../core/services/supabase_service.dart';
 import '../../../core/services/native_services.dart';
 import '../models/driver_model.dart';
 import '../models/price_option.dart';
+import 'egypt_pricing_service.dart';
 
 /// Service for ride-related operations
 class RideService {
@@ -29,48 +30,33 @@ class RideService {
             sin(dLon / 2);
 
     final c = 2 * atan2(sqrt(a), sqrt(1 - a));
-    return earthRadius * c;
+
+    // Add 20% for road distance vs straight line
+    return earthRadius * c * 1.20;
   }
 
   double _toRadians(double degree) => degree * pi / 180;
 
   /// Calculate estimated time in minutes based on distance
   int calculateEstimatedMinutes(double distanceKm) {
-    // Average speed in Cairo traffic: ~25 km/h
-    const averageSpeedKmH = 25.0;
-    return ((distanceKm / averageSpeedKmH) * 60).round();
-  }
+    // Average speed in Cairo traffic varies by time
+    final hour = DateTime.now().hour;
+    double avgSpeed;
 
-  /// Calculate price for independent driver
-  double calculateIndependentDriverPrice(double distanceKm) {
-    // Pricing from app_config
-    const baseFare = 15.0;
-    const perKmRate = 3.5;
-    const minimumFare = 20.0;
-
-    final price = baseFare + (distanceKm * perKmRate);
-    return price < minimumFare ? minimumFare : price;
-  }
-
-  /// Get pricing config from Supabase
-  Future<Map<String, dynamic>> getPricingConfig() async {
-    try {
-      final response = await _client
-          .from('app_config')
-          .select('value')
-          .eq('key', 'pricing')
-          .single();
-      return response['value'] as Map<String, dynamic>;
-    } catch (e) {
-      // Return default pricing if config not found
-      return {
-        'base_fare': 15,
-        'per_km_rate': 3.5,
-        'per_minute_rate': 0.5,
-        'minimum_fare': 20,
-        'commission_rate': 0.15,
-      };
+    // Rush hours - slower
+    if ((hour >= 7 && hour < 10) || (hour >= 16 && hour < 20)) {
+      avgSpeed = 18.0; // km/h in traffic
     }
+    // Night - faster
+    else if (hour >= 22 || hour < 6) {
+      avgSpeed = 35.0;
+    }
+    // Normal hours
+    else {
+      avgSpeed = 25.0;
+    }
+
+    return ((distanceKm / avgSpeed) * 60).round();
   }
 
   /// Find nearby drivers from Supabase
@@ -79,7 +65,6 @@ class RideService {
     double radiusKm = 10,
   }) async {
     try {
-      // Call the PostgreSQL function
       final response = await _client.rpc('find_nearby_drivers', params: {
         'user_location':
             'POINT(${userLocation.longitude} ${userLocation.latitude})',
@@ -94,7 +79,6 @@ class RideService {
           .toList();
     } catch (e) {
       print('Error finding nearby drivers: $e');
-      // Return mock data if database not set up
       return _getMockDrivers(userLocation);
     }
   }
@@ -118,28 +102,43 @@ class RideService {
   }
 
   /// Get price comparison for a route
+  /// Uses accurate Egyptian pricing formulas
   Future<List<PriceOption>> getPriceComparison({
     required LatLng origin,
     required LatLng destination,
   }) async {
     final distanceKm = calculateDistance(origin, destination);
     final estimatedMinutes = calculateEstimatedMinutes(distanceKm);
+    final now = DateTime.now();
 
     // Get nearby drivers for independent option
     final nearbyDrivers = await findNearbyDrivers(userLocation: origin);
 
-    // Try to get real prices from accessibility service
+    // Get calculated prices using Egyptian pricing formulas
+    final calculatedPrices = EgyptPricingService.getAllPrices(
+      distanceKm: distanceKm,
+      estimatedMinutes: estimatedMinutes,
+      tripTime: now,
+    );
+
+    // Try to get real prices from accessibility service (if available)
     final realPrices = await _nativeServices.getLatestPrices();
     final realPricesMap = <String, double>{};
     for (final price in realPrices) {
-      realPricesMap[price.packageName] = price.price;
+      if (price.price > 0) {
+        realPricesMap[price.packageName] = price.price;
+      }
     }
 
     final options = <PriceOption>[];
 
-    // 1. Independent Drivers (from our database)
+    // Check surge pricing
+    final hasSurge = EgyptPricingService.hasSurgePricing(now);
+    final surgeDescription = EgyptPricingService.getSurgeDescription(now);
+
+    // 1. GO-ON Independent Drivers (cheapest)
     if (nearbyDrivers.isNotEmpty) {
-      final independentPrice = calculateIndependentDriverPrice(distanceKm);
+      final independentPrice = calculatedPrices['independent']!.price;
       final bestDriver = nearbyDrivers.first;
 
       options.add(PriceOption(
@@ -149,7 +148,7 @@ class RideService {
         price: independentPrice,
         currency: 'EGP',
         estimatedMinutes: estimatedMinutes,
-        etaMinutes: 5, // Based on nearest driver
+        etaMinutes: 5,
         rating: bestDriver.rating,
         totalRides: bestDriver.totalRides,
         driverName: bestDriver.name,
@@ -158,89 +157,94 @@ class RideService {
         vehicleColor: bestDriver.vehicleColor,
         isAvailable: true,
         isBestPrice: true,
+        isEstimate: false, // Our direct price
       ));
 
-      // Set GO-ON best price for overlay comparison
       _nativeServices.setGoonBestPrice(independentPrice);
     }
 
-    // 2. Prices from other apps
-    // Use REAL prices from accessibility service if available
-    // Otherwise use estimates based on our pricing model + markup
-
-    // InDrive
-    final indriverRealPrice = realPricesMap[NativeServicesManager.indriverPackage];
-    options.add(PriceOption(
-      id: 'indriver',
-      name: 'إندرايف',
-      provider: 'InDriver',
-      price: indriverRealPrice ?? calculateIndependentDriverPrice(distanceKm) * 1.15,
-      currency: 'EGP',
-      estimatedMinutes: estimatedMinutes,
-      etaMinutes: 4,
-      isAvailable: true,
-      isEstimate: indriverRealPrice == null, // Mark as estimate if no real price
-      category: 'Economy',
-    ));
-
-    // Careem
-    final careemRealPrice = realPricesMap[NativeServicesManager.careemPackage];
-    options.add(PriceOption(
-      id: 'careem',
-      name: 'كريم',
-      provider: 'Careem',
-      price: careemRealPrice ?? calculateIndependentDriverPrice(distanceKm) * 1.38,
-      currency: 'EGP',
-      estimatedMinutes: estimatedMinutes,
-      etaMinutes: 4,
-      isAvailable: true,
-      isEstimate: careemRealPrice == null,
-      category: 'Go',
-    ));
-
-    // Uber
-    final uberRealPrice = realPricesMap[NativeServicesManager.uberPackage];
-    options.add(PriceOption(
-      id: 'uber',
-      name: 'أوبر',
-      provider: 'Uber',
-      price: uberRealPrice ?? calculateIndependentDriverPrice(distanceKm) * 1.46,
-      currency: 'EGP',
-      estimatedMinutes: estimatedMinutes,
-      etaMinutes: 3,
-      isAvailable: true,
-      isEstimate: uberRealPrice == null,
-      category: 'UberX',
-    ));
-
-    // DiDi
+    // 2. DiDi - Usually cheapest app
     final didiRealPrice = realPricesMap[NativeServicesManager.didiPackage];
+    final didiCalcPrice = calculatedPrices['didi']!.price;
     options.add(PriceOption(
       id: 'didi',
       name: 'ديدي',
       provider: 'DiDi',
-      price: didiRealPrice ?? calculateIndependentDriverPrice(distanceKm) * 1.25,
+      price: didiRealPrice ?? didiCalcPrice,
       currency: 'EGP',
       estimatedMinutes: estimatedMinutes,
       etaMinutes: 5,
       isAvailable: true,
       isEstimate: didiRealPrice == null,
       category: 'DiDi Express',
+      surgeMultiplier: calculatedPrices['didi']!.surge,
     ));
 
-    // Bolt
+    // 3. InDriver
+    final indriverRealPrice = realPricesMap[NativeServicesManager.indriverPackage];
+    final indriverCalcPrice = calculatedPrices['indriver']!.price;
+    options.add(PriceOption(
+      id: 'indriver',
+      name: 'إندرايف',
+      provider: 'InDriver',
+      price: indriverRealPrice ?? indriverCalcPrice,
+      currency: 'EGP',
+      estimatedMinutes: estimatedMinutes,
+      etaMinutes: 4,
+      isAvailable: true,
+      isEstimate: indriverRealPrice == null,
+      category: 'السعر المقترح',
+    ));
+
+    // 4. Bolt
     final boltRealPrice = realPricesMap[NativeServicesManager.boltPackage];
+    final boltCalcPrice = calculatedPrices['bolt']!.price;
     options.add(PriceOption(
       id: 'bolt',
       name: 'بولت',
       provider: 'Bolt',
-      price: boltRealPrice ?? calculateIndependentDriverPrice(distanceKm) * 1.20,
+      price: boltRealPrice ?? boltCalcPrice,
       currency: 'EGP',
       estimatedMinutes: estimatedMinutes,
       etaMinutes: 4,
       isAvailable: true,
       isEstimate: boltRealPrice == null,
       category: 'Bolt',
+      surgeMultiplier: calculatedPrices['bolt']!.surge,
+    ));
+
+    // 5. Careem
+    final careemRealPrice = realPricesMap[NativeServicesManager.careemPackage];
+    final careemCalcPrice = calculatedPrices['careem']!.price;
+    options.add(PriceOption(
+      id: 'careem',
+      name: 'كريم',
+      provider: 'Careem',
+      price: careemRealPrice ?? careemCalcPrice,
+      currency: 'EGP',
+      estimatedMinutes: estimatedMinutes,
+      etaMinutes: 4,
+      isAvailable: true,
+      isEstimate: careemRealPrice == null,
+      category: 'Go',
+      surgeMultiplier: calculatedPrices['careem']!.surge,
+    ));
+
+    // 6. Uber - Usually most expensive
+    final uberRealPrice = realPricesMap[NativeServicesManager.uberPackage];
+    final uberCalcPrice = calculatedPrices['uber']!.price;
+    options.add(PriceOption(
+      id: 'uber',
+      name: 'أوبر',
+      provider: 'Uber',
+      price: uberRealPrice ?? uberCalcPrice,
+      currency: 'EGP',
+      estimatedMinutes: estimatedMinutes,
+      etaMinutes: 3,
+      isAvailable: true,
+      isEstimate: uberRealPrice == null,
+      category: 'UberX',
+      surgeMultiplier: calculatedPrices['uber']!.surge,
     ));
 
     // Sort by price
