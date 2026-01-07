@@ -6,7 +6,6 @@ buildscript {
     }
 
     dependencies {
-        classpath 'com.android.tools.build:gradle:8.9.1'
         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
     }
 }
@@ -19,14 +18,14 @@ allprojects {
 
     // Define SDK versions globally for all subprojects
     ext {
-        compileSdkVersion = 36
-        targetSdkVersion = 35
+        compileSdkVersion = 34
+        targetSdkVersion = 34
         minSdkVersion = 24
 
         // Create flutter object for plugins that need it
         flutter = [
-            compileSdkVersion: 36,
-            targetSdkVersion: 35,
+            compileSdkVersion: 34,
+            targetSdkVersion: 34,
             minSdkVersion: 24
         ]
     }
@@ -42,6 +41,17 @@ subprojects {
     // Exclude flutter_local_notifications if pulled in as transitive dependency
     project.configurations.all {
         exclude group: 'com.dexterous.flutterlocalnotifications', module: 'flutter_local_notifications'
+    }
+
+    // Force compatible versions of androidx libraries
+    project.configurations.all {
+        resolutionStrategy {
+            force 'androidx.core:core:1.12.0'
+            force 'androidx.core:core-ktx:1.12.0'
+            force 'androidx.activity:activity:1.8.2'
+            force 'androidx.activity:activity-ktx:1.8.2'
+            force 'androidx.browser:browser:1.7.0'
+        }
     }
 }
 

@@ -24,7 +24,7 @@ if (flutterVersionName == null) {
 
 android {
     namespace "com.goon.app"
-    compileSdk 36
+    compileSdk 34
 
     compileOptions {
         coreLibraryDesugaringEnabled true
@@ -43,7 +43,7 @@ android {
     defaultConfig {
         applicationId "com.goon.app"
         minSdk 24
-        targetSdk 35
+        targetSdk 34
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
         multiDexEnabled true
