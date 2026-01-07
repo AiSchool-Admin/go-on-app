@@ -12,12 +12,16 @@ class AppPrice {
   final String appName;
   final String packageName;
   final double price;
+  final String serviceType;
+  final int eta;
   final DateTime timestamp;
 
   AppPrice({
     required this.appName,
     required this.packageName,
     required this.price,
+    this.serviceType = '',
+    this.eta = 0,
     required this.timestamp,
   });
 
@@ -26,6 +30,8 @@ class AppPrice {
       appName: json['appName'] ?? '',
       packageName: json['packageName'] ?? '',
       price: (json['price'] ?? 0).toDouble(),
+      serviceType: json['serviceType'] ?? '',
+      eta: json['eta'] ?? 0,
       timestamp: DateTime.fromMillisecondsSinceEpoch(json['timestamp'] ?? 0),
     );
   }
@@ -88,6 +94,17 @@ class NativeServicesManager {
     }
   }
 
+  /// Check if the price reader service is active
+  Future<bool> isServiceActive() async {
+    try {
+      final result = await _channel.invokeMethod<bool>('isServiceActive');
+      return result ?? false;
+    } on PlatformException catch (e) {
+      print('Error checking service active: ${e.message}');
+      return false;
+    }
+  }
+
   /// Open accessibility settings for user to enable the service
   Future<void> openAccessibilitySettings() async {
     try {
@@ -110,6 +127,39 @@ class NativeServicesManager {
     } on PlatformException catch (e) {
       print('Error getting prices: ${e.message}');
       return [];
+    }
+  }
+
+  /// Get price for a specific app
+  Future<double?> getPriceForApp(String packageName) async {
+    try {
+      final result = await _channel.invokeMethod<double>('getPriceForApp', {
+        'packageName': packageName,
+      });
+      return result;
+    } on PlatformException catch (e) {
+      print('Error getting price for app: ${e.message}');
+      return null;
+    }
+  }
+
+  /// Actively scan the current foreground app for prices
+  Future<AppPrice?> scanCurrentApp() async {
+    try {
+      final result = await _channel.invokeMethod<Map<dynamic, dynamic>>('scanCurrentApp');
+      if (result == null) return null;
+
+      return AppPrice(
+        appName: result['appName'] ?? '',
+        packageName: result['packageName'] ?? '',
+        price: (result['price'] ?? 0).toDouble(),
+        serviceType: result['serviceType'] ?? '',
+        eta: result['eta'] ?? 0,
+        timestamp: DateTime.now(),
+      );
+    } on PlatformException catch (e) {
+      print('Error scanning current app: ${e.message}');
+      return null;
     }
   }
 
@@ -288,6 +338,11 @@ class NativeServicesManager {
     final installedApps = await getInstalledRideApps();
     final prices = <String, double>{};
 
+    if (installedApps.isEmpty) {
+      print('No ride apps installed');
+      return prices;
+    }
+
     // Clear old prices
     await clearPrices();
 
@@ -296,9 +351,10 @@ class NativeServicesManager {
       final appName = _getAppName(packageName);
 
       onProgress?.call(appName, i + 1, installedApps.length);
+      print('Fetching price from $appName ($packageName)...');
 
       // Open the app with trip details
-      await fetchPriceFromApp(
+      final opened = await fetchPriceFromApp(
         packageName: packageName,
         pickupLat: pickupLat,
         pickupLng: pickupLng,
@@ -308,21 +364,54 @@ class NativeServicesManager {
         dropoffAddress: dropoffAddress,
       );
 
-      // Wait for app to load and show prices
-      await Future.delayed(const Duration(seconds: 4));
+      if (!opened) {
+        print('Failed to open $appName');
+        continue;
+      }
 
-      // Get the captured price
-      final latestPrices = await getLatestPrices();
-      final appPrice = latestPrices.where((p) => p.packageName == packageName).firstOrNull;
-      if (appPrice != null) {
-        prices[packageName] = appPrice.price;
+      // Wait for app to load and show prices (increased to 6 seconds)
+      await Future.delayed(const Duration(seconds: 6));
+
+      // Try to get the captured price with retries
+      double? capturedPrice;
+      for (int retry = 0; retry < 3; retry++) {
+        // First try to get from stored prices
+        final latestPrices = await getLatestPrices();
+        final appPrice = latestPrices.where((p) => p.packageName == packageName).firstOrNull;
+
+        if (appPrice != null && appPrice.price > 0) {
+          capturedPrice = appPrice.price;
+          print('✓ Got price from $appName: ${appPrice.price} EGP (from stored)');
+          break;
+        }
+
+        // Also try direct query
+        final directPrice = await getPriceForApp(packageName);
+        if (directPrice != null && directPrice > 0) {
+          capturedPrice = directPrice;
+          print('✓ Got price from $appName: $directPrice EGP (direct)');
+          break;
+        }
+
+        // Wait a bit more if no price yet
+        if (retry < 2) {
+          print('No price yet from $appName, waiting... (retry ${retry + 1})');
+          await Future.delayed(const Duration(seconds: 2));
+        }
+      }
+
+      if (capturedPrice != null) {
+        prices[packageName] = capturedPrice;
+      } else {
+        print('✗ Could not get price from $appName');
       }
 
       // Return to GO-ON
       await returnToApp();
-      await Future.delayed(const Duration(milliseconds: 500));
+      await Future.delayed(const Duration(milliseconds: 800));
     }
 
+    print('Fetched ${prices.length} prices from ${installedApps.length} apps');
     return prices;
   }
 

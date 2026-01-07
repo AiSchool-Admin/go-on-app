@@ -3,6 +3,8 @@ package com.goon.app
 import android.content.ComponentName
 import android.content.Intent
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.text.TextUtils
 import android.util.Log
@@ -26,6 +28,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private var methodChannel: MethodChannel? = null
+    private val handler = Handler(Looper.getMainLooper())
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -53,6 +56,32 @@ class MainActivity : FlutterActivity() {
                 "clearPrices" -> {
                     PriceReaderService.instance?.clearPrices()
                     result.success(true)
+                }
+
+                "scanCurrentApp" -> {
+                    // Actively scan the current foreground app for prices
+                    val priceInfo = PriceReaderService.instance?.scanCurrentApp()
+                    if (priceInfo != null) {
+                        result.success(mapOf(
+                            "appName" to priceInfo.appName,
+                            "packageName" to priceInfo.packageName,
+                            "price" to priceInfo.price,
+                            "serviceType" to priceInfo.serviceType,
+                            "eta" to priceInfo.eta
+                        ))
+                    } else {
+                        result.success(null)
+                    }
+                }
+
+                "getPriceForApp" -> {
+                    val packageName = call.argument<String>("packageName") ?: ""
+                    val price = PriceReaderService.instance?.getPriceForApp(packageName)
+                    result.success(price)
+                }
+
+                "isServiceActive" -> {
+                    result.success(PriceReaderService.instance?.isActive() ?: false)
                 }
 
                 // ============ Floating Overlay Methods ============
@@ -128,13 +157,13 @@ class MainActivity : FlutterActivity() {
                     val dropoffAddress = call.argument<String>("dropoffAddress") ?: ""
 
                     // Open app with trip details
-                    openAppWithTrip(
+                    val opened = openAppWithTrip(
                         packageName,
                         pickupLat, pickupLng,
                         dropoffLat, dropoffLng,
                         pickupAddress, dropoffAddress
                     )
-                    result.success(true)
+                    result.success(opened)
                 }
 
                 "returnToApp" -> {
