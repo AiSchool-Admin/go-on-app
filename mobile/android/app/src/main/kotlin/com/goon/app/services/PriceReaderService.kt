@@ -951,18 +951,16 @@ class PriceReaderService : AccessibilityService() {
                 }
             }
 
-            // Remove duplicates and select the LOWEST price
+            // Remove duplicates and select price based on user preference
             val uniquePrices = allPrices.distinct()
             Log.i(TAG, "📊 ALL prices found (unique): $uniquePrices")
 
             if (uniquePrices.isNotEmpty()) {
-                // ALWAYS select the LOWEST price
-                val lowestPrice = uniquePrices.filter { it in 15.0..1000.0 }.minOrNull()
-                    ?: uniquePrices.minOrNull()
-                    ?: uniquePrices[0]
+                // Select price based on user preference
+                val selectedPrice = selectPriceByPreference(uniquePrices)
 
-                Log.i(TAG, "✅ SELECTED LOWEST PRICE: $lowestPrice EGP (from ${uniquePrices.size} candidates)")
-                return savePriceInfo(currentPackage, lowestPrice, "combined_scan", uniquePrices, priceTexts)
+                Log.i(TAG, "✅ SELECTED PRICE: $selectedPrice EGP (preference: $rideSortPreference, from ${uniquePrices.size} candidates)")
+                return savePriceInfo(currentPackage, selectedPrice, "combined_scan", uniquePrices, priceTexts)
             }
 
             Log.w(TAG, "No prices found in $currentPackage (scanned ${allText.size} elements)")
@@ -1081,30 +1079,31 @@ class PriceReaderService : AccessibilityService() {
     }
 
     /**
-     * Select the best price from candidates based on user preference
-     * Preferences: lowest_price, best_service, fastest_arrival
+     * Select price based on user preference
+     * - lowest_price: أقل سعر → select minimum
+     * - best_service: أفضل خدمة → select premium/comfort tier (higher price = better service)
+     * - fastest_arrival: أسرع وصول → select economy tier (more drivers available)
      */
-    private fun selectBestPrice(prices: List<Double>, packageName: String): Double {
+    private fun selectPriceByPreference(prices: List<Double>): Double {
         if (prices.isEmpty()) return 0.0
         if (prices.size == 1) return prices[0]
 
-        // Filter to reasonable ride prices (15-1000 EGP typically)
+        // Filter to reasonable ride prices (15-1000 EGP)
         val reasonable = prices.filter { it in 15.0..1000.0 }
         if (reasonable.isEmpty()) return prices.minOrNull() ?: 0.0
 
         val selectedPrice = when (rideSortPreference) {
             "lowest_price" -> {
-                // Always return the lowest price
+                // أقل سعر - select the cheapest option
                 reasonable.minOrNull() ?: reasonable[0]
             }
             "best_service" -> {
-                // For best service, we still return lowest price from THIS app
-                // The comparison between apps happens in Flutter based on ratings
-                reasonable.minOrNull() ?: reasonable[0]
+                // أفضل خدمة - select premium tier (higher price = better service)
+                // Usually: Comfort > Standard > Economy
+                reasonable.maxOrNull() ?: reasonable[0]
             }
             "fastest_arrival" -> {
-                // For fastest arrival, we still return lowest price from THIS app
-                // The comparison between apps happens in Flutter based on ETA
+                // أسرع وصول - select economy tier (more drivers = faster pickup)
                 reasonable.minOrNull() ?: reasonable[0]
             }
             else -> {
@@ -1112,7 +1111,7 @@ class PriceReaderService : AccessibilityService() {
             }
         }
 
-        Log.i(TAG, "📊 Prices: $reasonable | Preference: $rideSortPreference | Selected: $selectedPrice")
+        Log.i(TAG, "📊 selectPriceByPreference: prices=$reasonable, preference=$rideSortPreference, selected=$selectedPrice")
         return selectedPrice
     }
 
