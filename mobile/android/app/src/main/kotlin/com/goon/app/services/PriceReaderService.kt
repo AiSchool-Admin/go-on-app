@@ -260,7 +260,7 @@ class PriceReaderService : AccessibilityService() {
 
     private fun performAutomationStep(packageName: String) {
         val rootNode = rootInActiveWindow ?: run {
-            Log.w(TAG, "No active window")
+            Log.w(TAG, "🤖 No active window available")
             return
         }
 
@@ -269,87 +269,119 @@ class PriceReaderService : AccessibilityService() {
 
             // Wait for target app to be in foreground
             if (currentPackage != packageName) {
-                Log.d(TAG, "Waiting for $packageName (currently: $currentPackage)")
+                Log.d(TAG, "🤖 Waiting for $packageName (currently: $currentPackage)")
                 return
             }
 
+            Log.i(TAG, "🤖 ========================================")
+            Log.i(TAG, "🤖 AUTOMATION STATE: $automationState")
+            Log.i(TAG, "🤖 Package: $packageName")
+            Log.i(TAG, "🤖 Retries: $automationRetries / $MAX_RETRIES")
+            Log.i(TAG, "🤖 Step: $automationStep")
+            Log.i(TAG, "🤖 ========================================")
+
             when (automationState) {
                 AutomationState.WAITING_FOR_APP -> {
-                    Log.i(TAG, "✓ App is active, finding destination field...")
+                    Log.i(TAG, "🤖 ✓ App is active, transitioning to FINDING_DESTINATION_FIELD...")
                     automationState = AutomationState.FINDING_DESTINATION_FIELD
                 }
 
                 AutomationState.FINDING_DESTINATION_FIELD -> {
+                    Log.i(TAG, "🤖 Searching for destination field...")
                     val found = findAndClickDestinationField(rootNode, packageName)
                     if (found) {
-                        Log.i(TAG, "✓ Found destination field, entering address...")
+                        Log.i(TAG, "🤖 ✓✓✓ Found destination field! Transitioning to ENTERING_DESTINATION...")
                         automationState = AutomationState.ENTERING_DESTINATION
+                        automationRetries = 0
                     } else {
                         automationRetries++
+                        Log.w(TAG, "🤖 ✗ Destination field not found (attempt $automationRetries/$MAX_RETRIES)")
                         if (automationRetries > MAX_RETRIES) {
-                            Log.e(TAG, "✗ Failed to find destination field")
+                            Log.e(TAG, "🤖 ✗✗✗ FAILED: Max retries exceeded for finding destination field")
                             automationState = AutomationState.FAILED
                         }
                     }
                 }
 
                 AutomationState.ENTERING_DESTINATION -> {
+                    Log.i(TAG, "🤖 Entering destination text: '$destinationAddress'")
                     val entered = enterDestinationText(rootNode, packageName)
                     if (entered) {
-                        Log.i(TAG, "✓ Entered destination, waiting for suggestions...")
+                        Log.i(TAG, "🤖 ✓ Entered destination, transitioning to WAITING_FOR_SUGGESTIONS...")
                         automationState = AutomationState.WAITING_FOR_SUGGESTIONS
                         automationRetries = 0
+                        automationStep = 0
+                    } else {
+                        Log.w(TAG, "🤖 ✗ Failed to enter destination text")
+                        automationRetries++
+                        if (automationRetries > 3) {
+                            // Skip to suggestion selection anyway
+                            Log.w(TAG, "🤖 Skipping to WAITING_FOR_SUGGESTIONS despite enter failure")
+                            automationState = AutomationState.WAITING_FOR_SUGGESTIONS
+                            automationRetries = 0
+                        }
                     }
                 }
 
                 AutomationState.WAITING_FOR_SUGGESTIONS -> {
                     // Wait a moment then try to select
                     automationStep++
-                    if (automationStep > 3) { // Wait ~2.4 seconds for suggestions
+                    Log.i(TAG, "🤖 Waiting for suggestions (step $automationStep/3)...")
+                    if (automationStep > 3) { // Wait ~3.6 seconds for suggestions
+                        Log.i(TAG, "🤖 Transitioning to SELECTING_SUGGESTION...")
                         automationState = AutomationState.SELECTING_SUGGESTION
                         automationStep = 0
                     }
                 }
 
                 AutomationState.SELECTING_SUGGESTION -> {
+                    Log.i(TAG, "🤖 Selecting first suggestion...")
                     val selected = selectFirstSuggestion(rootNode, packageName)
                     if (selected) {
-                        Log.i(TAG, "✓ Selected suggestion, waiting for price...")
+                        Log.i(TAG, "🤖 ✓ Selected suggestion, transitioning to WAITING_FOR_PRICE...")
                         automationState = AutomationState.WAITING_FOR_PRICE
                         automationRetries = 0
+                        automationStep = 0
                     } else {
                         automationRetries++
+                        Log.w(TAG, "🤖 ✗ No suggestion selected (attempt $automationRetries/$MAX_RETRIES)")
                         if (automationRetries > MAX_RETRIES) {
                             // Try scanning for price anyway
+                            Log.w(TAG, "🤖 Skipping to WAITING_FOR_PRICE despite selection failure")
                             automationState = AutomationState.WAITING_FOR_PRICE
+                            automationStep = 0
                         }
                     }
                 }
 
                 AutomationState.WAITING_FOR_PRICE -> {
+                    Log.i(TAG, "🤖 Waiting for price (step $automationStep/10)...")
+
                     // First, check for intermediate screens (like airline selection for airport)
                     if (handleIntermediateScreens(rootNode, packageName)) {
-                        Log.i(TAG, "📋 Handled intermediate screen, continuing...")
+                        Log.i(TAG, "🤖 📋 Handled intermediate screen, continuing...")
                         // Don't increment step counter, wait for next iteration
                         return
                     }
 
                     val priceInfo = performAggressiveScan(packageName)
                     if (priceInfo != null && priceInfo.price > 0) {
-                        Log.i(TAG, "✓ PRICE CAPTURED: ${priceInfo.price} EGP")
+                        Log.i(TAG, "🤖 ✓✓✓ PRICE CAPTURED: ${priceInfo.price} EGP")
                         automationState = AutomationState.PRICE_CAPTURED
                         // Notify Flutter
                         notifyPriceCaptured(priceInfo)
                     } else {
                         automationStep++
-                        if (automationStep > 10) { // Wait ~8 seconds for price
-                            Log.w(TAG, "✗ Timeout waiting for price")
+                        if (automationStep > 10) { // Wait ~12 seconds for price
+                            Log.e(TAG, "🤖 ✗✗✗ FAILED: Timeout waiting for price")
                             automationState = AutomationState.FAILED
                         }
                     }
                 }
 
-                else -> {}
+                else -> {
+                    Log.d(TAG, "🤖 Unhandled state: $automationState")
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Automation error: ${e.message}")
@@ -444,16 +476,23 @@ class PriceReaderService : AccessibilityService() {
 
     /**
      * Special handling for InDriver destination field
-     * InDriver has a unique UI with "To" field at the bottom of the screen
+     * InDriver has a unique UI with destination field
      */
     private fun findAndClickInDriverDestination(rootNode: AccessibilityNodeInfo): Boolean {
-        Log.i(TAG, "🚗 InDriver special handling...")
+        Log.i(TAG, "🚗 ========== INDRIVER AUTOMATION START ==========")
+        Log.i(TAG, "🚗 Destination to enter: $destinationAddress")
 
-        // Debug: Log all visible text
-        logAllVisibleText(rootNode, 0)
+        // Debug: Log ALL visible text on screen
+        Log.i(TAG, "🚗 === ALL VISIBLE TEXT ON SCREEN ===")
+        logAllVisibleTextDetailed(rootNode, 0)
+        Log.i(TAG, "🚗 === END OF VISIBLE TEXT ===")
 
         // InDriver specific search texts - Arabic and English
+        // IMPORTANT: Include the EXACT text from InDriver's UI
         val inDriverTexts = listOf(
+            // EXACT text from InDriver screenshot - CRITICAL
+            "ما الوجهة وما التكلفة؟", "ما الوجهة", "التكلفة",
+            "What's the destination", "destination and cost",
             // Common destination texts
             "To", "إلى", "Where to?", "إلى أين؟", "إلى أين",
             // Route/destination
@@ -462,36 +501,61 @@ class PriceReaderService : AccessibilityService() {
             "أدخل وجهتك", "Enter your destination", "Enter destination",
             "اختر الوجهة", "Choose destination",
             // Search
-            "Search", "بحث", "ابحث",
+            "Search", "بحث", "ابحث", "البحث",
             // "To" field hints
-            "Where are you going", "أين تذهب", "إلى أين تريد الذهاب"
+            "Where are you going", "أين تذهب", "إلى أين تريد الذهاب",
+            // More Arabic variations
+            "أين تريد الذهاب", "الى اين", "الي اين", "وين رايح",
+            // Address/location
+            "العنوان", "Address", "Location", "الموقع", "المكان"
         )
 
-        // Strategy 1: Find by text
+        // Strategy 1: Find by EXACT text match
+        Log.i(TAG, "🚗 Strategy 1: Searching by exact text match...")
         for (searchText in inDriverTexts) {
             val nodes = rootNode.findAccessibilityNodeInfosByText(searchText)
-            Log.d(TAG, "InDriver: Found ${nodes.size} nodes for '$searchText'")
+            if (nodes.isNotEmpty()) {
+                Log.i(TAG, "🚗 Found ${nodes.size} nodes for '$searchText'")
+            }
 
             for (node in nodes) {
-                Log.d(TAG, "  → class=${node.className}, clickable=${node.isClickable}, text='${node.text}'")
+                val nodeText = node.text?.toString() ?: ""
+                val nodeClass = node.className?.toString()?.substringAfterLast(".") ?: ""
+                Log.i(TAG, "🚗   → [$nodeClass] text='$nodeText', clickable=${node.isClickable}, focusable=${node.isFocusable}")
 
                 // Try clicking the node itself
                 if (node.isClickable) {
+                    Log.i(TAG, "🚗   Attempting to click node...")
                     if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                        Log.i(TAG, "✓ InDriver: Clicked on '$searchText'")
+                        Log.i(TAG, "🚗 ✓✓✓ SUCCESS: Clicked on '$searchText'")
                         node.recycle()
                         return true
                     }
                 }
 
-                // Try clicking parent (up to 3 levels)
+                // Try focus + click
+                if (node.isFocusable) {
+                    Log.i(TAG, "🚗   Attempting to focus then click...")
+                    node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+                    Thread.sleep(100)
+                    if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        Log.i(TAG, "🚗 ✓✓✓ SUCCESS: Focus+Click on '$searchText'")
+                        node.recycle()
+                        return true
+                    }
+                }
+
+                // Try clicking parent (up to 5 levels)
                 var current = node.parent
-                for (level in 1..3) {
+                for (level in 1..5) {
                     if (current == null) break
-                    Log.d(TAG, "  → Parent L$level: class=${current.className}, clickable=${current.isClickable}")
+                    val parentClass = current.className?.toString()?.substringAfterLast(".") ?: ""
+                    Log.i(TAG, "🚗   Parent L$level: [$parentClass] clickable=${current.isClickable}")
+
                     if (current.isClickable) {
+                        Log.i(TAG, "🚗   Attempting to click parent L$level...")
                         if (current.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                            Log.i(TAG, "✓ InDriver: Clicked parent L$level of '$searchText'")
+                            Log.i(TAG, "🚗 ✓✓✓ SUCCESS: Clicked parent L$level of '$searchText'")
                             current.recycle()
                             node.recycle()
                             return true
@@ -505,44 +569,195 @@ class PriceReaderService : AccessibilityService() {
             }
         }
 
-        // Strategy 2: Find any clickable view that looks like a destination field
-        val found = findInDriverClickableField(rootNode)
-        if (found) return true
+        // Strategy 2: Find by PARTIAL text match (substring)
+        Log.i(TAG, "🚗 Strategy 2: Searching by partial text match...")
+        val partialMatches = listOf("الوجهة", "وجهة", "أين", "Where", "To", "destination")
+        val foundByPartial = findAndClickByPartialText(rootNode, partialMatches)
+        if (foundByPartial) {
+            Log.i(TAG, "🚗 ✓✓✓ SUCCESS via partial text match")
+            return true
+        }
 
-        // Strategy 3: Find EditText directly
-        return findAndClickEditText(rootNode)
+        // Strategy 3: Find any clickable view that looks like a destination field
+        Log.i(TAG, "🚗 Strategy 3: Searching for clickable destination-like field...")
+        val found = findInDriverClickableField(rootNode)
+        if (found) {
+            Log.i(TAG, "🚗 ✓✓✓ SUCCESS via findInDriverClickableField")
+            return true
+        }
+
+        // Strategy 4: Find EditText directly
+        Log.i(TAG, "🚗 Strategy 4: Searching for EditText fields...")
+        val editTextFound = findAndClickEditText(rootNode)
+        if (editTextFound) {
+            Log.i(TAG, "🚗 ✓✓✓ SUCCESS via EditText")
+            return true
+        }
+
+        // Strategy 5: Find by View hierarchy - look for specific InDriver patterns
+        Log.i(TAG, "🚗 Strategy 5: Scanning all clickable elements...")
+        val clickableFound = findFirstClickableWithText(rootNode)
+        if (clickableFound) {
+            Log.i(TAG, "🚗 ✓✓✓ SUCCESS via first clickable with text")
+            return true
+        }
+
+        Log.e(TAG, "🚗 ✗✗✗ FAILED: Could not find destination field in InDriver")
+        return false
+    }
+
+    /**
+     * Find and click element by partial text match
+     */
+    private fun findAndClickByPartialText(node: AccessibilityNodeInfo, keywords: List<String>): Boolean {
+        val text = node.text?.toString()?.lowercase() ?: ""
+        val desc = node.contentDescription?.toString()?.lowercase() ?: ""
+        val hint = (if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O)
+            node.hintText?.toString()?.lowercase() else null) ?: ""
+
+        val combined = "$text $desc $hint"
+
+        for (keyword in keywords) {
+            if (combined.contains(keyword.lowercase())) {
+                Log.i(TAG, "🚗 Partial match found for '$keyword' in '$combined'")
+
+                // Try to click
+                if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    return true
+                }
+
+                // Try parent
+                val parent = node.parent
+                if (parent != null && parent.isClickable) {
+                    if (parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        parent.recycle()
+                        return true
+                    }
+                    parent.recycle()
+                }
+            }
+        }
+
+        // Recursively check children
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (findAndClickByPartialText(child, keywords)) {
+                child.recycle()
+                return true
+            }
+            child.recycle()
+        }
+
+        return false
+    }
+
+    /**
+     * Find the first clickable element that has text (likely the main input)
+     */
+    private fun findFirstClickableWithText(node: AccessibilityNodeInfo): Boolean {
+        val text = node.text?.toString() ?: ""
+        val className = node.className?.toString() ?: ""
+
+        // Skip buttons and known non-input elements
+        val isLikelyInput = !className.contains("Button") &&
+                            !className.contains("Image") &&
+                            (text.isNotEmpty() || node.isEditable)
+
+        if (isLikelyInput && node.isClickable && text.length > 3) {
+            Log.i(TAG, "🚗 Found clickable with text: '$text' [$className]")
+            if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                return true
+            }
+        }
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (findFirstClickableWithText(child)) {
+                child.recycle()
+                return true
+            }
+            child.recycle()
+        }
+
+        return false
     }
 
     /**
      * Find InDriver clickable destination field by traversing UI
      */
     private fun findInDriverClickableField(node: AccessibilityNodeInfo): Boolean {
-        val text = node.text?.toString()?.lowercase() ?: ""
+        val text = node.text?.toString() ?: ""
+        val textLower = text.lowercase()
         val desc = node.contentDescription?.toString()?.lowercase() ?: ""
         val hint = (if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O)
             node.hintText?.toString()?.lowercase() else null) ?: ""
         val className = node.className?.toString() ?: ""
 
+        // EXACT match for InDriver's main destination field text
+        val exactInDriverTexts = listOf(
+            "ما الوجهة وما التكلفة؟",
+            "ما الوجهة",
+            "what's the destination"
+        )
+
+        for (exactText in exactInDriverTexts) {
+            if (text.contains(exactText) || desc.contains(exactText.lowercase())) {
+                Log.i(TAG, "🚗 EXACT InDriver text match: '$exactText' in node")
+                // Found the exact InDriver element - try to click it or its parents
+                if (node.isClickable) {
+                    if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        Log.i(TAG, "🚗 ✓ Clicked exact match node")
+                        return true
+                    }
+                }
+                // Try parents up to 5 levels
+                var parent = node.parent
+                for (level in 1..5) {
+                    if (parent == null) break
+                    if (parent.isClickable) {
+                        if (parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                            Log.i(TAG, "🚗 ✓ Clicked parent L$level of exact match")
+                            parent.recycle()
+                            return true
+                        }
+                    }
+                    val next = parent.parent
+                    parent.recycle()
+                    parent = next
+                }
+            }
+        }
+
         // Check if this looks like a destination input
-        val isDestinationLike = text.contains("to") || text.contains("إلى") ||
-                                text.contains("where") || text.contains("أين") ||
-                                text.contains("destination") || text.contains("وجهة") ||
+        val isDestinationLike = textLower.contains("to") || textLower.contains("إلى") ||
+                                textLower.contains("where") || textLower.contains("أين") ||
+                                textLower.contains("destination") || textLower.contains("وجهة") ||
+                                textLower.contains("الوجهة") || textLower.contains("التكلفة") ||
                                 desc.contains("to") || desc.contains("إلى") ||
                                 desc.contains("destination") || desc.contains("وجهة") ||
-                                hint.contains("to") || hint.contains("destination")
+                                hint.contains("to") || hint.contains("destination") ||
+                                hint.contains("وجهة") || hint.contains("أين")
 
         // Check if it's an input-like element
         val isInputLike = className.contains("EditText") ||
                           className.contains("AutoComplete") ||
                           className.contains("SearchView") ||
+                          className.contains("TextInputLayout") ||
                           node.isEditable
 
         if ((isDestinationLike || isInputLike) && (node.isClickable || node.isFocusable)) {
-            Log.i(TAG, "🎯 InDriver: Found potential field - class=$className, text=$text")
-            if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK) ||
-                node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)) {
-                Log.i(TAG, "✓ InDriver: Clicked/focused field")
+            Log.i(TAG, "🚗 🎯 Found potential field - [$className] text='$text'")
+            if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                Log.i(TAG, "🚗 ✓ Clicked field")
                 return true
+            }
+            if (node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)) {
+                Log.i(TAG, "🚗 ✓ Focused field")
+                // After focus, try click again
+                Thread.sleep(100)
+                if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    return true
+                }
             }
         }
 
@@ -577,6 +792,42 @@ class PriceReaderService : AccessibilityService() {
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
             logAllVisibleText(child, depth + 1)
+            child.recycle()
+        }
+    }
+
+    /**
+     * Detailed logging for InDriver debugging - logs EVERYTHING
+     */
+    private fun logAllVisibleTextDetailed(node: AccessibilityNodeInfo, depth: Int) {
+        if (depth > 10) return // Allow deeper traversal
+
+        val indent = "│ ".repeat(depth)
+        val text = node.text?.toString() ?: ""
+        val contentDesc = node.contentDescription?.toString() ?: ""
+        val hint = (if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) node.hintText?.toString() else null) ?: ""
+        val className = node.className?.toString()?.substringAfterLast(".") ?: "?"
+        val viewId = node.viewIdResourceName ?: ""
+
+        // Log EVERY node for detailed debugging
+        val clickable = if (node.isClickable) "✓CLICK" else ""
+        val focusable = if (node.isFocusable) "✓FOCUS" else ""
+        val editable = if (node.isEditable) "✓EDIT" else ""
+        val enabled = if (node.isEnabled) "" else "DISABLED"
+
+        val info = StringBuilder()
+        if (text.isNotEmpty()) info.append("text='$text' ")
+        if (contentDesc.isNotEmpty()) info.append("desc='$contentDesc' ")
+        if (hint.isNotEmpty()) info.append("hint='$hint' ")
+        if (viewId.isNotEmpty()) info.append("id='$viewId' ")
+
+        val flags = listOf(clickable, focusable, editable, enabled).filter { it.isNotEmpty() }.joinToString(" ")
+
+        Log.i(TAG, "🚗 $indent[$className] $info $flags")
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            logAllVisibleTextDetailed(child, depth + 1)
             child.recycle()
         }
     }
@@ -659,9 +910,15 @@ class PriceReaderService : AccessibilityService() {
      * Enter destination text into focused field
      */
     private fun enterDestinationText(rootNode: AccessibilityNodeInfo, packageName: String): Boolean {
+        Log.i(TAG, "🤖 enterDestinationText: Looking for focused input...")
+
         val focusedNode = rootNode.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
         if (focusedNode != null) {
-            // Clear existing text
+            val focusedClass = focusedNode.className?.toString()?.substringAfterLast(".") ?: ""
+            val focusedText = focusedNode.text?.toString() ?: ""
+            Log.i(TAG, "🤖 Found focused node: [$focusedClass] text='$focusedText'")
+
+            // Clear existing text and set new text
             val args = android.os.Bundle()
             args.putCharSequence(
                 AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
@@ -671,22 +928,39 @@ class PriceReaderService : AccessibilityService() {
             focusedNode.recycle()
 
             if (result) {
-                Log.i(TAG, "Entered destination: $destinationAddress")
+                Log.i(TAG, "🤖 ✓ Successfully entered destination: $destinationAddress")
                 return true
+            } else {
+                Log.w(TAG, "🤖 ✗ ACTION_SET_TEXT failed on focused node")
             }
+        } else {
+            Log.w(TAG, "🤖 No focused input node found")
         }
 
         // Fallback: find any editable field and enter text
+        Log.i(TAG, "🤖 Fallback: searching for any EditText field...")
         return enterTextIntoAnyEditText(rootNode, destinationAddress)
     }
 
     private fun enterTextIntoAnyEditText(node: AccessibilityNodeInfo, text: String): Boolean {
-        if (node.isEditable || node.className?.toString()?.contains("EditText") == true) {
+        val className = node.className?.toString()?.substringAfterLast(".") ?: ""
+        val nodeText = node.text?.toString() ?: ""
+
+        if (node.isEditable || className.contains("EditText")) {
+            Log.i(TAG, "🤖 Found editable field: [$className] current text='$nodeText'")
+
             val args = android.os.Bundle()
             args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+
+            // First try to focus the field
+            node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+            Thread.sleep(100)
+
             if (node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) {
-                Log.i(TAG, "Entered text into EditText")
+                Log.i(TAG, "🤖 ✓ Entered text into EditText: '$text'")
                 return true
+            } else {
+                Log.w(TAG, "🤖 ✗ Failed to set text on editable field")
             }
         }
 
