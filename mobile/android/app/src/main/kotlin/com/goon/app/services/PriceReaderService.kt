@@ -327,6 +327,15 @@ class PriceReaderService : AccessibilityService() {
                     // Wait a moment then try to select
                     automationStep++
                     Log.i(TAG, "🤖 Waiting for suggestions (step $automationStep/3)...")
+
+                    // Check for intermediate screens (InDriver might show map confirmation here)
+                    if (packageName == INDRIVER_PACKAGE) {
+                        if (handleInDriverIntermediateScreens(rootNode)) {
+                            Log.i(TAG, "🤖 📋 Handled InDriver intermediate screen during WAITING_FOR_SUGGESTIONS")
+                            return
+                        }
+                    }
+
                     if (automationStep > 3) { // Wait ~3.6 seconds for suggestions
                         Log.i(TAG, "🤖 Transitioning to SELECTING_SUGGESTION...")
                         automationState = AutomationState.SELECTING_SUGGESTION
@@ -336,6 +345,16 @@ class PriceReaderService : AccessibilityService() {
 
                 AutomationState.SELECTING_SUGGESTION -> {
                     Log.i(TAG, "🤖 Selecting first suggestion...")
+
+                    // FIRST: Check if we're on the map confirmation screen (InDriver shows this AFTER suggestion)
+                    if (packageName == INDRIVER_PACKAGE) {
+                        if (handleInDriverIntermediateScreens(rootNode)) {
+                            Log.i(TAG, "🤖 📋 Handled InDriver intermediate screen during SELECTING_SUGGESTION")
+                            // Stay in this state for next iteration
+                            return
+                        }
+                    }
+
                     val selected = selectFirstSuggestion(rootNode, packageName)
                     if (selected) {
                         Log.i(TAG, "🤖 ✓ Selected suggestion, transitioning to WAITING_FOR_PRICE...")
@@ -1254,10 +1273,74 @@ class PriceReaderService : AccessibilityService() {
     /**
      * Handle InDriver intermediate screens
      * InDriver may show: permission dialogs, promo screens, safety tips
+     * CRITICAL: Also handles the MAP CONFIRMATION screen with "تم" (Done) button
      */
     private fun handleInDriverIntermediateScreens(rootNode: AccessibilityNodeInfo): Boolean {
         val allText = getAllTextFromNode(rootNode)
         val allTextLower = allText.map { it.lowercase() }
+
+        // ============================================================
+        // CRITICAL: Check for MAP CONFIRMATION screen with "تم" button
+        // This appears after selecting a destination on InDriver
+        // ============================================================
+        val hasMapConfirmation = allText.any { it == "تم" } ||
+                                  allTextLower.any { it == "done" || it == "confirm" || it == "تأكيد" }
+
+        // Also check if we see Google maps elements (indicates map confirmation screen)
+        val hasGoogleMap = allTextLower.any { it.contains("google") }
+
+        if (hasMapConfirmation) {
+            Log.i(TAG, "🗺️ Detected InDriver MAP CONFIRMATION screen - looking for 'تم' button")
+
+            // Priority 1: Look for EXACT "تم" button (the green Done button)
+            val doneTexts = listOf("تم", "Done", "Confirm", "تأكيد", "OK", "موافق")
+            for (doneText in doneTexts) {
+                val nodes = rootNode.findAccessibilityNodeInfosByText(doneText)
+                Log.i(TAG, "🗺️ Searching for '$doneText': found ${nodes.size} nodes")
+
+                for (node in nodes) {
+                    val nodeClass = node.className?.toString()?.substringAfterLast(".") ?: ""
+                    val nodeText = node.text?.toString() ?: ""
+                    Log.i(TAG, "🗺️   Node: [$nodeClass] text='$nodeText' clickable=${node.isClickable}")
+
+                    // Direct click if clickable
+                    if (node.isClickable) {
+                        if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                            Log.i(TAG, "🗺️ ✓✓✓ SUCCESS: Clicked '$doneText' button!")
+                            node.recycle()
+                            return true
+                        }
+                    }
+
+                    // Try clicking parents (button might be inside container)
+                    var parent = node.parent
+                    for (level in 1..5) {
+                        if (parent == null) break
+                        val parentClass = parent.className?.toString()?.substringAfterLast(".") ?: ""
+                        Log.i(TAG, "🗺️   Parent L$level: [$parentClass] clickable=${parent.isClickable}")
+
+                        if (parent.isClickable) {
+                            if (parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                                Log.i(TAG, "🗺️ ✓✓✓ SUCCESS: Clicked parent L$level of '$doneText'!")
+                                parent.recycle()
+                                node.recycle()
+                                return true
+                            }
+                        }
+                        val next = parent.parent
+                        parent.recycle()
+                        parent = next
+                    }
+                    node.recycle()
+                }
+            }
+
+            // Priority 2: Find green button by traversing all clickable elements
+            Log.i(TAG, "🗺️ Trying to find Done button by traversing UI...")
+            if (findAndClickDoneButton(rootNode)) {
+                return true
+            }
+        }
 
         // Check for permission or promo dialogs
         val hasDialog = allTextLower.any {
@@ -1301,6 +1384,57 @@ class PriceReaderService : AccessibilityService() {
                     node.recycle()
                 }
             }
+        }
+
+        return false
+    }
+
+    /**
+     * Find and click the Done/تم button by traversing the UI tree
+     * Looks for buttons that are likely the confirmation button
+     */
+    private fun findAndClickDoneButton(node: AccessibilityNodeInfo): Boolean {
+        val text = node.text?.toString() ?: ""
+        val desc = node.contentDescription?.toString() ?: ""
+        val className = node.className?.toString() ?: ""
+
+        // Check if this is likely the Done button
+        val isDoneButton = text == "تم" || text.equals("Done", ignoreCase = true) ||
+                           text == "تأكيد" || text.equals("Confirm", ignoreCase = true) ||
+                           desc == "تم" || desc.equals("Done", ignoreCase = true)
+
+        // Also check for Button class with these texts
+        val isButton = className.contains("Button") || className.contains("TextView")
+
+        if (isDoneButton && node.isClickable) {
+            Log.i(TAG, "🗺️ Found Done button: [$className] text='$text'")
+            if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                Log.i(TAG, "🗺️ ✓✓✓ SUCCESS: Clicked Done button via traversal!")
+                return true
+            }
+        }
+
+        // If it looks like a button but not clickable, try parent
+        if (isDoneButton && isButton) {
+            val parent = node.parent
+            if (parent != null && parent.isClickable) {
+                if (parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    Log.i(TAG, "🗺️ ✓✓✓ SUCCESS: Clicked Done button parent!")
+                    parent.recycle()
+                    return true
+                }
+                parent.recycle()
+            }
+        }
+
+        // Recursively check children
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (findAndClickDoneButton(child)) {
+                child.recycle()
+                return true
+            }
+            child.recycle()
         }
 
         return false
