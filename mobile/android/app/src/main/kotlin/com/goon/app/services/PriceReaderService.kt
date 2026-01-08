@@ -1212,20 +1212,22 @@ class PriceReaderService : AccessibilityService() {
 
     /**
      * Find the best price from a list of detected prices
-     * Usually the main price is displayed prominently
+     * ALWAYS returns the LOWEST reasonable price - this is what users want!
      */
     private fun findBestPrice(prices: List<Double>): Double {
         if (prices.isEmpty()) return 0.0
         if (prices.size == 1) return prices[0]
 
-        // Filter reasonable prices (15-500 EGP for typical rides)
-        val reasonable = prices.filter { it in 15.0..500.0 }
+        // Filter reasonable prices (15-1000 EGP for typical rides)
+        val reasonable = prices.filter { it in 15.0..1000.0 }
         if (reasonable.isNotEmpty()) {
-            // Return the median (most likely the actual price, not surge or tips)
-            return reasonable.sorted()[reasonable.size / 2]
+            // ALWAYS return the LOWEST price
+            val lowestPrice = reasonable.minOrNull() ?: reasonable[0]
+            Log.i(TAG, "📊 findBestPrice: prices=$reasonable, selecting LOWEST: $lowestPrice")
+            return lowestPrice
         }
 
-        return prices.sorted()[prices.size / 2]
+        return prices.minOrNull() ?: 0.0
     }
 
     private fun getAppName(packageName: String): String {
