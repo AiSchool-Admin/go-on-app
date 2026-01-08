@@ -900,6 +900,7 @@ class PriceReaderService : AccessibilityService() {
 
     /**
      * AGGRESSIVE SCAN - The core price extraction function
+     * ALWAYS collects ALL prices from ALL strategies and returns the LOWEST
      */
     private fun performAggressiveScan(targetPackage: String): PriceInfo? {
         val rootNode = rootInActiveWindow ?: run {
@@ -918,24 +919,22 @@ class PriceReaderService : AccessibilityService() {
 
             Log.d(TAG, "🔍 Aggressive scanning $currentPackage...")
 
+            // Collect ALL prices from ALL strategies
+            val allPrices = mutableListOf<Double>()
+            val priceTexts = mutableListOf<String>()
+
             // Strategy 1: Look for specific price elements by resource ID
-            val priceById = findPriceByResourceId(rootNode, currentPackage)
-            if (priceById != null && priceById > 0) {
-                Log.i(TAG, "✓ Found price by resource ID: $priceById")
-                return savePriceInfo(currentPackage, priceById, "resource_id")
-            }
+            val pricesByResourceId = findAllPricesByResourceId(rootNode, currentPackage)
+            allPrices.addAll(pricesByResourceId)
+            Log.d(TAG, "📍 Strategy 1 (Resource ID): found ${pricesByResourceId.size} prices: $pricesByResourceId")
 
             // Strategy 2: Look for price by content description patterns
-            val priceByDesc = findPriceByContentDescription(rootNode)
-            if (priceByDesc != null && priceByDesc > 0) {
-                Log.i(TAG, "✓ Found price by content description: $priceByDesc")
-                return savePriceInfo(currentPackage, priceByDesc, "content_desc")
-            }
+            val pricesByContentDesc = findAllPricesByContentDescription(rootNode)
+            allPrices.addAll(pricesByContentDesc)
+            Log.d(TAG, "📍 Strategy 2 (Content Desc): found ${pricesByContentDesc.size} prices: $pricesByContentDesc")
 
-            // Strategy 3: Full text scan with all patterns
+            // Strategy 3: Full text scan with all patterns (most comprehensive)
             val allText = getAllTextFromNode(rootNode)
-            val prices = mutableListOf<Double>()
-            val priceTexts = mutableListOf<String>()
 
             // Debug: Log ALL texts found (limited to first 30)
             Log.d(TAG, "📝 All texts found (${allText.size} total):")
@@ -946,16 +945,24 @@ class PriceReaderService : AccessibilityService() {
             for (text in allText) {
                 val price = extractPrice(text)
                 if (price != null && price in 10.0..5000.0) {
-                    prices.add(price)
+                    allPrices.add(price)
                     priceTexts.add(text)
-                    Log.i(TAG, "💰 Found potential price: $price in '$text'")
+                    Log.i(TAG, "💰 Strategy 3 (Text): Found price: $price in '$text'")
                 }
             }
 
-            if (prices.isNotEmpty()) {
-                val bestPrice = selectBestPrice(prices, currentPackage)
-                Log.i(TAG, "✓ Found ${prices.size} prices, best: $bestPrice EGP")
-                return savePriceInfo(currentPackage, bestPrice, "text_scan", prices, priceTexts)
+            // Remove duplicates and select the LOWEST price
+            val uniquePrices = allPrices.distinct()
+            Log.i(TAG, "📊 ALL prices found (unique): $uniquePrices")
+
+            if (uniquePrices.isNotEmpty()) {
+                // ALWAYS select the LOWEST price
+                val lowestPrice = uniquePrices.filter { it in 15.0..1000.0 }.minOrNull()
+                    ?: uniquePrices.minOrNull()
+                    ?: uniquePrices[0]
+
+                Log.i(TAG, "✅ SELECTED LOWEST PRICE: $lowestPrice EGP (from ${uniquePrices.size} candidates)")
+                return savePriceInfo(currentPackage, lowestPrice, "combined_scan", uniquePrices, priceTexts)
             }
 
             Log.w(TAG, "No prices found in $currentPackage (scanned ${allText.size} elements)")
@@ -970,10 +977,9 @@ class PriceReaderService : AccessibilityService() {
     }
 
     /**
-     * Find price by resource ID - App specific targeting
-     * ALWAYS returns the LOWEST price found across all resource IDs
+     * Find ALL prices by resource ID - returns list of all prices found
      */
-    private fun findPriceByResourceId(rootNode: AccessibilityNodeInfo, packageName: String): Double? {
+    private fun findAllPricesByResourceId(rootNode: AccessibilityNodeInfo, packageName: String): List<Double> {
         val priceResourceIds = when (packageName) {
             UBER_PACKAGE -> listOf(
                 "com.ubercab:id/fare_estimate_text",
@@ -1007,7 +1013,6 @@ class PriceReaderService : AccessibilityService() {
             else -> emptyList()
         }
 
-        // Collect ALL prices from resource IDs, then return the LOWEST
         val allPrices = mutableListOf<Double>()
 
         for (resourceId in priceResourceIds) {
@@ -1019,7 +1024,7 @@ class PriceReaderService : AccessibilityService() {
                         val price = extractPrice(text)
                         if (price != null && price > 0) {
                             allPrices.add(price)
-                            Log.d(TAG, "📍 Found price by resource ID '$resourceId': $price")
+                            Log.d(TAG, "📍 Resource ID '$resourceId': $price")
                         }
                     }
                     node.recycle()
@@ -1029,30 +1034,17 @@ class PriceReaderService : AccessibilityService() {
             }
         }
 
-        // Return the LOWEST price found
-        if (allPrices.isNotEmpty()) {
-            val lowestPrice = allPrices.minOrNull()!!
-            Log.i(TAG, "📊 Resource ID prices: $allPrices, selecting LOWEST: $lowestPrice")
-            return lowestPrice
-        }
-
-        return null
+        return allPrices
     }
 
     /**
-     * Find price by scanning content descriptions for price keywords
-     * ALWAYS returns the LOWEST price found
+     * Find ALL prices by scanning content descriptions for price keywords
+     * Returns list of all prices found
      */
-    private fun findPriceByContentDescription(node: AccessibilityNodeInfo): Double? {
+    private fun findAllPricesByContentDescription(node: AccessibilityNodeInfo): List<Double> {
         val allPrices = mutableListOf<Double>()
         collectPricesFromContentDescription(node, allPrices)
-
-        if (allPrices.isNotEmpty()) {
-            val lowestPrice = allPrices.minOrNull()!!
-            Log.i(TAG, "📊 Content desc prices: $allPrices, selecting LOWEST: $lowestPrice")
-            return lowestPrice
-        }
-        return null
+        return allPrices
     }
 
     /**

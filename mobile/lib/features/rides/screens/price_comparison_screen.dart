@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/services/native_services.dart';
+import '../../../widgets/ride_sort_preference_selector.dart';
 import '../services/ride_service.dart';
 import '../models/price_option.dart';
 
@@ -479,6 +480,24 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen>
                       ),
                     ],
                   ),
+                ),
+                const SizedBox(height: 12),
+                // Ride Sort Preference Selector
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.sort, size: 16, color: AppColors.textSecondary),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'ترتيب حسب:',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    const RideSortPreferenceChip(language: 'ar'),
+                  ],
                 ),
               ],
             ),
