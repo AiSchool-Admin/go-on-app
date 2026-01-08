@@ -174,7 +174,7 @@ class PriceReaderService : AccessibilityService() {
     private var automationState = AutomationState.IDLE
     private var automationStep = 0
     private var automationRetries = 0
-    private val MAX_RETRIES = 3
+    private val MAX_RETRIES = 10  // Increased for better reliability
 
     enum class AutomationState {
         IDLE,
@@ -234,12 +234,13 @@ class PriceReaderService : AccessibilityService() {
                     if (automationState != AutomationState.PRICE_CAPTURED &&
                         automationState != AutomationState.FAILED &&
                         automationState != AutomationState.IDLE) {
-                        scanHandler?.postDelayed(this, 800) // Check every 800ms
+                        scanHandler?.postDelayed(this, 1200) // Check every 1.2 seconds - more time for UI to update
                     }
                 }
             }
         }
-        scanHandler?.post(scanRunnable!!)
+        // Initial delay to let the app load
+        scanHandler?.postDelayed(scanRunnable!!, 2000) // Wait 2 seconds before starting
     }
 
     private fun performAutomationStep(packageName: String) {
@@ -339,45 +340,144 @@ class PriceReaderService : AccessibilityService() {
      * Find and click on the destination/search field
      */
     private fun findAndClickDestinationField(rootNode: AccessibilityNodeInfo, packageName: String): Boolean {
-        // App-specific field identifiers
+        Log.i(TAG, "🔍 Searching for destination field in $packageName...")
+
+        // App-specific field identifiers - EXPANDED for DiDi
         val searchTexts = when (packageName) {
-            UBER_PACKAGE -> listOf("Where to?", "إلى أين؟", "Search", "بحث", "Enter destination")
-            CAREEM_PACKAGE -> listOf("Where to?", "إلى أين؟", "Search destination", "وجهتك")
-            INDRIVER_PACKAGE -> listOf("Where to?", "إلى أين؟", "To", "إلى")
-            DIDI_PACKAGE -> listOf("Where to?", "إلى أين؟", "Destination")
-            BOLT_PACKAGE -> listOf("Where to?", "إلى أين؟", "Search", "Enter destination")
+            UBER_PACKAGE -> listOf("Where to?", "إلى أين؟", "Search", "بحث", "Enter destination", "Where to")
+            CAREEM_PACKAGE -> listOf("Where to?", "إلى أين؟", "Search destination", "وجهتك", "Where would you like to go")
+            INDRIVER_PACKAGE -> listOf("Where to?", "إلى أين؟", "To", "إلى", "Where")
+            DIDI_PACKAGE -> listOf("Where to?", "Where to", "إلى أين", "إلى أين؟", "Destination", "Search", "输入目的地", "去哪儿")
+            BOLT_PACKAGE -> listOf("Where to?", "إلى أين؟", "Search", "Enter destination", "Where to")
             else -> listOf("Where to?", "إلى أين؟", "Search", "Destination")
         }
 
-        // Try to find by text
+        // Debug: Log all text visible on screen
+        logAllVisibleText(rootNode, 0)
+
+        // Strategy 1: Try to find by exact text match
         for (searchText in searchTexts) {
             val nodes = rootNode.findAccessibilityNodeInfosByText(searchText)
+            Log.d(TAG, "Found ${nodes.size} nodes for text: '$searchText'")
+
             for (node in nodes) {
-                if (node.isClickable || node.isEnabled) {
+                // Log node details
+                Log.d(TAG, "  Node: class=${node.className}, clickable=${node.isClickable}, enabled=${node.isEnabled}, text='${node.text}'")
+
+                if (node.isClickable) {
                     val clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
                     if (clicked) {
-                        Log.i(TAG, "Clicked on: $searchText")
+                        Log.i(TAG, "✓ Clicked on: $searchText")
                         node.recycle()
                         return true
                     }
                 }
+
                 // Try clicking parent if node isn't clickable
                 val parent = node.parent
-                if (parent != null && parent.isClickable) {
-                    val clicked = parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    parent.recycle()
-                    if (clicked) {
-                        Log.i(TAG, "Clicked on parent of: $searchText")
-                        node.recycle()
-                        return true
+                if (parent != null) {
+                    Log.d(TAG, "  Parent: class=${parent.className}, clickable=${parent.isClickable}")
+                    if (parent.isClickable) {
+                        val clicked = parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        if (clicked) {
+                            Log.i(TAG, "✓ Clicked on parent of: $searchText")
+                            parent.recycle()
+                            node.recycle()
+                            return true
+                        }
                     }
+
+                    // Try grandparent
+                    val grandparent = parent.parent
+                    if (grandparent != null && grandparent.isClickable) {
+                        val clicked = grandparent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        if (clicked) {
+                            Log.i(TAG, "✓ Clicked on grandparent of: $searchText")
+                            grandparent.recycle()
+                            parent.recycle()
+                            node.recycle()
+                            return true
+                        }
+                        grandparent.recycle()
+                    }
+                    parent.recycle()
                 }
                 node.recycle()
             }
         }
 
-        // Try to find EditText fields
+        // Strategy 2: Find any clickable element that looks like a search/destination field
+        val clickableSearchField = findClickableSearchField(rootNode)
+        if (clickableSearchField) {
+            return true
+        }
+
+        // Strategy 3: Try to find EditText fields directly
         return findAndClickEditText(rootNode)
+    }
+
+    /**
+     * Log all visible text for debugging
+     */
+    private fun logAllVisibleText(node: AccessibilityNodeInfo, depth: Int) {
+        if (depth > 5) return // Limit depth
+
+        val indent = "  ".repeat(depth)
+        val text = node.text?.toString() ?: ""
+        val contentDesc = node.contentDescription?.toString() ?: ""
+        val hint = (if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) node.hintText?.toString() else null) ?: ""
+
+        if (text.isNotEmpty() || contentDesc.isNotEmpty() || hint.isNotEmpty()) {
+            Log.d(TAG, "${indent}📝 ${node.className}: text='$text', desc='$contentDesc', hint='$hint', clickable=${node.isClickable}")
+        }
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            logAllVisibleText(child, depth + 1)
+            child.recycle()
+        }
+    }
+
+    /**
+     * Find any clickable element that looks like a search field
+     */
+    private fun findClickableSearchField(node: AccessibilityNodeInfo): Boolean {
+        val text = node.text?.toString()?.lowercase() ?: ""
+        val contentDesc = node.contentDescription?.toString()?.lowercase() ?: ""
+        val className = node.className?.toString() ?: ""
+
+        // Look for search-like elements
+        val isSearchLike = text.contains("where") || text.contains("search") || text.contains("destination") ||
+                           text.contains("أين") || text.contains("بحث") || text.contains("وجهة") ||
+                           contentDesc.contains("search") || contentDesc.contains("destination") ||
+                           contentDesc.contains("where")
+
+        if (isSearchLike && node.isClickable) {
+            Log.i(TAG, "✓ Found clickable search-like element: $text / $contentDesc")
+            node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            return true
+        }
+
+        // Check if it's an input-like container
+        if ((className.contains("EditText") || className.contains("SearchView") ||
+             className.contains("AutoComplete")) && node.isEnabled) {
+            Log.i(TAG, "✓ Found input field: $className")
+            node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+            node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            return true
+        }
+
+        // Recursively check children
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (findClickableSearchField(child)) {
+                child.recycle()
+                return true
+            }
+            child.recycle()
+        }
+
+        return false
     }
 
     private fun findAndClickEditText(node: AccessibilityNodeInfo): Boolean {
