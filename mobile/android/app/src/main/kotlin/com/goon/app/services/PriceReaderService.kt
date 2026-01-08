@@ -60,7 +60,9 @@ class PriceReaderService : AccessibilityService() {
             Pattern.compile("(\\d+)\\s*[-–]\\s*\\d+\\s*(?:EGP|ج\\.?م|جنيه|LE)?", Pattern.CASE_INSENSITIVE),
             // Price in format "Fare: 65" or "السعر: 65"
             Pattern.compile("(?:fare|price|السعر|الأجرة)[:\\s]*(\\d+)", Pattern.CASE_INSENSITIVE),
-            // Standalone numbers in specific format (2-3 digits)
+            // Standalone decimal numbers like "61.40" or "67.50" (DiDi format)
+            Pattern.compile("^\\s*(\\d{2,3}[.,]\\d{1,2})\\s*$"),
+            // Standalone integers 2-3 digits
             Pattern.compile("^\\s*(\\d{2,3})\\s*$")
         )
 
@@ -728,12 +730,18 @@ class PriceReaderService : AccessibilityService() {
             val prices = mutableListOf<Double>()
             val priceTexts = mutableListOf<String>()
 
+            // Debug: Log ALL texts found (limited to first 30)
+            Log.d(TAG, "📝 All texts found (${allText.size} total):")
+            allText.take(30).forEachIndexed { index, text ->
+                Log.d(TAG, "  [$index] '$text'")
+            }
+
             for (text in allText) {
                 val price = extractPrice(text)
                 if (price != null && price in 10.0..5000.0) {
                     prices.add(price)
                     priceTexts.add(text)
-                    Log.d(TAG, "Found potential price: $price in '$text'")
+                    Log.i(TAG, "💰 Found potential price: $price in '$text'")
                 }
             }
 
