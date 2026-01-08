@@ -71,6 +71,10 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen>
     });
 
     try {
+      // Clear cached prices to ensure fresh estimates
+      final nativeServices = ref.read(nativeServicesProvider);
+      await nativeServices.clearPrices();
+
       final rideService = ref.read(rideServiceProvider);
       final options = await rideService.getPriceComparison(
         origin: widget.origin,
@@ -789,22 +793,25 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen>
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
             child: Column(
               children: [
-                // Fetch Real Price button - only for estimated prices from external apps
-                if (option.isEstimate && option.provider != 'GO-ON')
+                // Fetch Real Price button - for all external apps
+                if (option.provider != 'GO-ON')
                   Padding(
                     padding: const EdgeInsets.only(bottom: 8),
                     child: SizedBox(
                       width: double.infinity,
                       child: OutlinedButton.icon(
                         onPressed: _awaitingReturn ? null : () => _fetchRealPriceFor(option),
-                        icon: const Icon(Icons.price_check, size: 18),
-                        label: const Text(
-                          'جلب السعر الحقيقي',
-                          style: TextStyle(fontWeight: FontWeight.bold),
+                        icon: Icon(
+                          option.isEstimate ? Icons.price_check : Icons.refresh,
+                          size: 18,
+                        ),
+                        label: Text(
+                          option.isEstimate ? 'جلب السعر الحقيقي' : 'تحديث السعر',
+                          style: const TextStyle(fontWeight: FontWeight.bold),
                         ),
                         style: OutlinedButton.styleFrom(
-                          foregroundColor: AppColors.primary,
-                          side: const BorderSide(color: AppColors.primary),
+                          foregroundColor: option.isEstimate ? AppColors.primary : AppColors.success,
+                          side: BorderSide(color: option.isEstimate ? AppColors.primary : AppColors.success),
                           padding: const EdgeInsets.symmetric(vertical: 10),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
