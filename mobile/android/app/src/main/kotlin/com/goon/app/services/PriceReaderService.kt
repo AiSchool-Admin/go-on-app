@@ -368,7 +368,11 @@ class PriceReaderService : AccessibilityService() {
         val searchTexts = when (packageName) {
             UBER_PACKAGE -> listOf("Where to?", "إلى أين؟", "Search", "بحث", "Enter destination", "Where to")
             CAREEM_PACKAGE -> listOf("Where to?", "إلى أين؟", "Search destination", "وجهتك", "Where would you like to go")
-            INDRIVER_PACKAGE -> listOf("Where to?", "إلى أين؟", "To", "إلى", "Where")
+            INDRIVER_PACKAGE -> listOf(
+                "Where to?", "إلى أين؟", "إلى أين", "To", "إلى", "Where",
+                "الوجهة", "Destination", "أين تريد الذهاب", "Enter destination",
+                "اختر وجهتك", "Search", "بحث", "أدخل وجهتك"
+            )
             DIDI_PACKAGE -> listOf("Where to?", "Where to", "إلى أين", "إلى أين؟", "Destination", "Search", "输入目的地", "去哪儿")
             BOLT_PACKAGE -> listOf("Where to?", "إلى أين؟", "Search", "Enter destination", "Where to")
             else -> listOf("Where to?", "إلى أين؟", "Search", "Destination")
@@ -858,9 +862,56 @@ class PriceReaderService : AccessibilityService() {
 
     /**
      * Handle InDriver intermediate screens
+     * InDriver may show: permission dialogs, promo screens, safety tips
      */
     private fun handleInDriverIntermediateScreens(rootNode: AccessibilityNodeInfo): Boolean {
-        // Similar logic for InDriver dialogs
+        val allText = getAllTextFromNode(rootNode)
+        val allTextLower = allText.map { it.lowercase() }
+
+        // Check for permission or promo dialogs
+        val hasDialog = allTextLower.any {
+            it.contains("allow") ||
+            it.contains("permit") ||
+            it.contains("ok") ||
+            it.contains("got it") ||
+            it.contains("continue") ||
+            it.contains("skip") ||
+            it.contains("موافق") ||
+            it.contains("تخطي") ||
+            it.contains("متابعة") ||
+            it.contains("السماح")
+        }
+
+        if (hasDialog) {
+            Log.i(TAG, "📋 Detected InDriver dialog, trying to dismiss")
+            val dismissTexts = listOf(
+                "OK", "Got it", "Continue", "Skip", "Allow", "Accept",
+                "موافق", "تخطي", "متابعة", "السماح", "قبول", "حسناً"
+            )
+            for (dismissText in dismissTexts) {
+                val nodes = rootNode.findAccessibilityNodeInfosByText(dismissText)
+                for (node in nodes) {
+                    if (node.isClickable) {
+                        node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        Log.i(TAG, "✓ Dismissed InDriver dialog with: $dismissText")
+                        node.recycle()
+                        return true
+                    }
+                    // Try parent
+                    val parent = node.parent
+                    if (parent != null && parent.isClickable) {
+                        parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        Log.i(TAG, "✓ Dismissed InDriver dialog via parent: $dismissText")
+                        parent.recycle()
+                        node.recycle()
+                        return true
+                    }
+                    parent?.recycle()
+                    node.recycle()
+                }
+            }
+        }
+
         return false
     }
 
