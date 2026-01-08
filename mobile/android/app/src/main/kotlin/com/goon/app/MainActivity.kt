@@ -132,6 +132,20 @@ class MainActivity : FlutterActivity() {
                     result.success(true)
                 }
 
+                // ========== User Preferences ==========
+                "setRideSortPreference" -> {
+                    val preference = call.argument<String>("preference") ?: "lowest_price"
+                    PriceReaderService.instance?.setRideSortPreference(preference)
+                    // Also set static value in case service restarts
+                    PriceReaderService.rideSortPreference = preference
+                    Log.i(TAG, "⚙️ Ride sort preference set to: $preference")
+                    result.success(true)
+                }
+
+                "getRideSortPreference" -> {
+                    result.success(PriceReaderService.rideSortPreference)
+                }
+
                 "getPriceForApp" -> {
                     val packageName = call.argument<String>("packageName") ?: ""
                     val price = PriceReaderService.instance?.getPriceForApp(packageName)

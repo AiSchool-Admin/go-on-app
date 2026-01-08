@@ -18,6 +18,7 @@ class UserProfile {
   final bool isActive;
   final bool isVerified;
   final String? fcmToken;
+  final RideSortPreference rideSortPreference;
   final DateTime createdAt;
   final DateTime updatedAt;
   final DateTime lastActiveAt;
@@ -41,6 +42,7 @@ class UserProfile {
     this.isActive = true,
     this.isVerified = false,
     this.fcmToken,
+    this.rideSortPreference = RideSortPreference.lowestPrice,
     required this.createdAt,
     required this.updatedAt,
     required this.lastActiveAt,
@@ -67,6 +69,8 @@ class UserProfile {
       isActive: json['is_active'] as bool? ?? true,
       isVerified: json['is_verified'] as bool? ?? false,
       fcmToken: json['fcm_token'] as String?,
+      rideSortPreference: RideSortPreference.fromString(
+          json['ride_sort_preference'] as String? ?? 'lowest_price'),
       createdAt: DateTime.parse(json['created_at'] as String),
       updatedAt: DateTime.parse(json['updated_at'] as String),
       lastActiveAt: DateTime.parse(json['last_active_at'] as String),
@@ -93,6 +97,7 @@ class UserProfile {
       'is_active': isActive,
       'is_verified': isVerified,
       'fcm_token': fcmToken,
+      'ride_sort_preference': rideSortPreference.value,
     };
   }
 
@@ -115,6 +120,7 @@ class UserProfile {
     bool? isActive,
     bool? isVerified,
     String? fcmToken,
+    RideSortPreference? rideSortPreference,
     DateTime? createdAt,
     DateTime? updatedAt,
     DateTime? lastActiveAt,
@@ -138,6 +144,7 @@ class UserProfile {
       isActive: isActive ?? this.isActive,
       isVerified: isVerified ?? this.isVerified,
       fcmToken: fcmToken ?? this.fcmToken,
+      rideSortPreference: rideSortPreference ?? this.rideSortPreference,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       lastActiveAt: lastActiveAt ?? this.lastActiveAt,
@@ -191,6 +198,28 @@ enum UserLevel {
     return UserLevel.values.firstWhere(
       (e) => e.value == value,
       orElse: () => UserLevel.bronze,
+    );
+  }
+}
+
+/// Ride sorting preference - how to select the best price option
+enum RideSortPreference {
+  lowestPrice('lowest_price', 'أقل سعر', 'Lowest Price'),
+  bestService('best_service', 'أفضل خدمة', 'Best Service'),
+  fastestArrival('fastest_arrival', 'أسرع وصول', 'Fastest Arrival');
+
+  final String value;
+  final String labelAr;
+  final String labelEn;
+
+  const RideSortPreference(this.value, this.labelAr, this.labelEn);
+
+  String getLabel(String language) => language == 'ar' ? labelAr : labelEn;
+
+  static RideSortPreference fromString(String value) {
+    return RideSortPreference.values.firstWhere(
+      (e) => e.value == value,
+      orElse: () => RideSortPreference.lowestPrice,
     );
   }
 }

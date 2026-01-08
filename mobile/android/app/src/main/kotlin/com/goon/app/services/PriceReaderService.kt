@@ -86,7 +86,20 @@ class PriceReaderService : AccessibilityService() {
         var pickupLng: Double = 0.0
         var destLat: Double = 0.0
         var destLng: Double = 0.0
+
+        // User preference for sorting rides
+        // Options: "lowest_price", "best_service", "fastest_arrival"
+        var rideSortPreference: String = "lowest_price"
     }
+
+    // Service ratings for "best_service" preference
+    private val serviceRatings = mapOf(
+        UBER_PACKAGE to 4.5,
+        CAREEM_PACKAGE to 4.3,
+        DIDI_PACKAGE to 4.0,
+        BOLT_PACKAGE to 4.2,
+        INDRIVER_PACKAGE to 3.8
+    )
 
     data class PriceInfo(
         val appName: String,
@@ -1049,7 +1062,8 @@ class PriceReaderService : AccessibilityService() {
     }
 
     /**
-     * Select the best price from candidates based on app-specific logic
+     * Select the best price from candidates based on user preference
+     * Preferences: lowest_price, best_service, fastest_arrival
      */
     private fun selectBestPrice(prices: List<Double>, packageName: String): Double {
         if (prices.isEmpty()) return 0.0
@@ -1059,11 +1073,43 @@ class PriceReaderService : AccessibilityService() {
         val reasonable = prices.filter { it in 15.0..1000.0 }
         if (reasonable.isEmpty()) return prices.minOrNull() ?: 0.0
 
-        // ALWAYS return the LOWEST price - this is what the user wants!
-        val lowestPrice = reasonable.minOrNull() ?: reasonable[0]
-        Log.i(TAG, "📊 Prices found: $reasonable, selecting LOWEST: $lowestPrice")
-        return lowestPrice
+        val selectedPrice = when (rideSortPreference) {
+            "lowest_price" -> {
+                // Always return the lowest price
+                reasonable.minOrNull() ?: reasonable[0]
+            }
+            "best_service" -> {
+                // For best service, we still return lowest price from THIS app
+                // The comparison between apps happens in Flutter based on ratings
+                reasonable.minOrNull() ?: reasonable[0]
+            }
+            "fastest_arrival" -> {
+                // For fastest arrival, we still return lowest price from THIS app
+                // The comparison between apps happens in Flutter based on ETA
+                reasonable.minOrNull() ?: reasonable[0]
+            }
+            else -> {
+                reasonable.minOrNull() ?: reasonable[0]
+            }
+        }
+
+        Log.i(TAG, "📊 Prices: $reasonable | Preference: $rideSortPreference | Selected: $selectedPrice")
+        return selectedPrice
     }
+
+    /**
+     * Set the user's ride sorting preference
+     * Called from Flutter via MethodChannel
+     */
+    fun setRideSortPreference(preference: String) {
+        rideSortPreference = preference
+        Log.i(TAG, "⚙️ Ride sort preference set to: $preference")
+    }
+
+    /**
+     * Get the current ride sorting preference
+     */
+    fun getRideSortPreference(): String = rideSortPreference
 
     /**
      * Save and broadcast price info
