@@ -865,12 +865,10 @@ class PriceReaderService : AccessibilityService() {
         val reasonable = prices.filter { it in 15.0..1000.0 }
         if (reasonable.isEmpty()) return prices.minOrNull() ?: 0.0
 
-        return when (packageName) {
-            // InDriver shows suggested price prominently
-            INDRIVER_PACKAGE -> reasonable.minOrNull() ?: reasonable[0]
-            // Most apps show the main price first
-            else -> reasonable[0]
-        }
+        // ALWAYS return the LOWEST price - this is what the user wants!
+        val lowestPrice = reasonable.minOrNull() ?: reasonable[0]
+        Log.i(TAG, "📊 Prices found: $reasonable, selecting LOWEST: $lowestPrice")
+        return lowestPrice
     }
 
     /**
