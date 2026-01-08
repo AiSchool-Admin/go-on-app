@@ -63,4 +63,11 @@ class RideSortPreferenceNotifier extends StateNotifier<RideSortPreference> {
     // Sync to native
     await _syncToNative(preference);
   }
+
+  /// Force sync current preference to native code
+  /// Called before fetching prices to ensure Kotlin has the latest preference
+  Future<void> syncPreferenceToNative() async {
+    await _syncToNative(state);
+    print('Synced preference to native: ${state.value}');
+  }
 }

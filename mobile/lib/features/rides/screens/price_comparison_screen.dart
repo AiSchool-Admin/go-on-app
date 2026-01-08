@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/services/native_services.dart';
+import '../../../providers/ride_preference_provider.dart';
 import '../../../widgets/ride_sort_preference_selector.dart';
 import '../services/ride_service.dart';
 import '../models/price_option.dart';
@@ -139,6 +140,10 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen>
       _showAccessibilityDialog();
       return;
     }
+
+    // IMPORTANT: Sync user preference to native code BEFORE fetching
+    final preferenceNotifier = ref.read(rideSortPreferenceProvider.notifier);
+    await preferenceNotifier.syncPreferenceToNative();
 
     setState(() {
       _fetchingApp = option.name;
