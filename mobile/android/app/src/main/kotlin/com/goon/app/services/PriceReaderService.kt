@@ -971,6 +971,7 @@ class PriceReaderService : AccessibilityService() {
 
     /**
      * Find price by resource ID - App specific targeting
+     * ALWAYS returns the LOWEST price found across all resource IDs
      */
     private fun findPriceByResourceId(rootNode: AccessibilityNodeInfo, packageName: String): Double? {
         val priceResourceIds = when (packageName) {
@@ -1006,6 +1007,9 @@ class PriceReaderService : AccessibilityService() {
             else -> emptyList()
         }
 
+        // Collect ALL prices from resource IDs, then return the LOWEST
+        val allPrices = mutableListOf<Double>()
+
         for (resourceId in priceResourceIds) {
             try {
                 val nodes = rootNode.findAccessibilityNodeInfosByViewId(resourceId)
@@ -1014,8 +1018,8 @@ class PriceReaderService : AccessibilityService() {
                     if (text != null) {
                         val price = extractPrice(text)
                         if (price != null && price > 0) {
-                            node.recycle()
-                            return price
+                            allPrices.add(price)
+                            Log.d(TAG, "📍 Found price by resource ID '$resourceId': $price")
                         }
                     }
                     node.recycle()
@@ -1025,13 +1029,36 @@ class PriceReaderService : AccessibilityService() {
             }
         }
 
+        // Return the LOWEST price found
+        if (allPrices.isNotEmpty()) {
+            val lowestPrice = allPrices.minOrNull()!!
+            Log.i(TAG, "📊 Resource ID prices: $allPrices, selecting LOWEST: $lowestPrice")
+            return lowestPrice
+        }
+
         return null
     }
 
     /**
      * Find price by scanning content descriptions for price keywords
+     * ALWAYS returns the LOWEST price found
      */
     private fun findPriceByContentDescription(node: AccessibilityNodeInfo): Double? {
+        val allPrices = mutableListOf<Double>()
+        collectPricesFromContentDescription(node, allPrices)
+
+        if (allPrices.isNotEmpty()) {
+            val lowestPrice = allPrices.minOrNull()!!
+            Log.i(TAG, "📊 Content desc prices: $allPrices, selecting LOWEST: $lowestPrice")
+            return lowestPrice
+        }
+        return null
+    }
+
+    /**
+     * Helper to collect all prices from content descriptions recursively
+     */
+    private fun collectPricesFromContentDescription(node: AccessibilityNodeInfo, prices: MutableList<Double>) {
         val desc = node.contentDescription?.toString()
         if (desc != null) {
             // Look for price-related content descriptions
@@ -1042,7 +1069,10 @@ class PriceReaderService : AccessibilityService() {
                 desc.contains("EGP", ignoreCase = true) ||
                 desc.contains("ج.م")) {
                 val price = extractPrice(desc)
-                if (price != null && price > 0) return price
+                if (price != null && price > 0) {
+                    prices.add(price)
+                    Log.d(TAG, "📍 Found price by content desc: $price in '$desc'")
+                }
             }
         }
 
@@ -1051,14 +1081,11 @@ class PriceReaderService : AccessibilityService() {
             try {
                 val child = node.getChild(i)
                 if (child != null) {
-                    val childPrice = findPriceByContentDescription(child)
+                    collectPricesFromContentDescription(child, prices)
                     child.recycle()
-                    if (childPrice != null) return childPrice
                 }
             } catch (e: Exception) {}
         }
-
-        return null
     }
 
     /**
