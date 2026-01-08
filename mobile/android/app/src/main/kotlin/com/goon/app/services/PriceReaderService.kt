@@ -314,6 +314,13 @@ class PriceReaderService : AccessibilityService() {
                 }
 
                 AutomationState.WAITING_FOR_PRICE -> {
+                    // First, check for intermediate screens (like airline selection for airport)
+                    if (handleIntermediateScreens(rootNode, packageName)) {
+                        Log.i(TAG, "📋 Handled intermediate screen, continuing...")
+                        // Don't increment step counter, wait for next iteration
+                        return
+                    }
+
                     val priceInfo = performAggressiveScan(packageName)
                     if (priceInfo != null && priceInfo.price > 0) {
                         Log.i(TAG, "✓ PRICE CAPTURED: ${priceInfo.price} EGP")
@@ -654,6 +661,193 @@ class PriceReaderService : AccessibilityService() {
             child.recycle()
         }
 
+        return false
+    }
+
+    /**
+     * Handle intermediate screens that appear before the price screen
+     * e.g., DiDi's "Which airline?" screen for airport destinations
+     * Returns true if an intermediate screen was handled
+     */
+    private fun handleIntermediateScreens(rootNode: AccessibilityNodeInfo, packageName: String): Boolean {
+        return when (packageName) {
+            DIDI_PACKAGE -> handleDiDiIntermediateScreens(rootNode)
+            UBER_PACKAGE -> handleUberIntermediateScreens(rootNode)
+            CAREEM_PACKAGE -> handleCareemIntermediateScreens(rootNode)
+            BOLT_PACKAGE -> handleBoltIntermediateScreens(rootNode)
+            INDRIVER_PACKAGE -> handleInDriverIntermediateScreens(rootNode)
+            else -> false
+        }
+    }
+
+    /**
+     * Handle DiDi intermediate screens:
+     * - "Which airline?" for airport destinations
+     * - Other promotional/info dialogs
+     */
+    private fun handleDiDiIntermediateScreens(rootNode: AccessibilityNodeInfo): Boolean {
+        val allText = getAllTextFromNode(rootNode)
+        val allTextLower = allText.map { it.lowercase() }
+
+        // Check for airline selection screen
+        val hasAirlineScreen = allTextLower.any {
+            it.contains("which airline") ||
+            it.contains("اختر شركة الطيران") ||
+            it.contains("search airlines") ||
+            it.contains("بحث عن شركات الطيران")
+        }
+
+        if (hasAirlineScreen) {
+            Log.i(TAG, "🛫 Detected DiDi airline selection screen")
+
+            // Look for "Skip" button and click it
+            val skipTexts = listOf("Skip", "تخطي", "skip")
+            for (skipText in skipTexts) {
+                val skipNodes = rootNode.findAccessibilityNodeInfosByText(skipText)
+                for (node in skipNodes) {
+                    if (node.isClickable) {
+                        val clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        if (clicked) {
+                            Log.i(TAG, "✓ Clicked 'Skip' button on airline screen")
+                            node.recycle()
+                            return true
+                        }
+                    }
+                    // Try clicking parent if node isn't directly clickable
+                    val parent = node.parent
+                    if (parent != null && parent.isClickable) {
+                        val clicked = parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        if (clicked) {
+                            Log.i(TAG, "✓ Clicked parent of 'Skip' button")
+                            parent.recycle()
+                            node.recycle()
+                            return true
+                        }
+                        parent.recycle()
+                    }
+                    node.recycle()
+                }
+            }
+
+            // Fallback: Try to find and click any clickable "Skip" element by traversal
+            if (findAndClickSkipButton(rootNode)) {
+                return true
+            }
+        }
+
+        // Check for promotional/popup dialogs and dismiss them
+        val hasPromoDialog = allTextLower.any {
+            it.contains("got it") ||
+            it.contains("dismiss") ||
+            it.contains("close") ||
+            it.contains("no thanks") ||
+            it.contains("لا شكراً") ||
+            it.contains("إغلاق")
+        }
+
+        if (hasPromoDialog) {
+            Log.i(TAG, "📢 Detected DiDi promotional dialog")
+            val dismissTexts = listOf("Got it", "Dismiss", "Close", "No thanks", "OK", "لا شكراً", "إغلاق", "حسناً")
+            for (dismissText in dismissTexts) {
+                val nodes = rootNode.findAccessibilityNodeInfosByText(dismissText)
+                for (node in nodes) {
+                    if (node.isClickable) {
+                        node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        Log.i(TAG, "✓ Dismissed dialog with: $dismissText")
+                        node.recycle()
+                        return true
+                    }
+                    node.recycle()
+                }
+            }
+        }
+
+        return false
+    }
+
+    /**
+     * Find and click Skip button by recursive traversal
+     */
+    private fun findAndClickSkipButton(node: AccessibilityNodeInfo): Boolean {
+        val text = node.text?.toString()?.lowercase() ?: ""
+        val desc = node.contentDescription?.toString()?.lowercase() ?: ""
+
+        if ((text == "skip" || text == "تخطي" || desc == "skip" || desc == "تخطي") && node.isClickable) {
+            val clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            if (clicked) {
+                Log.i(TAG, "✓ Found and clicked Skip button via traversal")
+                return true
+            }
+        }
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (findAndClickSkipButton(child)) {
+                child.recycle()
+                return true
+            }
+            child.recycle()
+        }
+
+        return false
+    }
+
+    /**
+     * Handle Uber intermediate screens
+     */
+    private fun handleUberIntermediateScreens(rootNode: AccessibilityNodeInfo): Boolean {
+        val allText = getAllTextFromNode(rootNode)
+        val allTextLower = allText.map { it.lowercase() }
+
+        // Check for surge pricing confirmation, promo dialogs, etc.
+        val hasSurgeDialog = allTextLower.any {
+            it.contains("prices are higher") ||
+            it.contains("demand is high") ||
+            it.contains("الأسعار أعلى")
+        }
+
+        if (hasSurgeDialog) {
+            Log.i(TAG, "⚡ Detected Uber surge pricing dialog")
+            // Look for accept/confirm button
+            val confirmTexts = listOf("Accept", "Confirm", "Got it", "OK", "قبول", "تأكيد")
+            for (confirmText in confirmTexts) {
+                val nodes = rootNode.findAccessibilityNodeInfosByText(confirmText)
+                for (node in nodes) {
+                    if (node.isClickable) {
+                        node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        Log.i(TAG, "✓ Accepted surge pricing")
+                        node.recycle()
+                        return true
+                    }
+                    node.recycle()
+                }
+            }
+        }
+
+        return false
+    }
+
+    /**
+     * Handle Careem intermediate screens
+     */
+    private fun handleCareemIntermediateScreens(rootNode: AccessibilityNodeInfo): Boolean {
+        // Similar logic for Careem dialogs
+        return false
+    }
+
+    /**
+     * Handle Bolt intermediate screens
+     */
+    private fun handleBoltIntermediateScreens(rootNode: AccessibilityNodeInfo): Boolean {
+        // Similar logic for Bolt dialogs
+        return false
+    }
+
+    /**
+     * Handle InDriver intermediate screens
+     */
+    private fun handleInDriverIntermediateScreens(rootNode: AccessibilityNodeInfo): Boolean {
+        // Similar logic for InDriver dialogs
         return false
     }
 
