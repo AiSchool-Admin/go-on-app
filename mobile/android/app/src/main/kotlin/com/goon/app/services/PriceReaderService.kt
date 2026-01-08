@@ -364,15 +364,15 @@ class PriceReaderService : AccessibilityService() {
     private fun findAndClickDestinationField(rootNode: AccessibilityNodeInfo, packageName: String): Boolean {
         Log.i(TAG, "🔍 Searching for destination field in $packageName...")
 
+        // Special handling for InDriver
+        if (packageName == INDRIVER_PACKAGE) {
+            return findAndClickInDriverDestination(rootNode)
+        }
+
         // App-specific field identifiers - EXPANDED for DiDi
         val searchTexts = when (packageName) {
             UBER_PACKAGE -> listOf("Where to?", "إلى أين؟", "Search", "بحث", "Enter destination", "Where to")
             CAREEM_PACKAGE -> listOf("Where to?", "إلى أين؟", "Search destination", "وجهتك", "Where would you like to go")
-            INDRIVER_PACKAGE -> listOf(
-                "Where to?", "إلى أين؟", "إلى أين", "To", "إلى", "Where",
-                "الوجهة", "Destination", "أين تريد الذهاب", "Enter destination",
-                "اختر وجهتك", "Search", "بحث", "أدخل وجهتك"
-            )
             DIDI_PACKAGE -> listOf("Where to?", "Where to", "إلى أين", "إلى أين؟", "Destination", "Search", "输入目的地", "去哪儿")
             BOLT_PACKAGE -> listOf("Where to?", "إلى أين؟", "Search", "Enter destination", "Where to")
             else -> listOf("Where to?", "إلى أين؟", "Search", "Destination")
@@ -440,6 +440,123 @@ class PriceReaderService : AccessibilityService() {
 
         // Strategy 3: Try to find EditText fields directly
         return findAndClickEditText(rootNode)
+    }
+
+    /**
+     * Special handling for InDriver destination field
+     * InDriver has a unique UI with "To" field at the bottom of the screen
+     */
+    private fun findAndClickInDriverDestination(rootNode: AccessibilityNodeInfo): Boolean {
+        Log.i(TAG, "🚗 InDriver special handling...")
+
+        // Debug: Log all visible text
+        logAllVisibleText(rootNode, 0)
+
+        // InDriver specific search texts - Arabic and English
+        val inDriverTexts = listOf(
+            // Common destination texts
+            "To", "إلى", "Where to?", "إلى أين؟", "إلى أين",
+            // Route/destination
+            "الوجهة", "Destination", "وجهتك",
+            // InDriver specific
+            "أدخل وجهتك", "Enter your destination", "Enter destination",
+            "اختر الوجهة", "Choose destination",
+            // Search
+            "Search", "بحث", "ابحث",
+            // "To" field hints
+            "Where are you going", "أين تذهب", "إلى أين تريد الذهاب"
+        )
+
+        // Strategy 1: Find by text
+        for (searchText in inDriverTexts) {
+            val nodes = rootNode.findAccessibilityNodeInfosByText(searchText)
+            Log.d(TAG, "InDriver: Found ${nodes.size} nodes for '$searchText'")
+
+            for (node in nodes) {
+                Log.d(TAG, "  → class=${node.className}, clickable=${node.isClickable}, text='${node.text}'")
+
+                // Try clicking the node itself
+                if (node.isClickable) {
+                    if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        Log.i(TAG, "✓ InDriver: Clicked on '$searchText'")
+                        node.recycle()
+                        return true
+                    }
+                }
+
+                // Try clicking parent (up to 3 levels)
+                var current = node.parent
+                for (level in 1..3) {
+                    if (current == null) break
+                    Log.d(TAG, "  → Parent L$level: class=${current.className}, clickable=${current.isClickable}")
+                    if (current.isClickable) {
+                        if (current.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                            Log.i(TAG, "✓ InDriver: Clicked parent L$level of '$searchText'")
+                            current.recycle()
+                            node.recycle()
+                            return true
+                        }
+                    }
+                    val next = current.parent
+                    current.recycle()
+                    current = next
+                }
+                node.recycle()
+            }
+        }
+
+        // Strategy 2: Find any clickable view that looks like a destination field
+        val found = findInDriverClickableField(rootNode)
+        if (found) return true
+
+        // Strategy 3: Find EditText directly
+        return findAndClickEditText(rootNode)
+    }
+
+    /**
+     * Find InDriver clickable destination field by traversing UI
+     */
+    private fun findInDriverClickableField(node: AccessibilityNodeInfo): Boolean {
+        val text = node.text?.toString()?.lowercase() ?: ""
+        val desc = node.contentDescription?.toString()?.lowercase() ?: ""
+        val hint = (if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O)
+            node.hintText?.toString()?.lowercase() else null) ?: ""
+        val className = node.className?.toString() ?: ""
+
+        // Check if this looks like a destination input
+        val isDestinationLike = text.contains("to") || text.contains("إلى") ||
+                                text.contains("where") || text.contains("أين") ||
+                                text.contains("destination") || text.contains("وجهة") ||
+                                desc.contains("to") || desc.contains("إلى") ||
+                                desc.contains("destination") || desc.contains("وجهة") ||
+                                hint.contains("to") || hint.contains("destination")
+
+        // Check if it's an input-like element
+        val isInputLike = className.contains("EditText") ||
+                          className.contains("AutoComplete") ||
+                          className.contains("SearchView") ||
+                          node.isEditable
+
+        if ((isDestinationLike || isInputLike) && (node.isClickable || node.isFocusable)) {
+            Log.i(TAG, "🎯 InDriver: Found potential field - class=$className, text=$text")
+            if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK) ||
+                node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)) {
+                Log.i(TAG, "✓ InDriver: Clicked/focused field")
+                return true
+            }
+        }
+
+        // Recursively check children
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (findInDriverClickableField(child)) {
+                child.recycle()
+                return true
+            }
+            child.recycle()
+        }
+
+        return false
     }
 
     /**
