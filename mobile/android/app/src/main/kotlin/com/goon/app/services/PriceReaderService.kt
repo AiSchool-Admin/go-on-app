@@ -1320,10 +1320,21 @@ class PriceReaderService : AccessibilityService() {
                     node.getBoundsInScreen(bounds)
                     Log.i(TAG, "🗺️   Bounds: left=${bounds.left}, top=${bounds.top}, right=${bounds.right}, bottom=${bounds.bottom}, width=${bounds.width()}, height=${bounds.height()}")
 
-                    if (bounds.width() > 0 && bounds.height() > 0) {
+                    // Check if bounds have valid width (handles inverted top/bottom)
+                    val hasValidWidth = bounds.width() > 0 && bounds.right > bounds.left
+                    val isInverted = bounds.top > bounds.bottom
+
+                    if (hasValidWidth) {
+                        // Calculate center - handle inverted bounds (top > bottom means button at screen bottom)
                         val centerX = bounds.centerX().toFloat()
-                        val centerY = bounds.centerY().toFloat()
-                        Log.i(TAG, "🗺️ STRATEGY 1: GESTURE click at ($centerX, $centerY)")
+                        val centerY = if (isInverted) {
+                            // Inverted bounds - use bottom value (which is actually on-screen)
+                            // Button is at screen bottom, click slightly above bottom edge
+                            (bounds.bottom - 80).toFloat().coerceAtLeast(100f)
+                        } else {
+                            bounds.centerY().toFloat()
+                        }
+                        Log.i(TAG, "🗺️ STRATEGY 1: GESTURE click at ($centerX, $centerY) [inverted=$isInverted]")
 
                         if (clickAtPosition(centerX, centerY)) {
                             Log.i(TAG, "🗺️ ✓✓✓ SUCCESS: Clicked '$doneText' via GESTURE!")
@@ -1332,7 +1343,7 @@ class PriceReaderService : AccessibilityService() {
                             return true
                         }
                     } else {
-                        Log.w(TAG, "🗺️   Node bounds are EMPTY - trying parent bounds")
+                        Log.w(TAG, "🗺️   Node bounds are INVALID - trying parent bounds")
 
                         // STRATEGY 1b: Try parent bounds
                         var parent = node.parent
@@ -1372,23 +1383,31 @@ class PriceReaderService : AccessibilityService() {
                         }
                     }
 
-                    // STRATEGY 3: Hardcoded position for "تم" button (typically at bottom center)
-                    // InDriver's "تم" button is usually around screen bottom, centered
-                    Log.i(TAG, "🗺️ STRATEGY 3: Trying HARDCODED position for Done button...")
+                    // STRATEGY 3: Hardcoded position for "تم" button (at screen bottom)
+                    Log.i(TAG, "🗺️ STRATEGY 3: Trying HARDCODED positions for Done button...")
                     val displayMetrics = resources.displayMetrics
                     val screenWidth = displayMetrics.widthPixels.toFloat()
                     val screenHeight = displayMetrics.heightPixels.toFloat()
-
-                    // "تم" button is typically at bottom 1/4 of screen, horizontally centered
                     val hardcodedX = screenWidth / 2
-                    val hardcodedY = screenHeight * 0.85f  // 85% from top
-                    Log.i(TAG, "🗺️ Screen: ${screenWidth}x${screenHeight}, clicking at ($hardcodedX, $hardcodedY)")
 
-                    if (clickAtPosition(hardcodedX, hardcodedY)) {
-                        Log.i(TAG, "🗺️ ✓✓✓ SUCCESS: Clicked Done button via HARDCODED position!")
-                        node.recycle()
-                        Thread.sleep(800)
-                        return true
+                    // Try multiple Y positions from bottom to middle
+                    val yPositions = listOf(
+                        screenHeight - 100,  // Very bottom
+                        screenHeight - 150,  // Near bottom
+                        screenHeight - 200,  // Slightly higher
+                        screenHeight * 0.92f, // 92% from top
+                        screenHeight * 0.85f  // 85% from top (original)
+                    )
+
+                    for (hardcodedY in yPositions) {
+                        Log.i(TAG, "🗺️ Screen: ${screenWidth}x${screenHeight}, trying click at ($hardcodedX, $hardcodedY)")
+                        if (clickAtPosition(hardcodedX, hardcodedY)) {
+                            Log.i(TAG, "🗺️ ✓✓✓ SUCCESS: Clicked Done button at y=$hardcodedY!")
+                            node.recycle()
+                            Thread.sleep(1000) // Wait longer for UI to update
+                            return true
+                        }
+                        Thread.sleep(200) // Small delay between attempts
                     }
 
                     node.recycle()
