@@ -1312,13 +1312,18 @@ class PriceReaderService : AccessibilityService() {
                     val nodeText = node.text?.toString() ?: ""
                     Log.i(TAG, "🗺️   Node: [$nodeClass] text='$nodeText' clickable=${node.isClickable}")
 
+                    // Try refresh() to get updated bounds
+                    node.refresh()
+
                     // STRATEGY 1: GESTURE CLICK FIRST (most reliable)
                     val bounds = android.graphics.Rect()
                     node.getBoundsInScreen(bounds)
+                    Log.i(TAG, "🗺️   Bounds: left=${bounds.left}, top=${bounds.top}, right=${bounds.right}, bottom=${bounds.bottom}, width=${bounds.width()}, height=${bounds.height()}")
+
                     if (bounds.width() > 0 && bounds.height() > 0) {
                         val centerX = bounds.centerX().toFloat()
                         val centerY = bounds.centerY().toFloat()
-                        Log.i(TAG, "🗺️ Trying GESTURE click at ($centerX, $centerY)")
+                        Log.i(TAG, "🗺️ STRATEGY 1: GESTURE click at ($centerX, $centerY)")
 
                         if (clickAtPosition(centerX, centerY)) {
                             Log.i(TAG, "🗺️ ✓✓✓ SUCCESS: Clicked '$doneText' via GESTURE!")
@@ -1326,17 +1331,64 @@ class PriceReaderService : AccessibilityService() {
                             Thread.sleep(800) // Wait for UI to update
                             return true
                         }
+                    } else {
+                        Log.w(TAG, "🗺️   Node bounds are EMPTY - trying parent bounds")
+
+                        // STRATEGY 1b: Try parent bounds
+                        var parent = node.parent
+                        for (level in 1..3) {
+                            if (parent == null) break
+                            parent.refresh()
+                            val parentBounds = android.graphics.Rect()
+                            parent.getBoundsInScreen(parentBounds)
+                            Log.i(TAG, "🗺️   Parent L$level bounds: width=${parentBounds.width()}, height=${parentBounds.height()}")
+
+                            if (parentBounds.width() > 0 && parentBounds.height() > 0) {
+                                val centerX = parentBounds.centerX().toFloat()
+                                val centerY = parentBounds.centerY().toFloat()
+                                Log.i(TAG, "🗺️ STRATEGY 1b: Parent gesture click at ($centerX, $centerY)")
+
+                                if (clickAtPosition(centerX, centerY)) {
+                                    Log.i(TAG, "🗺️ ✓✓✓ SUCCESS: Clicked '$doneText' via PARENT GESTURE!")
+                                    parent.recycle()
+                                    node.recycle()
+                                    Thread.sleep(800)
+                                    return true
+                                }
+                            }
+                            val next = parent.parent
+                            parent.recycle()
+                            parent = next
+                        }
                     }
 
                     // STRATEGY 2: performAction click as fallback
                     if (node.isClickable) {
-                        Log.i(TAG, "🗺️ Trying performAction click...")
+                        Log.i(TAG, "🗺️ STRATEGY 2: performAction click...")
                         if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                            Log.i(TAG, "🗺️ ✓✓✓ SUCCESS: Clicked '$doneText' via performAction!")
-                            node.recycle()
-                            Thread.sleep(800)
-                            return true
+                            Log.i(TAG, "🗺️ ✓ performAction returned true (but may not work)")
+                            // Don't return here - performAction often returns true but doesn't actually click
+                            // Continue to try other strategies
                         }
+                    }
+
+                    // STRATEGY 3: Hardcoded position for "تم" button (typically at bottom center)
+                    // InDriver's "تم" button is usually around screen bottom, centered
+                    Log.i(TAG, "🗺️ STRATEGY 3: Trying HARDCODED position for Done button...")
+                    val displayMetrics = resources.displayMetrics
+                    val screenWidth = displayMetrics.widthPixels.toFloat()
+                    val screenHeight = displayMetrics.heightPixels.toFloat()
+
+                    // "تم" button is typically at bottom 1/4 of screen, horizontally centered
+                    val hardcodedX = screenWidth / 2
+                    val hardcodedY = screenHeight * 0.85f  // 85% from top
+                    Log.i(TAG, "🗺️ Screen: ${screenWidth}x${screenHeight}, clicking at ($hardcodedX, $hardcodedY)")
+
+                    if (clickAtPosition(hardcodedX, hardcodedY)) {
+                        Log.i(TAG, "🗺️ ✓✓✓ SUCCESS: Clicked Done button via HARDCODED position!")
+                        node.recycle()
+                        Thread.sleep(800)
+                        return true
                     }
 
                     node.recycle()
@@ -1416,46 +1468,45 @@ class PriceReaderService : AccessibilityService() {
         val isButton = className.contains("Button") || className.contains("TextView")
 
         if (isDoneButton) {
-            Log.i(TAG, "🗺️ Found Done button: [$className] text='$text' clickable=${node.isClickable}")
+            Log.i(TAG, "🗺️ [findAndClickDoneButton] Found: [$className] text='$text' clickable=${node.isClickable}")
+
+            // Try refresh() to get updated bounds
+            node.refresh()
 
             // Strategy 1: GESTURE CLICK FIRST - more reliable for custom UI
             val bounds = android.graphics.Rect()
             node.getBoundsInScreen(bounds)
+            Log.i(TAG, "🗺️ [findAndClickDoneButton] Bounds: ${bounds.left},${bounds.top},${bounds.right},${bounds.bottom} (${bounds.width()}x${bounds.height()})")
+
             if (bounds.width() > 0 && bounds.height() > 0) {
                 val centerX = bounds.centerX().toFloat()
                 val centerY = bounds.centerY().toFloat()
-                Log.i(TAG, "🗺️ Strategy 1: Gesture click at ($centerX, $centerY)")
+                Log.i(TAG, "🗺️ [findAndClickDoneButton] Strategy 1: Gesture click at ($centerX, $centerY)")
 
                 if (clickAtPosition(centerX, centerY)) {
                     Log.i(TAG, "🗺️ ✓✓✓ SUCCESS: Clicked Done button via GESTURE!")
-                    // Add delay to let UI update
                     Thread.sleep(500)
                     return true
                 }
+            } else {
+                Log.w(TAG, "🗺️ [findAndClickDoneButton] Bounds are EMPTY - trying parents")
             }
 
-            // Strategy 2: Direct performAction click
-            if (node.isClickable) {
-                Log.i(TAG, "🗺️ Strategy 2: performAction click")
-                if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                    Log.i(TAG, "🗺️ ✓✓✓ SUCCESS: Clicked Done button via performAction!")
-                    Thread.sleep(500)
-                    return true
-                }
-            }
-
-            // Strategy 3: Try clicking parents with gesture
+            // Strategy 2: Try parent bounds (even if node bounds are empty)
             var parent = node.parent
-            for (level in 1..3) {
+            for (level in 1..4) {
                 if (parent == null) break
                 val parentClass = parent.className?.toString()?.substringAfterLast(".") ?: ""
+                parent.refresh()
 
                 val parentBounds = android.graphics.Rect()
                 parent.getBoundsInScreen(parentBounds)
+                Log.i(TAG, "🗺️ [findAndClickDoneButton] Parent L$level [$parentClass] bounds: ${parentBounds.width()}x${parentBounds.height()}")
+
                 if (parentBounds.width() > 0 && parentBounds.height() > 0) {
                     val px = parentBounds.centerX().toFloat()
                     val py = parentBounds.centerY().toFloat()
-                    Log.i(TAG, "🗺️ Strategy 3: Parent L$level gesture at ($px, $py)")
+                    Log.i(TAG, "🗺️ [findAndClickDoneButton] Strategy 2: Parent L$level gesture at ($px, $py)")
 
                     if (clickAtPosition(px, py)) {
                         Log.i(TAG, "🗺️ ✓✓✓ SUCCESS: Clicked parent L$level via gesture!")
@@ -1468,6 +1519,28 @@ class PriceReaderService : AccessibilityService() {
                 val next = parent.parent
                 parent.recycle()
                 parent = next
+            }
+
+            // Strategy 3: performAction click (often doesn't work but try anyway)
+            if (node.isClickable) {
+                Log.i(TAG, "🗺️ [findAndClickDoneButton] Strategy 3: performAction click")
+                node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                // Don't return true - performAction often returns true but doesn't actually click
+            }
+
+            // Strategy 4: Hardcoded screen position
+            Log.i(TAG, "🗺️ [findAndClickDoneButton] Strategy 4: Hardcoded position")
+            val displayMetrics = resources.displayMetrics
+            val screenWidth = displayMetrics.widthPixels.toFloat()
+            val screenHeight = displayMetrics.heightPixels.toFloat()
+            val hardcodedX = screenWidth / 2
+            val hardcodedY = screenHeight * 0.85f
+            Log.i(TAG, "🗺️ [findAndClickDoneButton] Hardcoded click at ($hardcodedX, $hardcodedY)")
+
+            if (clickAtPosition(hardcodedX, hardcodedY)) {
+                Log.i(TAG, "🗺️ ✓✓✓ SUCCESS: Clicked via HARDCODED position!")
+                Thread.sleep(500)
+                return true
             }
         }
 
