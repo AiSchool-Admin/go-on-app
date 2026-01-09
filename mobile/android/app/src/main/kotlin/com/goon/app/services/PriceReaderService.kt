@@ -377,11 +377,13 @@ class PriceReaderService : AccessibilityService() {
                     Log.i(TAG, "🤖 Waiting for price (step $automationStep/10)...")
 
                     // First, check for intermediate screens (like airline selection for airport)
+                    Log.i(TAG, "🤖 Checking for intermediate screens...")
                     if (handleIntermediateScreens(rootNode, packageName)) {
                         Log.i(TAG, "🤖 📋 Handled intermediate screen, continuing...")
                         // Don't increment step counter, wait for next iteration
                         return
                     }
+                    Log.i(TAG, "🤖 No intermediate screen handled, proceeding to price scan...")
 
                     val priceInfo = performAggressiveScan(packageName)
                     if (priceInfo != null && priceInfo.price > 0) {
@@ -1276,15 +1278,22 @@ class PriceReaderService : AccessibilityService() {
      * CRITICAL: Also handles the MAP CONFIRMATION screen with "تم" (Done) button
      */
     private fun handleInDriverIntermediateScreens(rootNode: AccessibilityNodeInfo): Boolean {
+        Log.i(TAG, "🗺️ handleInDriverIntermediateScreens called")
+
         val allText = getAllTextFromNode(rootNode)
         val allTextLower = allText.map { it.lowercase() }
+
+        Log.i(TAG, "🗺️ Checking for 'تم' button in ${allText.size} texts")
 
         // ============================================================
         // CRITICAL: Check for MAP CONFIRMATION screen with "تم" button
         // This appears after selecting a destination on InDriver
         // ============================================================
-        val hasMapConfirmation = allText.any { it == "تم" } ||
-                                  allTextLower.any { it == "done" || it == "confirm" || it == "تأكيد" }
+        val hasTamButton = allText.any { it == "تم" }
+        val hasDoneButton = allTextLower.any { it == "done" || it == "confirm" || it == "تأكيد" }
+        val hasMapConfirmation = hasTamButton || hasDoneButton
+
+        Log.i(TAG, "🗺️ hasTamButton=$hasTamButton, hasDoneButton=$hasDoneButton, hasMapConfirmation=$hasMapConfirmation")
 
         // Also check if we see Google maps elements (indicates map confirmation screen)
         val hasGoogleMap = allTextLower.any { it.contains("google") }
@@ -1519,6 +1528,13 @@ class PriceReaderService : AccessibilityService() {
             }
 
             for (text in allText) {
+                // CRITICAL: Skip resource IDs - they contain UUIDs with numbers that look like prices
+                // Example: "sinet.startup.inDriver:id/46a5faad-8e95-41a6-83a9-0a68ec2a5e38" contains "95"
+                if (text.contains(":id/") || text.contains("_id/")) {
+                    Log.d(TAG, "⏭️ Skipping resource ID: '$text'")
+                    continue
+                }
+
                 val price = extractPrice(text)
                 if (price != null && price in 10.0..5000.0) {
                     allPrices.add(price)
