@@ -115,6 +115,15 @@ class _MapLocationPickerScreenState extends ConsumerState<MapLocationPickerScree
     }
   }
 
+  /// Check if a string is a Plus Code (format: XXXX+XXX)
+  bool _isPlusCode(String? text) {
+    if (text == null || text.isEmpty) return false;
+    // Plus Codes contain + and alphanumeric characters
+    // Format: 4-8 characters + 2-3 characters (e.g., XVC5+2Q2)
+    final plusCodeRegex = RegExp(r'^[A-Z0-9]{4,8}\+[A-Z0-9]{2,3}$', caseSensitive: false);
+    return plusCodeRegex.hasMatch(text.trim());
+  }
+
   Future<void> _getAddressFromLocation(LatLng location) async {
     setState(() => _isLoadingAddress = true);
 
@@ -128,16 +137,17 @@ class _MapLocationPickerScreenState extends ConsumerState<MapLocationPickerScree
         final place = placemarks.first;
         final parts = <String>[];
 
-        if (place.street != null && place.street!.isNotEmpty) {
+        // IMPORTANT: Skip Plus Codes - InDriver doesn't understand them
+        if (place.street != null && place.street!.isNotEmpty && !_isPlusCode(place.street)) {
           parts.add(place.street!);
         }
-        if (place.subLocality != null && place.subLocality!.isNotEmpty) {
+        if (place.subLocality != null && place.subLocality!.isNotEmpty && !_isPlusCode(place.subLocality)) {
           parts.add(place.subLocality!);
         }
-        if (place.locality != null && place.locality!.isNotEmpty) {
+        if (place.locality != null && place.locality!.isNotEmpty && !_isPlusCode(place.locality)) {
           parts.add(place.locality!);
         }
-        if (place.administrativeArea != null && place.administrativeArea!.isNotEmpty) {
+        if (place.administrativeArea != null && place.administrativeArea!.isNotEmpty && !_isPlusCode(place.administrativeArea)) {
           parts.add(place.administrativeArea!);
         }
 
