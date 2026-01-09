@@ -1401,6 +1401,7 @@ class PriceReaderService : AccessibilityService() {
     /**
      * Find and click the Done/تم button by traversing the UI tree
      * Looks for buttons that are likely the confirmation button
+     * Uses multiple strategies: ACTION_CLICK, parent click, and gesture-based click
      */
     private fun findAndClickDoneButton(node: AccessibilityNodeInfo): Boolean {
         val text = node.text?.toString() ?: ""
@@ -1415,24 +1416,48 @@ class PriceReaderService : AccessibilityService() {
         // Also check for Button class with these texts
         val isButton = className.contains("Button") || className.contains("TextView")
 
-        if (isDoneButton && node.isClickable) {
-            Log.i(TAG, "🗺️ Found Done button: [$className] text='$text'")
-            if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                Log.i(TAG, "🗺️ ✓✓✓ SUCCESS: Clicked Done button via traversal!")
-                return true
-            }
-        }
+        if (isDoneButton) {
+            Log.i(TAG, "🗺️ Found Done button: [$className] text='$text' clickable=${node.isClickable}")
 
-        // If it looks like a button but not clickable, try parent
-        if (isDoneButton && isButton) {
-            val parent = node.parent
-            if (parent != null && parent.isClickable) {
-                if (parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                    Log.i(TAG, "🗺️ ✓✓✓ SUCCESS: Clicked Done button parent!")
-                    parent.recycle()
+            // Strategy 1: Direct click if clickable
+            if (node.isClickable) {
+                if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    Log.i(TAG, "🗺️ ✓✓✓ SUCCESS: Clicked Done button via performAction!")
                     return true
                 }
+            }
+
+            // Strategy 2: Try gesture-based click using node bounds
+            val bounds = android.graphics.Rect()
+            node.getBoundsInScreen(bounds)
+            if (bounds.width() > 0 && bounds.height() > 0) {
+                val centerX = bounds.centerX().toFloat()
+                val centerY = bounds.centerY().toFloat()
+                Log.i(TAG, "🗺️ Trying gesture click at ($centerX, $centerY)")
+
+                if (clickAtPosition(centerX, centerY)) {
+                    Log.i(TAG, "🗺️ ✓✓✓ SUCCESS: Clicked Done button via gesture!")
+                    return true
+                }
+            }
+
+            // Strategy 3: Try clicking parents
+            var parent = node.parent
+            for (level in 1..5) {
+                if (parent == null) break
+                val parentClass = parent.className?.toString()?.substringAfterLast(".") ?: ""
+                Log.i(TAG, "🗺️ Trying parent L$level: [$parentClass] clickable=${parent.isClickable}")
+
+                if (parent.isClickable) {
+                    if (parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        Log.i(TAG, "🗺️ ✓✓✓ SUCCESS: Clicked Done button parent L$level!")
+                        parent.recycle()
+                        return true
+                    }
+                }
+                val next = parent.parent
                 parent.recycle()
+                parent = next
             }
         }
 
@@ -1446,6 +1471,37 @@ class PriceReaderService : AccessibilityService() {
             child.recycle()
         }
 
+        return false
+    }
+
+    /**
+     * Click at a specific screen position using accessibility gesture
+     * This is more reliable than performAction for some UI elements
+     */
+    private fun clickAtPosition(x: Float, y: Float): Boolean {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+            val path = android.graphics.Path()
+            path.moveTo(x, y)
+
+            val gestureBuilder = android.accessibilityservice.GestureDescription.Builder()
+            gestureBuilder.addStroke(
+                android.accessibilityservice.GestureDescription.StrokeDescription(
+                    path, 0, 100
+                )
+            )
+
+            val result = dispatchGesture(gestureBuilder.build(), object : GestureResultCallback() {
+                override fun onCompleted(gestureDescription: android.accessibilityservice.GestureDescription?) {
+                    Log.i(TAG, "🗺️ Gesture completed at ($x, $y)")
+                }
+                override fun onCancelled(gestureDescription: android.accessibilityservice.GestureDescription?) {
+                    Log.w(TAG, "🗺️ Gesture cancelled at ($x, $y)")
+                }
+            }, null)
+
+            Log.i(TAG, "🗺️ dispatchGesture result: $result")
+            return result
+        }
         return false
     }
 
@@ -1527,6 +1583,17 @@ class PriceReaderService : AccessibilityService() {
                 Log.d(TAG, "  [$index] '$text'")
             }
 
+            // Check if screen has motorcycle options - we want to exclude them
+            val allTextLower = allText.map { it.lowercase() }
+            val hasMotorcycleOption = allTextLower.any {
+                it.contains("دراجة نارية") || it.contains("موتوسيكل") ||
+                it.contains("motorcycle") || it.contains("moto") ||
+                it.contains("bike") || it.contains("scooter")
+            }
+            if (hasMotorcycleOption) {
+                Log.i(TAG, "🏍️ Detected motorcycle option on screen - will filter lowest price")
+            }
+
             for (text in allText) {
                 // CRITICAL: Skip resource IDs - they contain UUIDs with numbers that look like prices
                 // Example: "sinet.startup.inDriver:id/46a5faad-8e95-41a6-83a9-0a68ec2a5e38" contains "95"
@@ -1543,9 +1610,19 @@ class PriceReaderService : AccessibilityService() {
                 }
             }
 
-            // Remove duplicates and select price based on user preference
-            val uniquePrices = allPrices.distinct()
+            // Remove duplicates
+            var uniquePrices = allPrices.distinct().toMutableList()
             Log.i(TAG, "📊 ALL prices found (unique): $uniquePrices")
+
+            // If motorcycle option exists, filter out the lowest price (motorcycle is usually cheapest)
+            if (hasMotorcycleOption && uniquePrices.size > 1) {
+                val motorcyclePrice = uniquePrices.minOrNull()
+                if (motorcyclePrice != null) {
+                    Log.i(TAG, "🏍️ Filtering out motorcycle price: $motorcyclePrice EGP")
+                    uniquePrices = uniquePrices.filter { it != motorcyclePrice }.toMutableList()
+                    Log.i(TAG, "📊 Prices after motorcycle filter: $uniquePrices")
+                }
+            }
 
             if (uniquePrices.isNotEmpty()) {
                 // Select price based on user preference
