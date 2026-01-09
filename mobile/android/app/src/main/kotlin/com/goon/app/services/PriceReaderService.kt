@@ -1301,7 +1301,7 @@ class PriceReaderService : AccessibilityService() {
         if (hasMapConfirmation) {
             Log.i(TAG, "🗺️ Detected InDriver MAP CONFIRMATION screen - looking for 'تم' button")
 
-            // Priority 1: Look for EXACT "تم" button (the green Done button)
+            // Priority 1: Look for EXACT "تم" button and use GESTURE CLICK
             val doneTexts = listOf("تم", "Done", "Confirm", "تأكيد", "OK", "موافق")
             for (doneText in doneTexts) {
                 val nodes = rootNode.findAccessibilityNodeInfosByText(doneText)
@@ -1312,39 +1312,38 @@ class PriceReaderService : AccessibilityService() {
                     val nodeText = node.text?.toString() ?: ""
                     Log.i(TAG, "🗺️   Node: [$nodeClass] text='$nodeText' clickable=${node.isClickable}")
 
-                    // Direct click if clickable
-                    if (node.isClickable) {
-                        if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                            Log.i(TAG, "🗺️ ✓✓✓ SUCCESS: Clicked '$doneText' button!")
+                    // STRATEGY 1: GESTURE CLICK FIRST (most reliable)
+                    val bounds = android.graphics.Rect()
+                    node.getBoundsInScreen(bounds)
+                    if (bounds.width() > 0 && bounds.height() > 0) {
+                        val centerX = bounds.centerX().toFloat()
+                        val centerY = bounds.centerY().toFloat()
+                        Log.i(TAG, "🗺️ Trying GESTURE click at ($centerX, $centerY)")
+
+                        if (clickAtPosition(centerX, centerY)) {
+                            Log.i(TAG, "🗺️ ✓✓✓ SUCCESS: Clicked '$doneText' via GESTURE!")
                             node.recycle()
+                            Thread.sleep(800) // Wait for UI to update
                             return true
                         }
                     }
 
-                    // Try clicking parents (button might be inside container)
-                    var parent = node.parent
-                    for (level in 1..5) {
-                        if (parent == null) break
-                        val parentClass = parent.className?.toString()?.substringAfterLast(".") ?: ""
-                        Log.i(TAG, "🗺️   Parent L$level: [$parentClass] clickable=${parent.isClickable}")
-
-                        if (parent.isClickable) {
-                            if (parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                                Log.i(TAG, "🗺️ ✓✓✓ SUCCESS: Clicked parent L$level of '$doneText'!")
-                                parent.recycle()
-                                node.recycle()
-                                return true
-                            }
+                    // STRATEGY 2: performAction click as fallback
+                    if (node.isClickable) {
+                        Log.i(TAG, "🗺️ Trying performAction click...")
+                        if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                            Log.i(TAG, "🗺️ ✓✓✓ SUCCESS: Clicked '$doneText' via performAction!")
+                            node.recycle()
+                            Thread.sleep(800)
+                            return true
                         }
-                        val next = parent.parent
-                        parent.recycle()
-                        parent = next
                     }
+
                     node.recycle()
                 }
             }
 
-            // Priority 2: Find green button by traversing all clickable elements
+            // Priority 2: Find button by traversing UI (uses gesture internally)
             Log.i(TAG, "🗺️ Trying to find Done button by traversing UI...")
             if (findAndClickDoneButton(rootNode)) {
                 return true
@@ -1419,42 +1418,53 @@ class PriceReaderService : AccessibilityService() {
         if (isDoneButton) {
             Log.i(TAG, "🗺️ Found Done button: [$className] text='$text' clickable=${node.isClickable}")
 
-            // Strategy 1: Direct click if clickable
-            if (node.isClickable) {
-                if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                    Log.i(TAG, "🗺️ ✓✓✓ SUCCESS: Clicked Done button via performAction!")
-                    return true
-                }
-            }
-
-            // Strategy 2: Try gesture-based click using node bounds
+            // Strategy 1: GESTURE CLICK FIRST - more reliable for custom UI
             val bounds = android.graphics.Rect()
             node.getBoundsInScreen(bounds)
             if (bounds.width() > 0 && bounds.height() > 0) {
                 val centerX = bounds.centerX().toFloat()
                 val centerY = bounds.centerY().toFloat()
-                Log.i(TAG, "🗺️ Trying gesture click at ($centerX, $centerY)")
+                Log.i(TAG, "🗺️ Strategy 1: Gesture click at ($centerX, $centerY)")
 
                 if (clickAtPosition(centerX, centerY)) {
-                    Log.i(TAG, "🗺️ ✓✓✓ SUCCESS: Clicked Done button via gesture!")
+                    Log.i(TAG, "🗺️ ✓✓✓ SUCCESS: Clicked Done button via GESTURE!")
+                    // Add delay to let UI update
+                    Thread.sleep(500)
                     return true
                 }
             }
 
-            // Strategy 3: Try clicking parents
+            // Strategy 2: Direct performAction click
+            if (node.isClickable) {
+                Log.i(TAG, "🗺️ Strategy 2: performAction click")
+                if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    Log.i(TAG, "🗺️ ✓✓✓ SUCCESS: Clicked Done button via performAction!")
+                    Thread.sleep(500)
+                    return true
+                }
+            }
+
+            // Strategy 3: Try clicking parents with gesture
             var parent = node.parent
-            for (level in 1..5) {
+            for (level in 1..3) {
                 if (parent == null) break
                 val parentClass = parent.className?.toString()?.substringAfterLast(".") ?: ""
-                Log.i(TAG, "🗺️ Trying parent L$level: [$parentClass] clickable=${parent.isClickable}")
 
-                if (parent.isClickable) {
-                    if (parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                        Log.i(TAG, "🗺️ ✓✓✓ SUCCESS: Clicked Done button parent L$level!")
+                val parentBounds = android.graphics.Rect()
+                parent.getBoundsInScreen(parentBounds)
+                if (parentBounds.width() > 0 && parentBounds.height() > 0) {
+                    val px = parentBounds.centerX().toFloat()
+                    val py = parentBounds.centerY().toFloat()
+                    Log.i(TAG, "🗺️ Strategy 3: Parent L$level gesture at ($px, $py)")
+
+                    if (clickAtPosition(px, py)) {
+                        Log.i(TAG, "🗺️ ✓✓✓ SUCCESS: Clicked parent L$level via gesture!")
                         parent.recycle()
+                        Thread.sleep(500)
                         return true
                     }
                 }
+
                 val next = parent.parent
                 parent.recycle()
                 parent = next
