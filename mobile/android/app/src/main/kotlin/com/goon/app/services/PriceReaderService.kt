@@ -1372,28 +1372,35 @@ class PriceReaderService : AccessibilityService() {
 
                     Log.i(TAG, "🗺️   Using fixed buttonY: $buttonY (screen bottom - 75)")
 
-                    // STRATEGY C1: Shell input tap (bypasses accessibility blocking)
-                    Log.i(TAG, "🗺️ STRATEGY C1: Shell input tap at ($centerX, $buttonY)...")
+                    // STRATEGY C1: Direct input tap command (no shell wrapper)
+                    Log.i(TAG, "🗺️ STRATEGY C1: Direct input tap at ($centerX, $buttonY)...")
+                    val tapX = centerX.toInt()
+                    val tapY = buttonY.toInt()
+
                     try {
-                        val tapX = centerX.toInt()
-                        val tapY = buttonY.toInt()
-                        val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "input tap $tapX $tapY"))
+                        val process = Runtime.getRuntime().exec(arrayOf("input", "tap", tapX.toString(), tapY.toString()))
                         val exitCode = process.waitFor()
-                        Log.i(TAG, "🗺️   Shell tap (su) exit code: $exitCode")
-                        Thread.sleep(500)
-                    } catch (e: Exception) {
-                        Log.w(TAG, "🗺️   Shell tap (su) failed: ${e.message}")
-                        // Try without su
-                        try {
-                            val tapX = centerX.toInt()
-                            val tapY = buttonY.toInt()
-                            val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", "input tap $tapX $tapY"))
-                            val exitCode = process.waitFor()
-                            Log.i(TAG, "🗺️   Shell tap (sh) exit code: $exitCode")
+                        Log.i(TAG, "🗺️   Direct input tap exit code: $exitCode")
+                        if (exitCode == 0) {
+                            Log.i(TAG, "🗺️   ✓ Input tap succeeded!")
                             Thread.sleep(500)
-                        } catch (e2: Exception) {
-                            Log.w(TAG, "🗺️   Shell tap (sh) also failed: ${e2.message}")
                         }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "🗺️   Direct input tap failed: ${e.message}")
+                    }
+
+                    // Try input swipe (same start/end = tap, sometimes works better)
+                    try {
+                        val process = Runtime.getRuntime().exec(arrayOf("input", "swipe",
+                            tapX.toString(), tapY.toString(), tapX.toString(), tapY.toString(), "50"))
+                        val exitCode = process.waitFor()
+                        Log.i(TAG, "🗺️   Direct input swipe exit code: $exitCode")
+                        if (exitCode == 0) {
+                            Log.i(TAG, "🗺️   ✓ Input swipe succeeded!")
+                            Thread.sleep(500)
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "🗺️   Direct input swipe failed: ${e.message}")
                     }
 
                     // STRATEGY C2: Try dispatchGesture at fixed bottom positions
