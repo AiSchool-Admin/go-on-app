@@ -1328,9 +1328,13 @@ class PriceReaderService : AccessibilityService() {
                         // Calculate center - handle inverted bounds (top > bottom means button at screen bottom)
                         val centerX = bounds.centerX().toFloat()
                         val centerY = if (isInverted) {
-                            // Inverted bounds - use bottom value (which is actually on-screen)
-                            // Button is at screen bottom, click slightly above bottom edge
-                            (bounds.bottom - 80).toFloat().coerceAtLeast(100f)
+                            // Inverted bounds: top=2751, bottom=2094
+                            // Actual height = abs(top - bottom) = 657
+                            // Button center = bottom - (height/2) = 2094 - 328 ≈ 1766
+                            val actualHeight = kotlin.math.abs(bounds.top - bounds.bottom)
+                            val calculatedY = (bounds.bottom - actualHeight / 2).toFloat()
+                            Log.i(TAG, "🗺️   Inverted: actualHeight=$actualHeight, calculatedY=$calculatedY")
+                            calculatedY.coerceIn(100f, bounds.bottom.toFloat() - 50)
                         } else {
                             bounds.centerY().toFloat()
                         }
