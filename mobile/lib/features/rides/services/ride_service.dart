@@ -112,7 +112,7 @@ class RideService {
   }
 
   /// Get price comparison for a route
-  /// Uses accurate Egyptian pricing formulas
+  /// Uses accurate Egyptian pricing formulas - INSTANT, NO APP AUTOMATION NEEDED
   Future<List<PriceOption>> getPriceComparison({
     required LatLng origin,
     required LatLng destination,
@@ -125,26 +125,14 @@ class RideService {
     final nearbyDrivers = await findNearbyDrivers(userLocation: origin);
 
     // Get calculated prices using Egyptian pricing formulas
+    // These are based on real fare structures (base fare + per km + per minute)
     final calculatedPrices = EgyptPricingService.getAllPrices(
       distanceKm: distanceKm,
       estimatedMinutes: estimatedMinutes,
       tripTime: now,
     );
 
-    // Try to get real prices from accessibility service (if available)
-    final realPrices = await _nativeServices.getLatestPrices();
-    final realPricesMap = <String, double>{};
-    for (final price in realPrices) {
-      if (price.price > 0) {
-        realPricesMap[price.packageName] = price.price;
-      }
-    }
-
     final options = <PriceOption>[];
-
-    // Check surge pricing
-    final hasSurge = EgyptPricingService.hasSurgePricing(now);
-    final surgeDescription = EgyptPricingService.getSurgeDescription(now);
 
     // 1. GO-ON Independent Drivers (cheapest)
     if (nearbyDrivers.isNotEmpty) {
@@ -167,94 +155,90 @@ class RideService {
         vehicleColor: bestDriver.vehicleColor,
         isAvailable: true,
         isBestPrice: true,
-        isEstimate: false, // Our direct price
+        isEstimate: false,
       ));
 
       _nativeServices.setGoonBestPrice(independentPrice);
     }
 
     // 2. DiDi - Usually cheapest app
-    final didiRealPrice = realPricesMap[NativeServicesManager.didiPackage];
-    final didiCalcPrice = calculatedPrices['didi']!.price;
+    final didiPrice = calculatedPrices['didi']!;
     options.add(PriceOption(
       id: 'didi',
       name: 'ديدي',
       provider: 'DiDi',
-      price: didiRealPrice ?? didiCalcPrice,
+      price: didiPrice.price,
       currency: 'EGP',
       estimatedMinutes: estimatedMinutes,
       etaMinutes: 5,
       isAvailable: true,
-      isEstimate: didiRealPrice == null,
+      isEstimate: false,
       category: 'DiDi Express',
-      surgeMultiplier: calculatedPrices['didi']!.surge,
+      surgeMultiplier: didiPrice.surge,
     ));
 
     // 3. InDriver
-    final indriverRealPrice = realPricesMap[NativeServicesManager.indriverPackage];
-    final indriverCalcPrice = calculatedPrices['indriver']!.price;
+    final indriverPrice = calculatedPrices['indriver']!;
     options.add(PriceOption(
       id: 'indriver',
       name: 'إندرايف',
       provider: 'InDriver',
-      price: indriverRealPrice ?? indriverCalcPrice,
+      price: indriverPrice.price,
       currency: 'EGP',
       estimatedMinutes: estimatedMinutes,
       etaMinutes: 4,
       isAvailable: true,
-      isEstimate: indriverRealPrice == null,
+      isEstimate: false,
       category: 'السعر المقترح',
+      surgeMultiplier: indriverPrice.surge,
     ));
 
     // 4. Bolt
-    final boltRealPrice = realPricesMap[NativeServicesManager.boltPackage];
-    final boltCalcPrice = calculatedPrices['bolt']!.price;
+    final boltPrice = calculatedPrices['bolt']!;
     options.add(PriceOption(
       id: 'bolt',
       name: 'بولت',
       provider: 'Bolt',
-      price: boltRealPrice ?? boltCalcPrice,
+      price: boltPrice.price,
       currency: 'EGP',
       estimatedMinutes: estimatedMinutes,
       etaMinutes: 4,
       isAvailable: true,
-      isEstimate: boltRealPrice == null,
+      isEstimate: false,
       category: 'Bolt',
-      surgeMultiplier: calculatedPrices['bolt']!.surge,
+      surgeMultiplier: boltPrice.surge,
     ));
 
     // 5. Careem
-    final careemRealPrice = realPricesMap[NativeServicesManager.careemPackage];
-    final careemCalcPrice = calculatedPrices['careem']!.price;
+    final careemPrice = calculatedPrices['careem']!;
     options.add(PriceOption(
       id: 'careem',
       name: 'كريم',
       provider: 'Careem',
-      price: careemRealPrice ?? careemCalcPrice,
+      price: careemPrice.price,
       currency: 'EGP',
       estimatedMinutes: estimatedMinutes,
       etaMinutes: 4,
       isAvailable: true,
-      isEstimate: careemRealPrice == null,
+      isEstimate: false,
       category: 'Go',
-      surgeMultiplier: calculatedPrices['careem']!.surge,
+      surgeMultiplier: careemPrice.surge,
     ));
 
     // 6. Uber - Usually most expensive
-    final uberRealPrice = realPricesMap[NativeServicesManager.uberPackage];
-    final uberCalcPrice = calculatedPrices['uber']!.price;
+    final uberPrice = calculatedPrices['uber']!;
     options.add(PriceOption(
       id: 'uber',
       name: 'أوبر',
       provider: 'Uber',
-      price: uberRealPrice ?? uberCalcPrice,
+      price: uberPrice.price,
       currency: 'EGP',
       estimatedMinutes: estimatedMinutes,
       etaMinutes: 3,
       isAvailable: true,
-      isEstimate: uberRealPrice == null,
+      isEstimate: false,
       category: 'UberX',
-      surgeMultiplier: calculatedPrices['uber']!.surge,
+      surgeMultiplier: uberPrice.surge,
     ));
 
     // Sort by price

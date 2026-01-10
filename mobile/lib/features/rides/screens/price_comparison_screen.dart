@@ -5,7 +5,6 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/services/native_services.dart';
-import '../../../providers/ride_preference_provider.dart';
 import '../../../widgets/ride_sort_preference_selector.dart';
 import '../services/ride_service.dart';
 import '../models/price_option.dart';
@@ -28,55 +27,25 @@ class PriceComparisonScreen extends ConsumerStatefulWidget {
   ConsumerState<PriceComparisonScreen> createState() => _PriceComparisonScreenState();
 }
 
-class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen>
-    with WidgetsBindingObserver {
+class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
   List<PriceOption>? _priceOptions;
   bool _isLoading = true;
   String? _error;
-  Map<String, double> _realPrices = {};
-
-  // Manual price capture state
-  String? _pendingPackage;
-  bool _awaitingReturn = false;
-  String? _fetchingApp;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    _loadEstimatedPrices();
+    _loadPrices();
   }
 
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    // Stop any ongoing monitoring
-    ref.read(nativeServicesProvider).stopActiveMonitoring();
-    super.dispose();
-  }
-
-  /// Called when app comes back to foreground
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    super.didChangeAppLifecycleState(state);
-    if (state == AppLifecycleState.resumed && _awaitingReturn && _pendingPackage != null) {
-      // User returned from ride app - capture the price!
-      _onReturnedFromApp(_pendingPackage!);
-    }
-  }
-
-  /// Load ESTIMATED prices only (no automatic real price fetching)
-  Future<void> _loadEstimatedPrices() async {
+  /// Load prices using Egyptian pricing formulas - INSTANT, no app automation
+  Future<void> _loadPrices() async {
     setState(() {
       _isLoading = true;
       _error = null;
     });
 
     try {
-      // Clear cached prices to ensure fresh estimates
-      final nativeServices = ref.read(nativeServicesProvider);
-      await nativeServices.clearPrices();
-
       final rideService = ref.read(rideServiceProvider);
       final options = await rideService.getPriceComparison(
         origin: widget.origin,
@@ -99,10 +68,6 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen>
     }
   }
 
-  Future<void> _loadPrices() async {
-    await _loadEstimatedPrices();
-  }
-
   /// Get the package name for a provider
   String? _getPackageName(String provider) {
     switch (provider.toLowerCase()) {
@@ -119,273 +84,6 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen>
       default:
         return null;
     }
-  }
-
-  /// FULL AUTOMATION - The REAL technical solution
-  /// 1. User taps "جلب السعر الحقيقي"
-  /// 2. Opens the ride app
-  /// 3. AUTOMATICALLY enters destination
-  /// 4. AUTOMATICALLY selects suggestion
-  /// 5. AUTOMATICALLY captures price
-  /// 6. User returns to GO-ON to see the price
-  Future<void> _fetchRealPriceFor(PriceOption option) async {
-    final packageName = _getPackageName(option.provider);
-    if (packageName == null) return;
-
-    final nativeServices = ref.read(nativeServicesProvider);
-
-    // Check if accessibility service is enabled
-    final isEnabled = await nativeServices.isAccessibilityEnabled();
-    if (!isEnabled) {
-      _showAccessibilityDialog();
-      return;
-    }
-
-    // IMPORTANT: Sync user preference to native code BEFORE fetching
-    final preferenceNotifier = ref.read(rideSortPreferenceProvider.notifier);
-    await preferenceNotifier.syncPreferenceToNative();
-
-    setState(() {
-      _fetchingApp = option.name;
-      _pendingPackage = packageName;
-      _awaitingReturn = true;
-    });
-
-    // Show automation dialog and start
-    _showAutomationDialog(option, packageName);
-  }
-
-  void _showAutomationDialog(PriceOption option, String packageName) {
-    final nativeServices = ref.read(nativeServicesProvider);
-
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            Text(option.providerIcon, style: const TextStyle(fontSize: 24)),
-            const SizedBox(width: 8),
-            Expanded(child: Text('جلب سعر ${option.name}')),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: AppColors.success.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.success.withOpacity(0.3)),
-              ),
-              child: Column(
-                children: [
-                  const Icon(Icons.auto_fix_high, color: AppColors.success, size: 40),
-                  const SizedBox(height: 12),
-                  const Text(
-                    'أتمتة كاملة!',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.success,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'سيتم إدخال الوجهة تلقائياً:',
-                    style: TextStyle(
-                      color: Colors.grey[700],
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    widget.destinationAddress,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                    ),
-                    textAlign: TextAlign.center,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            const Text(
-              'فقط ارجع إلى GO-ON بعد ظهور السعر',
-              style: TextStyle(
-                fontSize: 13,
-                color: AppColors.textSecondary,
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              setState(() {
-                _fetchingApp = null;
-                _pendingPackage = null;
-                _awaitingReturn = false;
-              });
-            },
-            child: const Text('إلغاء'),
-          ),
-          ElevatedButton.icon(
-            onPressed: () async {
-              Navigator.pop(context);
-              // Start FULL AUTOMATION
-              await nativeServices.automateGetPrice(
-                packageName: packageName,
-                pickup: widget.originAddress,
-                destination: widget.destinationAddress,
-                pickupLat: widget.origin.latitude,
-                pickupLng: widget.origin.longitude,
-                destLat: widget.destination.latitude,
-                destLng: widget.destination.longitude,
-              );
-            },
-            icon: const Icon(Icons.play_arrow),
-            label: const Text('ابدأ'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: _getProviderColor(option.provider),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// Called when user returns from ride app
-  Future<void> _onReturnedFromApp(String packageName) async {
-    final nativeServices = ref.read(nativeServicesProvider);
-
-    setState(() {
-      _awaitingReturn = false;
-    });
-
-    // Get the captured price
-    final price = await nativeServices.getCapturedPrice(packageName);
-
-    if (price != null && price > 0) {
-      // SUCCESS! Update the price
-      _updateSinglePrice(packageName, price);
-      _showSuccess('تم التقاط السعر الحقيقي: ${price.round()} ج.م');
-    } else {
-      // No price captured - show helpful message
-      _showNoPriceCaptured();
-    }
-
-    setState(() {
-      _fetchingApp = null;
-      _pendingPackage = null;
-    });
-  }
-
-  void _updateSinglePrice(String packageName, double price) {
-    if (_priceOptions == null) return;
-
-    final updatedOptions = _priceOptions!.map((option) {
-      final optionPackage = _getPackageName(option.provider);
-      if (optionPackage == packageName) {
-        return option.copyWith(
-          price: price,
-          isEstimate: false,
-        );
-      }
-      return option;
-    }).toList();
-
-    // Sort by price
-    updatedOptions.sort((a, b) => a.price.compareTo(b.price));
-
-    setState(() {
-      _priceOptions = updatedOptions;
-      _realPrices[packageName] = price;
-    });
-  }
-
-  void _showNoPriceCaptured() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('لم يتم التقاط السعر'),
-        content: const Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('تأكد من:'),
-            SizedBox(height: 8),
-            Text('• إدخال نقطتي الانطلاق والوصول'),
-            Text('• انتظار ظهور السعر على الشاشة'),
-            Text('• تفعيل خدمة إمكانية الوصول'),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('حسناً'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              final nativeServices = ref.read(nativeServicesProvider);
-              nativeServices.openAccessibilitySettings();
-            },
-            child: const Text('إعدادات الوصول'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showSuccess(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            const Icon(Icons.check_circle, color: Colors.white),
-            const SizedBox(width: 8),
-            Text(message),
-          ],
-        ),
-        backgroundColor: AppColors.success,
-        duration: const Duration(seconds: 3),
-      ),
-    );
-  }
-
-  void _showAccessibilityDialog() {
-    final nativeServices = ref.read(nativeServicesProvider);
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('تفعيل خدمة إمكانية الوصول'),
-        content: const Text(
-          'لجلب الأسعار الحقيقية من التطبيقات الأخرى، يجب تفعيل خدمة إمكانية الوصول لـ GO-ON.\n\n'
-          'اذهب إلى:\n'
-          'الإعدادات ← إمكانية الوصول ← الخدمات المثبتة ← GO-ON Price Reader ← تفعيل',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('لاحقاً'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              nativeServices.openAccessibilitySettings();
-            },
-            child: const Text('فتح الإعدادات'),
-          ),
-        ],
-      ),
-    );
   }
 
   @override
@@ -507,48 +205,6 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen>
               ],
             ),
           ),
-
-          // Awaiting return indicator
-          if (_awaitingReturn && _fetchingApp != null)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              decoration: BoxDecoration(
-                color: AppColors.primary.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.primary.withOpacity(0.3)),
-              ),
-              child: Row(
-                children: [
-                  const SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      'في انتظار العودة من $_fetchingApp',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
-                      ),
-                    ),
-                  ),
-                  TextButton(
-                    onPressed: () {
-                      setState(() {
-                        _awaitingReturn = false;
-                        _fetchingApp = null;
-                        _pendingPackage = null;
-                      });
-                      ref.read(nativeServicesProvider).stopActiveMonitoring();
-                    },
-                    child: const Text('إلغاء'),
-                  ),
-                ],
-              ),
-            ),
 
           // Price List
           Expanded(
@@ -677,7 +333,8 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen>
                               fontSize: 16,
                             ),
                           ),
-                          if (option.isEstimate)
+                          // Show surge indicator if applicable
+                          if (option.surgeMultiplier != null && option.surgeMultiplier! > 1.05)
                             Container(
                               margin: const EdgeInsets.only(right: 8),
                               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -685,28 +342,19 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen>
                                 color: AppColors.warning.withOpacity(0.1),
                                 borderRadius: BorderRadius.circular(4),
                               ),
-                              child: const Text(
-                                'تقديري',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  color: AppColors.warning,
-                                ),
-                              ),
-                            )
-                          else if (option.provider.toLowerCase() != 'go-on')
-                            Container(
-                              margin: const EdgeInsets.only(right: 8),
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: AppColors.success.withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: const Text(
-                                'حقيقي',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  color: AppColors.success,
-                                ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.trending_up, size: 10, color: AppColors.warning),
+                                  const SizedBox(width: 2),
+                                  Text(
+                                    'ذروة',
+                                    style: const TextStyle(
+                                      fontSize: 10,
+                                      color: AppColors.warning,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                         ],
@@ -817,33 +465,6 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen>
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
             child: Column(
               children: [
-                // Fetch Real Price button - for all external apps
-                if (option.provider != 'GO-ON')
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: _awaitingReturn ? null : () => _fetchRealPriceFor(option),
-                        icon: Icon(
-                          option.isEstimate ? Icons.price_check : Icons.refresh,
-                          size: 18,
-                        ),
-                        label: Text(
-                          option.isEstimate ? 'جلب السعر الحقيقي' : 'تحديث السعر',
-                          style: const TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: option.isEstimate ? AppColors.primary : AppColors.success,
-                          side: BorderSide(color: option.isEstimate ? AppColors.primary : AppColors.success),
-                          padding: const EdgeInsets.symmetric(vertical: 10),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
                 // Main action button
                 SizedBox(
                   width: double.infinity,
@@ -858,7 +479,7 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen>
                       ),
                     ),
                     child: Text(
-                      option.provider == 'GO-ON' ? 'تواصل عبر واتساب' : 'افتح ${option.name}',
+                      option.provider == 'GO-ON' ? 'تواصل عبر واتساب' : 'اختر ${option.name}',
                       style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
                   ),
