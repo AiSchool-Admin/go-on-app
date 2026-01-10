@@ -8,6 +8,7 @@ import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.widget.Toast
 import org.json.JSONObject
 import java.util.regex.Pattern
 
@@ -117,6 +118,8 @@ class PriceReaderService : AccessibilityService() {
     private var lastProcessedTime = 0L
     private val processDebounce = 100L // REDUCED for faster response
     private val handler = Handler(Looper.getMainLooper())
+    private var lastInDriverToastTime = 0L
+    private val toastDebounce = 3000L // Show toast every 3 seconds max
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -1301,150 +1304,45 @@ class PriceReaderService : AccessibilityService() {
         if (hasMapConfirmation) {
             Log.i(TAG, "🗺️ Detected InDriver MAP CONFIRMATION screen - looking for 'تم' button")
 
-            // NEW AGGRESSIVE STRATEGY: Click on node AND ALL parents recursively
-            val doneTexts = listOf("تم", "Done", "Confirm", "تأكيد", "OK", "موافق")
+            // InDriver has anti-automation protection that blocks clicks
+            // Show a toast to prompt user to manually tap the button
+            val currentTime = System.currentTimeMillis()
+            if (currentTime - lastInDriverToastTime > toastDebounce) {
+                lastInDriverToastTime = currentTime
+                handler.post {
+                    Toast.makeText(
+                        this@PriceReaderService,
+                        "اضغط على زر 'تم' لتأكيد الوجهة 👆",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+                Log.i(TAG, "🗺️ Showed toast prompting user to tap 'تم' button")
+            }
+
+            // Still try accessibility click in case it works (it might work on some devices)
+            val doneTexts = listOf("تم", "Done", "Confirm", "تأكيد")
             for (doneText in doneTexts) {
                 val nodes = rootNode.findAccessibilityNodeInfosByText(doneText)
-                Log.i(TAG, "🗺️ Searching for '$doneText': found ${nodes.size} nodes")
-
                 for (node in nodes) {
-                    val nodeClass = node.className?.toString()?.substringAfterLast(".") ?: ""
                     val nodeText = node.text?.toString() ?: ""
-                    Log.i(TAG, "🗺️   Node: [$nodeClass] text='$nodeText' clickable=${node.isClickable}")
+                    Log.i(TAG, "🗺️ Found '$doneText' button, attempting click...")
 
-                    // STRATEGY A: Focus then click on node itself
-                    Log.i(TAG, "🗺️ STRATEGY A: Focus + Click on node")
-                    node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-                    Thread.sleep(50)
-                    node.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
-                    Thread.sleep(50)
-                    val clickResult = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    Log.i(TAG, "🗺️   Node click result: $clickResult")
-                    Thread.sleep(200)
+                    // Try simple click - may work on some devices
+                    node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
 
-                    // STRATEGY B: Click on ALL parent nodes up to 5 levels
-                    Log.i(TAG, "🗺️ STRATEGY B: Clicking on ALL parent nodes...")
-                    var currentNode: AccessibilityNodeInfo? = node
-                    for (level in 0..5) {
-                        val parent = currentNode?.parent
-                        if (parent == null) {
-                            Log.i(TAG, "🗺️   Level $level: no more parents")
-                            break
+                    // Try clicking parent (button container)
+                    node.parent?.let { parent ->
+                        if (parent.isClickable) {
+                            parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
                         }
-
-                        val parentClass = parent.className?.toString()?.substringAfterLast(".") ?: ""
-                        val parentText = parent.text?.toString() ?: ""
-                        val isClickable = parent.isClickable
-
-                        Log.i(TAG, "🗺️   Level $level: [$parentClass] text='$parentText' clickable=$isClickable")
-
-                        // Try clicking regardless of clickable flag
-                        parent.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-                        Thread.sleep(30)
-                        val parentClick = parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                        Log.i(TAG, "🗺️   Level $level click result: $parentClick")
-                        Thread.sleep(150)
-
-                        if (level > 0) currentNode?.recycle()
-                        currentNode = parent
-                    }
-                    currentNode?.recycle()
-
-                    // STRATEGY C: Gesture click with TAP (not just path.moveTo)
-                    Log.i(TAG, "🗺️ STRATEGY C: TAP gesture at button position...")
-                    node.refresh()
-                    val bounds = android.graphics.Rect()
-                    node.getBoundsInScreen(bounds)
-                    Log.i(TAG, "🗺️   Bounds: left=${bounds.left}, top=${bounds.top}, right=${bounds.right}, bottom=${bounds.bottom}")
-
-                    val displayMetrics = resources.displayMetrics
-                    val screenWidth = displayMetrics.widthPixels.toFloat()
-                    val screenHeight = displayMetrics.heightPixels.toFloat()
-                    Log.i(TAG, "🗺️   Screen: ${screenWidth}x$screenHeight")
-
-                    // Calculate center X
-                    val centerX = if (bounds.width() > 0) bounds.centerX().toFloat() else screenWidth / 2
-
-                    // For InDriver's Done button at screen bottom with inverted bounds:
-                    // When bounds.bottom equals screenHeight, button is AT the bottom
-                    // Use fixed Y position near bottom instead of calculated
-                    val buttonY = screenHeight - 75 // Center of ~150px button at bottom
-
-                    Log.i(TAG, "🗺️   Using fixed buttonY: $buttonY (screen bottom - 75)")
-
-                    // STRATEGY C1: Direct input tap command (no shell wrapper)
-                    Log.i(TAG, "🗺️ STRATEGY C1: Direct input tap at ($centerX, $buttonY)...")
-                    val tapX = centerX.toInt()
-                    val tapY = buttonY.toInt()
-
-                    try {
-                        val process = Runtime.getRuntime().exec(arrayOf("input", "tap", tapX.toString(), tapY.toString()))
-                        val exitCode = process.waitFor()
-                        Log.i(TAG, "🗺️   Direct input tap exit code: $exitCode")
-                        if (exitCode == 0) {
-                            Log.i(TAG, "🗺️   ✓ Input tap succeeded!")
-                            Thread.sleep(500)
-                        }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "🗺️   Direct input tap failed: ${e.message}")
+                        parent.recycle()
                     }
 
-                    // Try input swipe (same start/end = tap, sometimes works better)
-                    try {
-                        val process = Runtime.getRuntime().exec(arrayOf("input", "swipe",
-                            tapX.toString(), tapY.toString(), tapX.toString(), tapY.toString(), "50"))
-                        val exitCode = process.waitFor()
-                        Log.i(TAG, "🗺️   Direct input swipe exit code: $exitCode")
-                        if (exitCode == 0) {
-                            Log.i(TAG, "🗺️   ✓ Input swipe succeeded!")
-                            Thread.sleep(500)
-                        }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "🗺️   Direct input swipe failed: ${e.message}")
-                    }
-
-                    // STRATEGY C2: Try dispatchGesture at fixed bottom positions
-                    val bottomPositions = listOf(
-                        screenHeight - 50,   // 50px from bottom
-                        screenHeight - 75,   // 75px from bottom
-                        screenHeight - 100,  // 100px from bottom
-                        screenHeight - 125   // 125px from bottom
-                    )
-
-                    for (yPos in bottomPositions) {
-                        Log.i(TAG, "🗺️ STRATEGY C2: Gesture at ($centerX, $yPos)")
-                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
-                            val tapPath = android.graphics.Path()
-                            tapPath.moveTo(centerX, yPos)
-
-                            val gestureBuilder = android.accessibilityservice.GestureDescription.Builder()
-                            gestureBuilder.addStroke(
-                                android.accessibilityservice.GestureDescription.StrokeDescription(tapPath, 0, 150)
-                            )
-                            dispatchGesture(gestureBuilder.build(), null, null)
-                            Thread.sleep(200)
-                        }
-                    }
-
-                    // STRATEGY D: Try LONG CLICK (sometimes works when click doesn't)
-                    Log.i(TAG, "🗺️ STRATEGY D: Long click on node...")
-                    node.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK)
-                    Thread.sleep(300)
-
-                    // STRATEGY E: Use performGlobalAction to simulate back then retry
-                    // (Sometimes helps reset the touch state)
-
-                    Thread.sleep(500)
                     node.recycle()
-                    return true // Let next iteration check if screen changed
                 }
             }
 
-            // Priority 2: Find button by traversing UI (uses gesture internally)
-            Log.i(TAG, "🗺️ Trying to find Done button by traversing UI...")
-            if (findAndClickDoneButton(rootNode)) {
-                return true
-            }
+            return true // Let next iteration check if user tapped and screen changed
         }
 
         // Check for permission or promo dialogs
