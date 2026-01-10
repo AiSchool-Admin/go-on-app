@@ -31,6 +31,8 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
   List<PriceOption>? _priceOptions;
   bool _isLoading = true;
   String? _error;
+  bool _isFetchingRealPrices = false;
+  String _fetchStatus = '';
 
   @override
   void initState() {
@@ -66,6 +68,117 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
         });
       }
     }
+  }
+
+  /// Fetch REAL prices from all apps using automation with auto-return
+  Future<void> _fetchAllRealPrices() async {
+    final nativeServices = ref.read(nativeServicesProvider);
+
+    // Check accessibility first
+    final isEnabled = await nativeServices.isAccessibilityEnabled();
+    if (!isEnabled) {
+      _showAccessibilityRequiredDialog();
+      return;
+    }
+
+    setState(() {
+      _isFetchingRealPrices = true;
+      _fetchStatus = 'جاري البدء...';
+    });
+
+    try {
+      final realPrices = await nativeServices.fetchAllPricesWithAutomation(
+        pickupLat: widget.origin.latitude,
+        pickupLng: widget.origin.longitude,
+        dropoffLat: widget.destination.latitude,
+        dropoffLng: widget.destination.longitude,
+        pickupAddress: widget.originAddress,
+        dropoffAddress: widget.destinationAddress,
+        onProgress: (appName, status) {
+          if (mounted) {
+            setState(() {
+              _fetchStatus = '$appName: $status';
+            });
+          }
+        },
+      );
+
+      // Update prices with real values
+      if (mounted && _priceOptions != null) {
+        final updatedOptions = _priceOptions!.map((option) {
+          final packageName = _getPackageName(option.provider);
+          if (packageName != null && realPrices.containsKey(packageName)) {
+            return option.copyWith(
+              price: realPrices[packageName]!,
+              isEstimate: false,
+            );
+          }
+          return option;
+        }).toList();
+
+        // Sort by price
+        updatedOptions.sort((a, b) => a.price.compareTo(b.price));
+
+        // Mark best price
+        if (updatedOptions.isNotEmpty) {
+          for (int i = 0; i < updatedOptions.length; i++) {
+            updatedOptions[i] = updatedOptions[i].copyWith(isBestPrice: i == 0);
+          }
+        }
+
+        setState(() {
+          _priceOptions = updatedOptions;
+          _isFetchingRealPrices = false;
+          _fetchStatus = '';
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('تم جلب ${realPrices.length} أسعار حقيقية'),
+            backgroundColor: AppColors.success,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isFetchingRealPrices = false;
+          _fetchStatus = '';
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('خطأ: $e'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
+    }
+  }
+
+  void _showAccessibilityRequiredDialog() {
+    final nativeServices = ref.read(nativeServicesProvider);
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('مطلوب تفعيل إمكانية الوصول'),
+        content: const Text(
+          'لجلب الأسعار الحقيقية، يجب تفعيل خدمة إمكانية الوصول لـ GO-ON.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('لاحقاً'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              nativeServices.openAccessibilitySettings();
+            },
+            child: const Text('فتح الإعدادات'),
+          ),
+        ],
+      ),
+    );
   }
 
   /// Get the package name for a provider
@@ -201,6 +314,53 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
                     const SizedBox(width: 8),
                     const RideSortPreferenceChip(language: 'ar'),
                   ],
+                ),
+                const SizedBox(height: 12),
+                // Fetch Real Prices Button
+                SizedBox(
+                  width: double.infinity,
+                  child: _isFetchingRealPrices
+                      ? Container(
+                          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                          decoration: BoxDecoration(
+                            color: AppColors.primary.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  _fetchStatus,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13,
+                                  ),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      : OutlinedButton.icon(
+                          onPressed: _fetchAllRealPrices,
+                          icon: const Icon(Icons.refresh, size: 18),
+                          label: const Text('جلب الأسعار الحقيقية من التطبيقات'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.primary,
+                            side: const BorderSide(color: AppColors.primary),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                        ),
                 ),
               ],
             ),

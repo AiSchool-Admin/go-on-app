@@ -642,6 +642,82 @@ class NativeServicesManager {
     }
   }
 
+  // ============ BATCH FETCH WITH AUTO-RETURN ============
+
+  /// Fetch real prices from all installed apps using FULL AUTOMATION
+  /// Each app: open with deep link → auto-enter destination → capture price → auto-return
+  /// InDriver is skipped (use formula) due to anti-automation protection
+  Future<Map<String, double>> fetchAllPricesWithAutomation({
+    required double pickupLat,
+    required double pickupLng,
+    required double dropoffLat,
+    required double dropoffLng,
+    required String pickupAddress,
+    required String dropoffAddress,
+    Function(String appName, String status)? onProgress,
+  }) async {
+    final prices = <String, double>{};
+
+    // Get installed apps (skip InDriver - has anti-automation protection)
+    final allApps = await getInstalledRideApps();
+    final appsToFetch = allApps.where((p) => p != indriverPackage).toList();
+
+    if (appsToFetch.isEmpty) {
+      print('No ride apps installed (excluding InDriver)');
+      return prices;
+    }
+
+    // Clear old prices
+    await clearPrices();
+
+    for (final packageName in appsToFetch) {
+      final appName = _getAppName(packageName);
+      onProgress?.call(appName, 'جاري فتح التطبيق...');
+
+      print('🚀 Starting automation for $appName...');
+
+      // Start full automation (opens app, enters destination, captures price, auto-returns)
+      final started = await automateGetPrice(
+        packageName: packageName,
+        pickup: pickupAddress,
+        destination: dropoffAddress,
+        pickupLat: pickupLat,
+        pickupLng: pickupLng,
+        destLat: dropoffLat,
+        destLng: dropoffLng,
+      );
+
+      if (!started) {
+        print('✗ Failed to start automation for $appName');
+        onProgress?.call(appName, 'فشل');
+        continue;
+      }
+
+      onProgress?.call(appName, 'جاري البحث عن السعر...');
+
+      // Wait for automation to complete (with auto-return)
+      final price = await waitForAutomationAndGetPrice(packageName);
+
+      if (price != null && price > 0) {
+        prices[packageName] = price;
+        print('✓ Got price from $appName: $price EGP');
+        onProgress?.call(appName, '${price.round()} ج.م ✓');
+      } else {
+        print('✗ No price from $appName');
+        onProgress?.call(appName, 'لم يتم العثور على سعر');
+      }
+
+      // Reset automation state for next app
+      await resetAutomation();
+
+      // Small delay before next app
+      await Future.delayed(const Duration(milliseconds: 500));
+    }
+
+    print('✓ Fetched ${prices.length} prices from ${appsToFetch.length} apps');
+    return prices;
+  }
+
   // ============ Package Names ============
 
   static const String uberPackage = 'com.ubercab';

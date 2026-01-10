@@ -394,11 +394,15 @@ class PriceReaderService : AccessibilityService() {
                         automationState = AutomationState.PRICE_CAPTURED
                         // Notify Flutter
                         notifyPriceCaptured(priceInfo)
+                        // AUTO-RETURN: Go back to GO-ON automatically!
+                        autoReturnToGoOn()
                     } else {
                         automationStep++
                         if (automationStep > 10) { // Wait ~12 seconds for price
                             Log.e(TAG, "🤖 ✗✗✗ FAILED: Timeout waiting for price")
                             automationState = AutomationState.FAILED
+                            // Return to GO-ON even on failure
+                            autoReturnToGoOn()
                         }
                     }
                 }
@@ -1538,6 +1542,43 @@ class PriceReaderService : AccessibilityService() {
             putExtra("source", "automation")
         }
         sendBroadcast(intent)
+    }
+
+    /**
+     * AUTO-RETURN: Automatically return to GO-ON after capturing price
+     * Uses performGlobalAction to press HOME then opens GO-ON
+     */
+    private fun autoReturnToGoOn() {
+        Log.i(TAG, "🏠 AUTO-RETURN: Going back to GO-ON...")
+
+        // Stop monitoring first
+        stopActiveMonitoring()
+
+        // Small delay to ensure price is saved
+        handler.postDelayed({
+            try {
+                // Method 1: Open GO-ON directly via intent
+                val goOnIntent = packageManager.getLaunchIntentForPackage("com.goon.app")
+                if (goOnIntent != null) {
+                    goOnIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                                       Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                                       Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    startActivity(goOnIntent)
+                    Log.i(TAG, "🏠 ✓ Returned to GO-ON via intent")
+                } else {
+                    // Method 2: Press HOME button
+                    performGlobalAction(GLOBAL_ACTION_HOME)
+                    Log.i(TAG, "🏠 ✓ Pressed HOME button")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "🏠 ✗ Failed to return to GO-ON: ${e.message}")
+                // Fallback: Press BACK multiple times
+                performGlobalAction(GLOBAL_ACTION_BACK)
+                handler.postDelayed({
+                    performGlobalAction(GLOBAL_ACTION_BACK)
+                }, 300)
+            }
+        }, 500) // 500ms delay
     }
 
     fun getAutomationState(): String = automationState.name
