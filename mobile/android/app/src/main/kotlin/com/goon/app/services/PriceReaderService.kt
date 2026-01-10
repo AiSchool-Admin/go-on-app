@@ -1327,25 +1327,38 @@ class PriceReaderService : AccessibilityService() {
                     if (hasValidWidth) {
                         // Calculate center - handle inverted bounds (top > bottom means button at screen bottom)
                         val centerX = bounds.centerX().toFloat()
-                        val centerY = if (isInverted) {
-                            // Inverted bounds: top=2751, bottom=2094
-                            // Actual height = abs(top - bottom) = 657
-                            // Button center = bottom - (height/2) = 2094 - 328 ≈ 1766
-                            val actualHeight = kotlin.math.abs(bounds.top - bounds.bottom)
-                            val calculatedY = (bounds.bottom - actualHeight / 2).toFloat()
-                            Log.i(TAG, "🗺️   Inverted: actualHeight=$actualHeight, calculatedY=$calculatedY")
-                            calculatedY.coerceIn(100f, bounds.bottom.toFloat() - 50)
-                        } else {
-                            bounds.centerY().toFloat()
-                        }
-                        Log.i(TAG, "🗺️ STRATEGY 1: GESTURE click at ($centerX, $centerY) [inverted=$isInverted]")
+                        val displayMetrics = resources.displayMetrics
+                        val screenHeight = displayMetrics.heightPixels.toFloat()
 
-                        if (clickAtPosition(centerX, centerY)) {
-                            Log.i(TAG, "🗺️ ✓✓✓ SUCCESS: Clicked '$doneText' via GESTURE!")
-                            node.recycle()
-                            Thread.sleep(800) // Wait for UI to update
-                            return true
+                        // For InDriver, the button is at the VERY BOTTOM of the screen
+                        // Try multiple Y positions starting from bottom
+                        val yPositionsToTry = mutableListOf<Float>()
+
+                        // Add positions near the very bottom of screen
+                        yPositionsToTry.add(screenHeight - 80)   // Very near bottom
+                        yPositionsToTry.add(screenHeight - 120)  // Slightly higher
+                        yPositionsToTry.add(screenHeight - 160)  // A bit higher
+                        yPositionsToTry.add(screenHeight - 200)  // Even higher
+                        yPositionsToTry.add(screenHeight * 0.93f) // 93% from top
+                        yPositionsToTry.add(screenHeight * 0.90f) // 90% from top
+                        yPositionsToTry.add(screenHeight * 0.87f) // 87% from top
+
+                        Log.i(TAG, "🗺️ Screen dimensions: ${displayMetrics.widthPixels}x${displayMetrics.heightPixels}")
+                        Log.i(TAG, "🗺️ Trying ${yPositionsToTry.size} Y positions from ${yPositionsToTry.first()} to ${yPositionsToTry.last()}")
+
+                        for (yPos in yPositionsToTry) {
+                            Log.i(TAG, "🗺️ STRATEGY 1: GESTURE click at ($centerX, $yPos)")
+                            if (clickAtPosition(centerX, yPos)) {
+                                Log.i(TAG, "🗺️ Gesture dispatched at y=$yPos, waiting to check if screen changed...")
+                            }
+                            Thread.sleep(300) // Wait a bit for UI to respond
                         }
+
+                        // After trying all positions, wait and check if we're still on the same screen
+                        Thread.sleep(500)
+                        node.recycle()
+                        return true // Return and let the next iteration check if screen changed
+
                     } else {
                         Log.w(TAG, "🗺️   Node bounds are INVALID - trying parent bounds")
 
