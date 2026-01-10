@@ -1362,45 +1362,61 @@ class PriceReaderService : AccessibilityService() {
                     val screenHeight = displayMetrics.heightPixels.toFloat()
                     Log.i(TAG, "🗺️   Screen: ${screenWidth}x$screenHeight")
 
-                    // Calculate Y: if bounds are inverted, use bottom; otherwise use center
+                    // Calculate center X
                     val centerX = if (bounds.width() > 0) bounds.centerX().toFloat() else screenWidth / 2
-                    val centerY = when {
-                        bounds.top > bounds.bottom -> {
-                            // Inverted bounds - button is near screen bottom
-                            // bounds.bottom is the actual visual top, use it
-                            val actualTop = bounds.bottom.toFloat()
-                            val actualBottom = bounds.top.toFloat().coerceAtMost(screenHeight)
-                            (actualTop + actualBottom) / 2
+
+                    // For InDriver's Done button at screen bottom with inverted bounds:
+                    // When bounds.bottom equals screenHeight, button is AT the bottom
+                    // Use fixed Y position near bottom instead of calculated
+                    val buttonY = screenHeight - 75 // Center of ~150px button at bottom
+
+                    Log.i(TAG, "🗺️   Using fixed buttonY: $buttonY (screen bottom - 75)")
+
+                    // STRATEGY C1: Shell input tap (bypasses accessibility blocking)
+                    Log.i(TAG, "🗺️ STRATEGY C1: Shell input tap at ($centerX, $buttonY)...")
+                    try {
+                        val tapX = centerX.toInt()
+                        val tapY = buttonY.toInt()
+                        val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "input tap $tapX $tapY"))
+                        val exitCode = process.waitFor()
+                        Log.i(TAG, "🗺️   Shell tap (su) exit code: $exitCode")
+                        Thread.sleep(500)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "🗺️   Shell tap (su) failed: ${e.message}")
+                        // Try without su
+                        try {
+                            val tapX = centerX.toInt()
+                            val tapY = buttonY.toInt()
+                            val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", "input tap $tapX $tapY"))
+                            val exitCode = process.waitFor()
+                            Log.i(TAG, "🗺️   Shell tap (sh) exit code: $exitCode")
+                            Thread.sleep(500)
+                        } catch (e2: Exception) {
+                            Log.w(TAG, "🗺️   Shell tap (sh) also failed: ${e2.message}")
                         }
-                        bounds.height() > 0 -> bounds.centerY().toFloat()
-                        else -> screenHeight - 150 // Fallback to near bottom
                     }
 
-                    Log.i(TAG, "🗺️   Calculated center: ($centerX, $centerY)")
+                    // STRATEGY C2: Try dispatchGesture at fixed bottom positions
+                    val bottomPositions = listOf(
+                        screenHeight - 50,   // 50px from bottom
+                        screenHeight - 75,   // 75px from bottom
+                        screenHeight - 100,  // 100px from bottom
+                        screenHeight - 125   // 125px from bottom
+                    )
 
-                    // Try TAP gesture (longer duration for better detection)
-                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
-                        val tapPath = android.graphics.Path()
-                        tapPath.moveTo(centerX, centerY)
-                        // Add a tiny line to make it a stroke (some apps need this)
-                        tapPath.lineTo(centerX + 1, centerY + 1)
+                    for (yPos in bottomPositions) {
+                        Log.i(TAG, "🗺️ STRATEGY C2: Gesture at ($centerX, $yPos)")
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+                            val tapPath = android.graphics.Path()
+                            tapPath.moveTo(centerX, yPos)
 
-                        val gestureBuilder = android.accessibilityservice.GestureDescription.Builder()
-                        // Use longer duration (200ms) for tap
-                        gestureBuilder.addStroke(
-                            android.accessibilityservice.GestureDescription.StrokeDescription(tapPath, 0, 200)
-                        )
-
-                        val tapResult = dispatchGesture(gestureBuilder.build(), object : GestureResultCallback() {
-                            override fun onCompleted(gestureDescription: android.accessibilityservice.GestureDescription?) {
-                                Log.i(TAG, "🗺️ TAP gesture COMPLETED at ($centerX, $centerY)")
-                            }
-                            override fun onCancelled(gestureDescription: android.accessibilityservice.GestureDescription?) {
-                                Log.w(TAG, "🗺️ TAP gesture CANCELLED at ($centerX, $centerY)")
-                            }
-                        }, null)
-                        Log.i(TAG, "🗺️   TAP gesture dispatched: $tapResult")
-                        Thread.sleep(400)
+                            val gestureBuilder = android.accessibilityservice.GestureDescription.Builder()
+                            gestureBuilder.addStroke(
+                                android.accessibilityservice.GestureDescription.StrokeDescription(tapPath, 0, 150)
+                            )
+                            dispatchGesture(gestureBuilder.build(), null, null)
+                            Thread.sleep(200)
+                        }
                     }
 
                     // STRATEGY D: Try LONG CLICK (sometimes works when click doesn't)
@@ -1408,22 +1424,8 @@ class PriceReaderService : AccessibilityService() {
                     node.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK)
                     Thread.sleep(300)
 
-                    // STRATEGY E: Try specific Y positions near screen bottom
-                    Log.i(TAG, "🗺️ STRATEGY E: Multiple fixed Y positions...")
-                    val yPositions = listOf(
-                        screenHeight - 50,   // Very bottom edge
-                        screenHeight - 100,  // Near bottom
-                        screenHeight - 150,  // Slightly higher
-                        screenHeight * 0.95f, // 95% from top
-                        screenHeight * 0.90f, // 90% from top
-                        screenHeight * 0.85f  // 85% from top
-                    )
-
-                    for (yPos in yPositions) {
-                        Log.i(TAG, "🗺️   Trying gesture at ($centerX, $yPos)")
-                        clickAtPosition(centerX, yPos)
-                        Thread.sleep(150)
-                    }
+                    // STRATEGY E: Use performGlobalAction to simulate back then retry
+                    // (Sometimes helps reset the touch state)
 
                     Thread.sleep(500)
                     node.recycle()
