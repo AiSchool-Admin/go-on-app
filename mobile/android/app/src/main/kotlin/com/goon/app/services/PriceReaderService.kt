@@ -232,11 +232,20 @@ class PriceReaderService : AccessibilityService() {
         destLng = destLongitude
 
         // Reset state
-        automationState = AutomationState.WAITING_FOR_APP
         automationStep = 0
         automationRetries = 0
         monitoringPackage = packageName
         isActiveMonitoring = true
+
+        // For Uber and DiDi: deep link includes full coordinates, skip to WAITING_FOR_PRICE
+        // For others: go through full flow (find destination field, enter text, etc.)
+        val hasFullDeepLink = packageName == UBER_PACKAGE || packageName == DIDI_PACKAGE
+        if (hasFullDeepLink) {
+            Log.i(TAG, "🤖 Deep link includes coordinates - skipping to WAITING_FOR_PRICE")
+            automationState = AutomationState.WAITING_FOR_PRICE
+        } else {
+            automationState = AutomationState.WAITING_FOR_APP
+        }
 
         // Start automation loop
         startAutomationLoop(packageName)

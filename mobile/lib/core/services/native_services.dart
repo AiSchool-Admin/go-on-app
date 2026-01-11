@@ -325,24 +325,31 @@ class NativeServicesManager {
 
   /// Wait for automation to complete and get the price
   Future<double?> waitForAutomationAndGetPrice(String packageName) async {
-    // Poll for completion (max 15 seconds)
-    for (int i = 0; i < 30; i++) {
+    // Poll for completion (max 30 seconds for slower apps like Uber)
+    for (int i = 0; i < 60; i++) {
       await Future.delayed(const Duration(milliseconds: 500));
+
+      // Log progress every 5 seconds
+      if (i % 10 == 0) {
+        final state = await getAutomationState();
+        print('⏳ Waiting for automation... ($i/60) State: $state');
+      }
 
       final complete = await isAutomationComplete();
       if (complete) {
         final state = await getAutomationState();
-        print('Automation completed with state: $state');
+        print('✓ Automation completed with state: $state');
 
         if (state == 'PRICE_CAPTURED') {
           return await getPriceForApp(packageName);
         } else {
+          print('✗ Automation failed with state: $state');
           return null; // Failed
         }
       }
     }
 
-    print('Automation timeout');
+    print('⏱️ Automation timeout after 30 seconds');
     return null;
   }
 
