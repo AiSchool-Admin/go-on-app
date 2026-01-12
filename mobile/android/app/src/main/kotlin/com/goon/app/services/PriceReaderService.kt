@@ -310,6 +310,19 @@ class PriceReaderService : AccessibilityService() {
 
                 AutomationState.FINDING_DESTINATION_FIELD -> {
                     Log.i(TAG, "🤖 Searching for destination field...")
+
+                    // CRITICAL: For InDriver, check if prices are ALREADY cached (InDriver shows prices on initial map)
+                    if (packageName == INDRIVER_PACKAGE) {
+                        val cachedPrice = latestPrices[packageName]
+                        if (cachedPrice != null && cachedPrice.price > 0 && cachedPrice.allPricesFound.isNotEmpty()) {
+                            Log.i(TAG, "🤖 ✓✓✓ InDriver PRICES ALREADY CACHED: ${cachedPrice.price} EGP (${cachedPrice.allPricesFound})")
+                            Log.i(TAG, "🤖 Skipping to PRICE_CAPTURED - no need for destination automation!")
+                            automationState = AutomationState.PRICE_CAPTURED
+                            autoReturnToGoOn()
+                            return
+                        }
+                    }
+
                     val found = findAndClickDestinationField(rootNode, packageName)
                     if (found) {
                         Log.i(TAG, "🤖 ✓✓✓ Found destination field! Transitioning to ENTERING_DESTINATION...")
@@ -327,6 +340,19 @@ class PriceReaderService : AccessibilityService() {
 
                 AutomationState.ENTERING_DESTINATION -> {
                     Log.i(TAG, "🤖 Entering destination text: '$destinationAddress'")
+
+                    // CRITICAL: For InDriver, check if prices are ALREADY cached
+                    if (packageName == INDRIVER_PACKAGE) {
+                        val cachedPrice = latestPrices[packageName]
+                        if (cachedPrice != null && cachedPrice.price > 0 && cachedPrice.allPricesFound.isNotEmpty()) {
+                            Log.i(TAG, "🤖 ✓✓✓ InDriver PRICES ALREADY CACHED: ${cachedPrice.price} EGP (${cachedPrice.allPricesFound})")
+                            Log.i(TAG, "🤖 Skipping to PRICE_CAPTURED - no need to continue automation!")
+                            automationState = AutomationState.PRICE_CAPTURED
+                            autoReturnToGoOn()
+                            return
+                        }
+                    }
+
                     val entered = enterDestinationText(rootNode, packageName)
                     if (entered) {
                         Log.i(TAG, "🤖 ✓ Entered destination, transitioning to WAITING_FOR_SUGGESTIONS...")
@@ -350,6 +376,19 @@ class PriceReaderService : AccessibilityService() {
                     automationStep++
                     Log.i(TAG, "🤖 Waiting for suggestions (step $automationStep/3)...")
 
+                    // CRITICAL: For InDriver, check if prices are ALREADY cached before continuing automation
+                    // InDriver shows prices on the map screen, so we might have them already!
+                    if (packageName == INDRIVER_PACKAGE) {
+                        val cachedPrice = latestPrices[packageName]
+                        if (cachedPrice != null && cachedPrice.price > 0 && cachedPrice.allPricesFound.isNotEmpty()) {
+                            Log.i(TAG, "🤖 ✓✓✓ InDriver PRICES ALREADY CACHED: ${cachedPrice.price} EGP (${cachedPrice.allPricesFound})")
+                            Log.i(TAG, "🤖 Skipping to PRICE_CAPTURED - no need to continue automation!")
+                            automationState = AutomationState.PRICE_CAPTURED
+                            autoReturnToGoOn()
+                            return
+                        }
+                    }
+
                     // Check for intermediate screens (InDriver might show map confirmation here)
                     if (packageName == INDRIVER_PACKAGE) {
                         if (handleInDriverIntermediateScreens(rootNode)) {
@@ -368,7 +407,19 @@ class PriceReaderService : AccessibilityService() {
                 AutomationState.SELECTING_SUGGESTION -> {
                     Log.i(TAG, "🤖 Selecting first suggestion...")
 
-                    // FIRST: Check if we're on the map confirmation screen (InDriver shows this AFTER suggestion)
+                    // CRITICAL: For InDriver, check if prices are ALREADY cached before continuing automation
+                    if (packageName == INDRIVER_PACKAGE) {
+                        val cachedPrice = latestPrices[packageName]
+                        if (cachedPrice != null && cachedPrice.price > 0 && cachedPrice.allPricesFound.isNotEmpty()) {
+                            Log.i(TAG, "🤖 ✓✓✓ InDriver PRICES ALREADY CACHED: ${cachedPrice.price} EGP (${cachedPrice.allPricesFound})")
+                            Log.i(TAG, "🤖 Skipping to PRICE_CAPTURED - no need to continue automation!")
+                            automationState = AutomationState.PRICE_CAPTURED
+                            autoReturnToGoOn()
+                            return
+                        }
+                    }
+
+                    // SECOND: Check if we're on the map confirmation screen (InDriver shows this AFTER suggestion)
                     if (packageName == INDRIVER_PACKAGE) {
                         if (handleInDriverIntermediateScreens(rootNode)) {
                             Log.i(TAG, "🤖 📋 Handled InDriver intermediate screen during SELECTING_SUGGESTION")
