@@ -397,37 +397,14 @@ class PriceReaderService : AccessibilityService() {
 
                 AutomationState.WAITING_FOR_PRICE -> {
                     val elapsedTime = System.currentTimeMillis() - automationStartTime
-                    Log.i(TAG, "🤖 Waiting for price (step $automationStep/15, elapsed: ${elapsedTime}ms, screenReady: $uberScreenReady)...")
+                    Log.i(TAG, "🤖 Waiting for price (step $automationStep/25, elapsed: ${elapsedTime}ms)...")
 
                     val isUber = packageName == UBER_PACKAGE
 
-                    // For Uber: Check if ride selection screen is ready
-                    if (isUber && !uberScreenReady) {
-                        val allText = getAllTextFromNode(rootNode)
-                        val combinedText = allText.joinToString(" ").lowercase()
-
-                        // Check for indicators that ride selection screen is loaded
-                        val screenIndicators = listOf("choose a trip", "uberx", "comfort", "select uber", "cheaper everyday")
-                        val hasIndicator = screenIndicators.any { combinedText.contains(it) }
-
-                        if (hasIndicator) {
-                            Log.i(TAG, "🤖 ✓ Uber ride selection screen detected!")
-                            uberScreenReady = true
-                        } else {
-                            Log.i(TAG, "🤖 ⏳ Uber: Waiting for ride selection screen...")
-                            automationStep++
-                            if (automationStep > 20) { // Max ~24 seconds waiting for screen
-                                Log.e(TAG, "🤖 ✗ Timeout waiting for Uber ride selection screen")
-                                automationState = AutomationState.FAILED
-                                autoReturnToGoOn()
-                            }
-                            return
-                        }
-                    }
-
-                    // For Uber: Wait minimum time after screen is ready
+                    // For Uber: Wait minimum time to let prices fully load
                     if (isUber && elapsedTime < UBER_MIN_WAIT_MS) {
                         Log.i(TAG, "🤖 ⏳ Uber: Waiting for minimum time (${elapsedTime}ms < ${UBER_MIN_WAIT_MS}ms)")
+                        automationStep++
                         return
                     }
 
