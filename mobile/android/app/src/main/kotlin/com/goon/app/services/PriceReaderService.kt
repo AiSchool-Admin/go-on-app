@@ -2117,7 +2117,7 @@ class PriceReaderService : AccessibilityService() {
         Log.i(TAG, "📱 ====== UBER SCREEN TEXT (${allText.size} elements) ======")
         for ((index, text) in allText.withIndex()) {
             if (text.isNotBlank()) {
-                Log.d(TAG, "📱 [$index] '$text'")
+                Log.i(TAG, "📱 [$index] '$text'")
             }
         }
         Log.i(TAG, "📱 ====== END UBER SCREEN TEXT ======")
