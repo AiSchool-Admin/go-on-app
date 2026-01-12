@@ -137,23 +137,49 @@ class _MapLocationPickerScreenState extends ConsumerState<MapLocationPickerScree
         final place = placemarks.first;
         final parts = <String>[];
 
-        // IMPORTANT: Skip Plus Codes - InDriver doesn't understand them
-        if (place.street != null && place.street!.isNotEmpty && !_isPlusCode(place.street)) {
-          parts.add(place.street!);
-        }
-        if (place.subLocality != null && place.subLocality!.isNotEmpty && !_isPlusCode(place.subLocality)) {
+        // Priority order: most specific to least specific
+        // This helps ride apps find the location better
+
+        // 1. Sublocality (neighborhood) - most useful for ride apps
+        if (place.subLocality != null &&
+            place.subLocality!.isNotEmpty &&
+            !_isPlusCode(place.subLocality) &&
+            !_isGenericWord(place.subLocality!)) {
           parts.add(place.subLocality!);
         }
-        if (place.locality != null && place.locality!.isNotEmpty && !_isPlusCode(place.locality)) {
+
+        // 2. Street name (if meaningful)
+        if (place.street != null &&
+            place.street!.isNotEmpty &&
+            !_isPlusCode(place.street) &&
+            !_isGenericWord(place.street!) &&
+            place.street != place.subLocality) {
+          // Add street only if different from subLocality
+          parts.add(place.street!);
+        }
+
+        // 3. Locality (city/district)
+        if (place.locality != null &&
+            place.locality!.isNotEmpty &&
+            !_isPlusCode(place.locality) &&
+            !_isGenericWord(place.locality!)) {
           parts.add(place.locality!);
         }
-        if (place.administrativeArea != null && place.administrativeArea!.isNotEmpty && !_isPlusCode(place.administrativeArea)) {
+
+        // 4. Administrative area (governorate) - only if nothing else
+        if (parts.isEmpty &&
+            place.administrativeArea != null &&
+            place.administrativeArea!.isNotEmpty &&
+            !_isPlusCode(place.administrativeArea)) {
           parts.add(place.administrativeArea!);
         }
 
+        // Remove duplicates while preserving order
+        final uniqueParts = parts.toSet().toList();
+
         setState(() {
-          _selectedAddress = parts.isNotEmpty
-              ? parts.join('، ')
+          _selectedAddress = uniqueParts.isNotEmpty
+              ? uniqueParts.join('، ')
               : '${location.latitude.toStringAsFixed(6)}, ${location.longitude.toStringAsFixed(6)}';
           _isLoadingAddress = false;
         });
@@ -169,6 +195,20 @@ class _MapLocationPickerScreenState extends ConsumerState<MapLocationPickerScree
         _isLoadingAddress = false;
       });
     }
+  }
+
+  /// Check if a word is too generic to be useful for location search
+  bool _isGenericWord(String text) {
+    final genericWords = [
+      'مصر', 'Egypt', 'القاهرة', 'Cairo', 'الجيزة', 'Giza',
+      'محافظة', 'مدينة', 'قسم', 'حي', 'شارع', 'طريق',
+      'Unnamed Road', 'Unnamed', 'Road',
+    ];
+    final lowerText = text.toLowerCase().trim();
+    return genericWords.any((word) =>
+      lowerText == word.toLowerCase() ||
+      lowerText.startsWith('unnamed')
+    );
   }
 
   void _confirmLocation() {

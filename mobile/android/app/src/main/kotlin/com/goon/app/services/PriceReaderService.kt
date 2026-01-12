@@ -1103,36 +1103,62 @@ class PriceReaderService : AccessibilityService() {
         val suggestions = mutableListOf<Pair<AccessibilityNodeInfo, String>>()
         collectSuggestions(rootNode, suggestions)
 
+        // Also try InDriver-specific suggestion collection if needed
+        if (suggestions.isEmpty() && packageName == INDRIVER_PACKAGE) {
+            collectInDriverSuggestions(rootNode, suggestions)
+        }
+
         Log.i(TAG, "📋 Found ${suggestions.size} suggestions:")
         suggestions.forEachIndexed { index, (_, text) ->
             Log.i(TAG, "   [$index] '$text'")
         }
 
-        // Find the best matching suggestion
+        // Find the best matching suggestion with weighted scoring
         var bestMatch: AccessibilityNodeInfo? = null
         var bestScore = 0
+        var bestText = ""
 
         for ((node, suggestionText) in suggestions) {
             val textLower = suggestionText.lowercase()
             var score = 0
 
-            for (keyword in destKeywords) {
+            // Weighted scoring: longer keywords = more specific = more points
+            for ((index, keyword) in destKeywords.withIndex()) {
                 if (textLower.contains(keyword.lowercase())) {
-                    score++
+                    // First keywords (longest) get more points
+                    val weight = destKeywords.size - index
+                    score += weight
+                    Log.d(TAG, "   Match '$keyword' in '$suggestionText' (+$weight)")
+                }
+            }
+
+            // Bonus: exact word match (not just contains)
+            for (keyword in destKeywords) {
+                val wordPattern = Regex("\\b${Regex.escape(keyword)}\\b", RegexOption.IGNORE_CASE)
+                if (wordPattern.containsMatchIn(suggestionText)) {
+                    score += 2 // Bonus for exact word match
                 }
             }
 
             if (score > bestScore) {
                 bestScore = score
                 bestMatch = node
+                bestText = suggestionText
                 Log.i(TAG, "✓ Better match: '$suggestionText' (score: $score)")
             }
         }
 
         // If we found a match with score > 0, click it
         if (bestMatch != null && bestScore > 0) {
-            Log.i(TAG, "✓✓ Selecting best match with score $bestScore")
+            Log.i(TAG, "✓✓ SELECTED: '$bestText' (score: $bestScore)")
             bestMatch.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            // Try parent click too for some apps
+            bestMatch.parent?.let { parent ->
+                if (parent.isClickable) {
+                    parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                }
+                parent.recycle()
+            }
             // Recycle all nodes
             suggestions.forEach { (node, _) ->
                 try { node.recycle() } catch (e: Exception) {}
@@ -1143,7 +1169,14 @@ class PriceReaderService : AccessibilityService() {
         // Fallback: click first suggestion if no match found
         Log.w(TAG, "⚠️ No matching suggestion found, clicking first one")
         if (suggestions.isNotEmpty()) {
+            Log.i(TAG, "⚠️ Fallback: selecting '${suggestions[0].second}'")
             suggestions[0].first.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            suggestions[0].first.parent?.let { parent ->
+                if (parent.isClickable) {
+                    parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                }
+                parent.recycle()
+            }
             suggestions.forEach { (node, _) ->
                 try { node.recycle() } catch (e: Exception) {}
             }
@@ -1159,25 +1192,75 @@ class PriceReaderService : AccessibilityService() {
     }
 
     /**
+     * Collect suggestions specifically for InDriver's UI
+     */
+    private fun collectInDriverSuggestions(node: AccessibilityNodeInfo, suggestions: MutableList<Pair<AccessibilityNodeInfo, String>>) {
+        val className = node.className?.toString() ?: ""
+        val text = node.text?.toString() ?: ""
+
+        // InDriver shows suggestions in a different format
+        // Look for clickable ViewGroups with location text
+        if (node.isClickable && text.isNotBlank() && text.length > 5) {
+            val isNotButton = !text.contains("تم") &&
+                              !text.contains("Done") &&
+                              !text.contains("بحث") &&
+                              !text.contains("Search")
+            if (isNotButton) {
+                suggestions.add(Pair(AccessibilityNodeInfo.obtain(node), text))
+                Log.d(TAG, "📍 InDriver suggestion: '$text'")
+            }
+        }
+
+        // Check content description too
+        val desc = node.contentDescription?.toString() ?: ""
+        if (node.isClickable && desc.isNotBlank() && desc.length > 5 && text.isBlank()) {
+            suggestions.add(Pair(AccessibilityNodeInfo.obtain(node), desc))
+            Log.d(TAG, "📍 InDriver suggestion (desc): '$desc'")
+        }
+
+        // Recurse
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            collectInDriverSuggestions(child, suggestions)
+            child.recycle()
+        }
+    }
+
+    /**
      * Extract meaningful keywords from destination address
      * Removes Plus Codes, numbers, and common words
      */
     private fun extractDestinationKeywords(address: String): List<String> {
-        // Remove Plus Codes (format: XXXX+XXX)
-        var cleaned = address.replace(Regex("[A-Z0-9]{4}\\+[A-Z0-9]{2,4}"), "")
-        // Remove standalone numbers
-        cleaned = cleaned.replace(Regex("\\b\\d+\\b"), "")
-        // Remove common prefixes
-        cleaned = cleaned.replace(Regex("محافظة"), "")
+        // Remove Plus Codes (format: XXXX+XXX or longer)
+        var cleaned = address.replace(Regex("[A-Z0-9]{4,8}\\+[A-Z0-9]{2,4}"), "")
 
-        // Split by common separators and filter
-        val words = cleaned.split(Regex("[،,\\s]+"))
+        // Remove standalone numbers and coordinates
+        cleaned = cleaned.replace(Regex("\\b\\d+\\.?\\d*\\b"), "")
+
+        // Remove common non-useful words in Arabic
+        val stopWords = listOf(
+            "محافظة", "مدينة", "منطقة", "شارع", "طريق", "ش", "ط",
+            "مصر", "Egypt", "القاهرة", "Cairo", "الجيزة", "Giza",
+            "شمال", "جنوب", "شرق", "غرب", "قسم", "حي", "دائرة",
+            "الكبرى", "الجديدة", "القديمة", "أول", "ثاني", "ثالث"
+        )
+        for (word in stopWords) {
+            cleaned = cleaned.replace(word, " ", ignoreCase = true)
+        }
+
+        // Split by common separators
+        val words = cleaned.split(Regex("[،,\\-\\s]+"))
             .map { it.trim() }
             .filter { it.length > 2 }
-            .filter { !it.matches(Regex("[\\d.]+")) }
+            .filter { !it.matches(Regex("[\\d.\\-]+")) }
+            .filter { it.isNotBlank() }
             .distinct()
 
-        return words
+        // Prioritize: longer words first (usually more specific)
+        val sortedWords = words.sortedByDescending { it.length }
+
+        Log.i(TAG, "🔑 Keywords extracted: $sortedWords from: '$address'")
+        return sortedWords
     }
 
     /**
