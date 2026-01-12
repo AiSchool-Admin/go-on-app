@@ -155,6 +155,119 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
     }
   }
 
+  /// Test fetching price from a SINGLE app (for debugging)
+  Future<void> _testSingleApp(String packageName, String appName) async {
+    final nativeServices = ref.read(nativeServicesProvider);
+
+    // Check accessibility first
+    final isEnabled = await nativeServices.isAccessibilityEnabled();
+    if (!isEnabled) {
+      _showAccessibilityRequiredDialog();
+      return;
+    }
+
+    setState(() {
+      _isFetchingRealPrices = true;
+      _fetchStatus = 'جاري اختبار $appName...';
+    });
+
+    try {
+      // Clear old prices
+      await nativeServices.clearPrices();
+
+      // Start automation for single app
+      final started = await nativeServices.automateGetPrice(
+        packageName: packageName,
+        pickup: widget.originAddress,
+        destination: widget.destinationAddress,
+        pickupLat: widget.origin.latitude,
+        pickupLng: widget.origin.longitude,
+        destLat: widget.destination.latitude,
+        destLng: widget.destination.longitude,
+      );
+
+      if (!started) {
+        throw Exception('فشل بدء الأتمتة');
+      }
+
+      setState(() {
+        _fetchStatus = 'جاري انتظار السعر من $appName...';
+      });
+
+      // Wait for price with detailed logging
+      final price = await nativeServices.waitForAutomationAndGetPrice(packageName);
+
+      if (mounted) {
+        setState(() {
+          _isFetchingRealPrices = false;
+          _fetchStatus = '';
+        });
+
+        if (price != null && price > 0) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('✅ $appName: ${price.round()} ج.م'),
+              backgroundColor: AppColors.success,
+              duration: const Duration(seconds: 5),
+            ),
+          );
+
+          // Update the price in the list
+          if (_priceOptions != null) {
+            final updatedOptions = _priceOptions!.map((option) {
+              if (_getPackageName(option.provider) == packageName) {
+                return option.copyWith(price: price, isEstimate: false);
+              }
+              return option;
+            }).toList();
+            updatedOptions.sort((a, b) => a.price.compareTo(b.price));
+            setState(() => _priceOptions = updatedOptions);
+          }
+        } else {
+          final state = await nativeServices.getAutomationState();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('❌ $appName: لم يتم العثور على السعر (حالة: $state)'),
+              backgroundColor: AppColors.error,
+              duration: const Duration(seconds: 5),
+            ),
+          );
+        }
+
+        // Reset automation
+        await nativeServices.resetAutomation();
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isFetchingRealPrices = false;
+          _fetchStatus = '';
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('خطأ: $e'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
+    }
+  }
+
+  Widget _buildTestButton(String appName, String packageName, Color color) {
+    return ElevatedButton(
+      onPressed: () => _testSingleApp(packageName, appName),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: color,
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+        ),
+      ),
+      child: Text(appName, style: const TextStyle(fontSize: 12)),
+    );
+  }
+
   void _showAccessibilityRequiredDialog() {
     final nativeServices = ref.read(nativeServicesProvider);
     showDialog(
@@ -348,18 +461,42 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
                             ],
                           ),
                         )
-                      : OutlinedButton.icon(
-                          onPressed: _fetchAllRealPrices,
-                          icon: const Icon(Icons.refresh, size: 18),
-                          label: const Text('جلب الأسعار الحقيقية من التطبيقات'),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: AppColors.primary,
-                            side: const BorderSide(color: AppColors.primary),
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
+                      : Column(
+                          children: [
+                            // Individual app test buttons
+                            const Text(
+                              '🧪 اختبار كل تطبيق على حدة:',
+                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                             ),
-                          ),
+                            const SizedBox(height: 8),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              alignment: WrapAlignment.center,
+                              children: [
+                                _buildTestButton('Uber', NativeServicesManager.uberPackage, Colors.black),
+                                _buildTestButton('DiDi', NativeServicesManager.didiPackage, Colors.orange),
+                                _buildTestButton('Careem', NativeServicesManager.careemPackage, Colors.green),
+                                _buildTestButton('Bolt', NativeServicesManager.boltPackage, Colors.green.shade700),
+                                _buildTestButton('InDriver', NativeServicesManager.indriverPackage, Colors.yellow.shade700),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            // All apps button
+                            OutlinedButton.icon(
+                              onPressed: _fetchAllRealPrices,
+                              icon: const Icon(Icons.refresh, size: 18),
+                              label: const Text('جلب الكل'),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: AppColors.primary,
+                                side: const BorderSide(color: AppColors.primary),
+                                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                 ),
               ],
