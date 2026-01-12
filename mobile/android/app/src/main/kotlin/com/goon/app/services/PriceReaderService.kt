@@ -194,6 +194,9 @@ class PriceReaderService : AccessibilityService() {
     private var automationStep = 0
     private var automationRetries = 0
     private val MAX_RETRIES = 10  // Increased for better reliability
+    private var automationStartTime = 0L  // Timestamp when automation started
+    private val UBER_MIN_WAIT_MS = 5000L  // Wait at least 5 seconds for Uber to load prices
+    private val UBER_MIN_PRICE = 50.0  // Minimum valid price for Uber (reject lower as invalid)
 
     enum class AutomationState {
         IDLE,
@@ -237,6 +240,10 @@ class PriceReaderService : AccessibilityService() {
         automationRetries = 0
         monitoringPackage = packageName
         isActiveMonitoring = true
+        automationStartTime = System.currentTimeMillis()  // Track when automation started
+
+        // Clear any old cached prices for this app
+        latestPrices.remove(packageName)
 
         // For Uber and DiDi: deep link includes full coordinates, skip to WAITING_FOR_PRICE
         // For others: go through full flow (find destination field, enter text, etc.)
@@ -387,11 +394,29 @@ class PriceReaderService : AccessibilityService() {
                 }
 
                 AutomationState.WAITING_FOR_PRICE -> {
-                    Log.i(TAG, "🤖 Waiting for price (step $automationStep/10)...")
+                    val elapsedTime = System.currentTimeMillis() - automationStartTime
+                    Log.i(TAG, "🤖 Waiting for price (step $automationStep/10, elapsed: ${elapsedTime}ms)...")
 
-                    // FIRST: Check if price was already captured via event monitoring
+                    // For Uber: Wait at least 5 seconds before accepting prices
+                    // This gives the app time to load real prices
+                    val isUber = packageName == UBER_PACKAGE
+                    if (isUber && elapsedTime < UBER_MIN_WAIT_MS) {
+                        Log.i(TAG, "🤖 ⏳ Uber: Waiting for minimum time (${elapsedTime}ms < ${UBER_MIN_WAIT_MS}ms)")
+                        automationStep++
+                        return
+                    }
+
+                    // Check if price was already captured via event monitoring
                     val cachedPrice = latestPrices[packageName]
                     if (cachedPrice != null && cachedPrice.price > 0) {
+                        // Validate price for Uber (reject too-low prices as invalid)
+                        if (isUber && cachedPrice.price < UBER_MIN_PRICE) {
+                            Log.w(TAG, "🤖 ⚠️ Uber price ${cachedPrice.price} EGP too low (< $UBER_MIN_PRICE), waiting for real prices...")
+                            latestPrices.remove(packageName)  // Clear invalid price
+                            automationStep++
+                            return
+                        }
+
                         Log.i(TAG, "🤖 ✓✓✓ PRICE FOUND IN CACHE: ${cachedPrice.price} EGP")
                         automationState = AutomationState.PRICE_CAPTURED
                         // AUTO-RETURN: Go back to GO-ON automatically!
@@ -410,6 +435,13 @@ class PriceReaderService : AccessibilityService() {
 
                     val priceInfo = performAggressiveScan(packageName)
                     if (priceInfo != null && priceInfo.price > 0) {
+                        // Validate price for Uber
+                        if (isUber && priceInfo.price < UBER_MIN_PRICE) {
+                            Log.w(TAG, "🤖 ⚠️ Uber scanned price ${priceInfo.price} EGP too low, ignoring...")
+                            automationStep++
+                            return
+                        }
+
                         Log.i(TAG, "🤖 ✓✓✓ PRICE CAPTURED: ${priceInfo.price} EGP")
                         automationState = AutomationState.PRICE_CAPTURED
                         // Notify Flutter
@@ -418,7 +450,7 @@ class PriceReaderService : AccessibilityService() {
                         autoReturnToGoOn()
                     } else {
                         automationStep++
-                        if (automationStep > 10) { // Wait ~12 seconds for price
+                        if (automationStep > 15) { // Wait ~18 seconds for price (increased)
                             Log.e(TAG, "🤖 ✗✗✗ FAILED: Timeout waiting for price")
                             automationState = AutomationState.FAILED
                             // Return to GO-ON even on failure
