@@ -167,12 +167,13 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
       return;
     }
 
-    // Apps that are confirmed working
+    // Apps that are confirmed working with deep links
     final workingApps = [
       {'package': NativeServicesManager.uberPackage, 'name': 'Uber'},
-      {'package': NativeServicesManager.didiPackage, 'name': 'DiDi'},
-      // Add Bolt when ready:
-      // {'package': NativeServicesManager.boltPackage, 'name': 'Bolt'},
+      // DiDi: deep links not working - opens to home screen instead of price screen
+      // {'package': NativeServicesManager.didiPackage, 'name': 'DiDi'},
+      // Bolt: testing deep link support
+      {'package': NativeServicesManager.boltPackage, 'name': 'Bolt'},
     ];
 
     setState(() {
@@ -696,7 +697,7 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
                                 onPressed: _fetchRealPricesFromWorkingApps,
                                 icon: const Icon(Icons.refresh),
                                 label: const Text(
-                                  'جلب الأسعار الحقيقية (Uber + DiDi)',
+                                  'جلب الأسعار الحقيقية (Uber + Bolt)',
                                   style: TextStyle(fontWeight: FontWeight.bold),
                                 ),
                                 style: ElevatedButton.styleFrom(
@@ -723,12 +724,12 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
                                 ),
                                 const SizedBox(width: 8),
                                 Expanded(
-                                  child: _buildTestButton('DiDi', NativeServicesManager.didiPackage, const Color(0xFFFF6600)),
+                                  child: _buildTestButton('Bolt', NativeServicesManager.boltPackage, const Color(0xFF34D186)),
                                 ),
-                                // Bolt - ready to enable
+                                // DiDi - deep links not working
                                 // const SizedBox(width: 8),
                                 // Expanded(
-                                //   child: _buildTestButton('Bolt', NativeServicesManager.boltPackage, const Color(0xFF34D186)),
+                                //   child: _buildTestButton('DiDi', NativeServicesManager.didiPackage, const Color(0xFFFF6600)),
                                 // ),
                               ],
                             ),
