@@ -155,6 +155,147 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
     }
   }
 
+  /// Fetch real prices from working apps only (Uber + DiDi)
+  /// Bolt is ready to be added when tested
+  Future<void> _fetchRealPricesFromWorkingApps() async {
+    final nativeServices = ref.read(nativeServicesProvider);
+
+    // Check accessibility first
+    final isEnabled = await nativeServices.isAccessibilityEnabled();
+    if (!isEnabled) {
+      _showAccessibilityRequiredDialog();
+      return;
+    }
+
+    // Apps that are confirmed working
+    final workingApps = [
+      {'package': NativeServicesManager.uberPackage, 'name': 'Uber'},
+      {'package': NativeServicesManager.didiPackage, 'name': 'DiDi'},
+      // Add Bolt when ready:
+      // {'package': NativeServicesManager.boltPackage, 'name': 'Bolt'},
+    ];
+
+    setState(() {
+      _isFetchingRealPrices = true;
+      _fetchStatus = 'جاري البدء...';
+    });
+
+    final fetchedPrices = <String, double>{};
+
+    try {
+      for (final app in workingApps) {
+        final packageName = app['package']!;
+        final appName = app['name']!;
+
+        // Check if app is installed
+        final installed = await nativeServices.isAppInstalled(packageName);
+        if (!installed) {
+          print('$appName not installed, skipping');
+          continue;
+        }
+
+        setState(() {
+          _fetchStatus = 'جاري جلب سعر $appName...';
+        });
+
+        // Clear old prices
+        await nativeServices.clearPrices();
+
+        // Start automation
+        final started = await nativeServices.automateGetPrice(
+          packageName: packageName,
+          pickup: widget.originAddress,
+          destination: widget.destinationAddress,
+          pickupLat: widget.origin.latitude,
+          pickupLng: widget.origin.longitude,
+          destLat: widget.destination.latitude,
+          destLng: widget.destination.longitude,
+        );
+
+        if (!started) {
+          print('Failed to start automation for $appName');
+          continue;
+        }
+
+        // Wait for price
+        final priceInfo = await nativeServices.waitForAutomationAndGetPriceInfo(packageName);
+
+        if (priceInfo != null && priceInfo.price > 0) {
+          fetchedPrices[packageName] = priceInfo.price;
+          print('✓ Got $appName price: ${priceInfo.price} EGP');
+        } else {
+          print('✗ No price from $appName');
+        }
+
+        // Reset for next app
+        await nativeServices.resetAutomation();
+        await Future.delayed(const Duration(milliseconds: 500));
+      }
+
+      // Update UI with fetched prices
+      if (mounted && _priceOptions != null && fetchedPrices.isNotEmpty) {
+        final updatedOptions = _priceOptions!.map((option) {
+          final packageName = _getPackageName(option.provider);
+          if (packageName != null && fetchedPrices.containsKey(packageName)) {
+            return option.copyWith(
+              price: fetchedPrices[packageName]!,
+              isEstimate: false,
+            );
+          }
+          return option;
+        }).toList();
+
+        // Sort by price
+        updatedOptions.sort((a, b) => a.price.compareTo(b.price));
+
+        // Mark best price
+        for (int i = 0; i < updatedOptions.length; i++) {
+          updatedOptions[i] = updatedOptions[i].copyWith(isBestPrice: i == 0);
+        }
+
+        setState(() {
+          _priceOptions = updatedOptions;
+          _isFetchingRealPrices = false;
+          _fetchStatus = '';
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✅ تم جلب ${fetchedPrices.length} أسعار حقيقية'),
+            backgroundColor: AppColors.success,
+          ),
+        );
+      } else {
+        setState(() {
+          _isFetchingRealPrices = false;
+          _fetchStatus = '';
+        });
+
+        if (fetchedPrices.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('لم يتم العثور على أسعار'),
+              backgroundColor: AppColors.warning,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isFetchingRealPrices = false;
+          _fetchStatus = '';
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('خطأ: $e'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
+    }
+  }
+
   /// Test fetching price from a SINGLE app (for debugging)
   Future<void> _testSingleApp(String packageName, String appName) async {
     final nativeServices = ref.read(nativeServicesProvider);
@@ -548,14 +689,49 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
                         )
                       : Column(
                           children: [
+                            // Main button to fetch all real prices
+                            SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton.icon(
+                                onPressed: _fetchRealPricesFromWorkingApps,
+                                icon: const Icon(Icons.refresh),
+                                label: const Text(
+                                  'جلب الأسعار الحقيقية (Uber + DiDi)',
+                                  style: TextStyle(fontWeight: FontWeight.bold),
+                                ),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: AppColors.primary,
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
                             // Individual app test buttons
                             const Text(
                               '🧪 اختبار كل تطبيق على حدة:',
                               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                             ),
                             const SizedBox(height: 8),
-                            // Show only Uber for testing
-                            _buildTestButton('اختبار Uber', NativeServicesManager.uberPackage, Colors.black),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: _buildTestButton('Uber', NativeServicesManager.uberPackage, Colors.black),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: _buildTestButton('DiDi', NativeServicesManager.didiPackage, const Color(0xFFFF6600)),
+                                ),
+                                // Bolt - ready to enable
+                                // const SizedBox(width: 8),
+                                // Expanded(
+                                //   child: _buildTestButton('Bolt', NativeServicesManager.boltPackage, const Color(0xFF34D186)),
+                                // ),
+                              ],
+                            ),
                           ],
                         ),
                 ),
