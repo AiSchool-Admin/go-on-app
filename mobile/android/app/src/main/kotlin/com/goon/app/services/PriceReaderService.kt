@@ -388,7 +388,17 @@ class PriceReaderService : AccessibilityService() {
                 AutomationState.WAITING_FOR_PRICE -> {
                     Log.i(TAG, "🤖 Waiting for price (step $automationStep/10)...")
 
-                    // First, check for intermediate screens (like airline selection for airport)
+                    // FIRST: Check if price was already captured via event monitoring
+                    val cachedPrice = latestPrices[packageName]
+                    if (cachedPrice != null && cachedPrice.price > 0) {
+                        Log.i(TAG, "🤖 ✓✓✓ PRICE FOUND IN CACHE: ${cachedPrice.price} EGP")
+                        automationState = AutomationState.PRICE_CAPTURED
+                        // AUTO-RETURN: Go back to GO-ON automatically!
+                        autoReturnToGoOn()
+                        return
+                    }
+
+                    // Check for intermediate screens (like airline selection for airport)
                     Log.i(TAG, "🤖 Checking for intermediate screens...")
                     if (handleIntermediateScreens(rootNode, packageName)) {
                         Log.i(TAG, "🤖 📋 Handled intermediate screen, continuing...")
