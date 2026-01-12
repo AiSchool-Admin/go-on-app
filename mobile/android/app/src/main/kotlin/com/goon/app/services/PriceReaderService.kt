@@ -2106,33 +2106,50 @@ class PriceReaderService : AccessibilityService() {
     }
 
     /**
-     * Extract prices from Uber app - captures ALL prices with vehicle types
+     * Extract prices from Uber app - STRICT extraction with EGP pattern only
      */
     private fun extractUberPrices(rootNode: AccessibilityNodeInfo) {
         val allText = getAllTextFromNode(rootNode)
         val prices = mutableListOf<Double>()
         val vehiclePrices = mutableMapOf<String, Double>()
 
-        // Vehicle type keywords (in order they typically appear)
-        val vehicleTypes = listOf(
-            "Uber Moto" to listOf("moto", "موتو", "موتوسيكل", "uber moto"),
-            "UberX" to listOf("uberx", "uber x"),
-            "Uber Go" to listOf("uber go", "ubergo"),
-            "Comfort" to listOf("comfort", "كمفورت"),
-            "UberXL" to listOf("uberxl", "xl"),
-            "Black" to listOf("black", "بلاك"),
-            "Green" to listOf("green", "أخضر")
-        )
-
-        // Extract all prices with their indices
-        val pricesWithIndex = mutableListOf<Pair<Int, Double>>()
+        // LOG ALL TEXT for debugging
+        Log.i(TAG, "📱 ====== UBER SCREEN TEXT (${allText.size} elements) ======")
         for ((index, text) in allText.withIndex()) {
-            val price = extractPrice(text)
-            if (price != null && price in 15.0..2000.0) {
-                prices.add(price)
-                pricesWithIndex.add(index to price)
+            if (text.isNotBlank()) {
+                Log.d(TAG, "📱 [$index] '$text'")
             }
         }
+        Log.i(TAG, "📱 ====== END UBER SCREEN TEXT ======")
+
+        // STRICT Uber price pattern - ONLY match "EGP XX.XX" format
+        val uberPricePattern = Pattern.compile("EGP\\s*(\\d+[.,]?\\d*)", Pattern.CASE_INSENSITIVE)
+
+        // Extract ONLY prices with EGP prefix
+        val pricesWithIndex = mutableListOf<Pair<Int, Double>>()
+        for ((index, text) in allText.withIndex()) {
+            val matcher = uberPricePattern.matcher(text)
+            if (matcher.find()) {
+                val priceStr = matcher.group(1)?.replace(",", ".") ?: continue
+                val price = priceStr.toDoubleOrNull()
+                if (price != null && price in 30.0..1000.0) {
+                    prices.add(price)
+                    pricesWithIndex.add(index to price)
+                    Log.i(TAG, "💰 Found Uber price: $price EGP from text: '$text'")
+                }
+            }
+        }
+
+        // Vehicle type keywords
+        val vehicleTypes = listOf(
+            "UberX Saver" to listOf("uberx saver", "saver"),
+            "Wait & Save" to listOf("wait & save", "wait and save"),
+            "UberX" to listOf("uberx"),
+            "Comfort" to listOf("comfort"),
+            "Uber Moto" to listOf("moto"),
+            "UberXL" to listOf("uberxl", "xl"),
+            "Black" to listOf("black")
+        )
 
         // Find vehicle types and their positions
         val vehicleTypePositions = mutableListOf<Triple<Int, String, List<String>>>()

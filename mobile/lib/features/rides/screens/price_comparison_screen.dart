@@ -554,33 +554,8 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
                               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                             ),
                             const SizedBox(height: 8),
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
-                              alignment: WrapAlignment.center,
-                              children: [
-                                _buildTestButton('Uber', NativeServicesManager.uberPackage, Colors.black),
-                                _buildTestButton('DiDi', NativeServicesManager.didiPackage, Colors.orange),
-                                _buildTestButton('Careem', NativeServicesManager.careemPackage, Colors.green),
-                                _buildTestButton('Bolt', NativeServicesManager.boltPackage, Colors.green.shade700),
-                                _buildTestButton('InDriver', NativeServicesManager.indriverPackage, Colors.yellow.shade700),
-                              ],
-                            ),
-                            const SizedBox(height: 12),
-                            // All apps button
-                            OutlinedButton.icon(
-                              onPressed: _fetchAllRealPrices,
-                              icon: const Icon(Icons.refresh, size: 18),
-                              label: const Text('جلب الكل'),
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: AppColors.primary,
-                                side: const BorderSide(color: AppColors.primary),
-                                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                              ),
-                            ),
+                            // Show only Uber for testing
+                            _buildTestButton('اختبار Uber', NativeServicesManager.uberPackage, Colors.black),
                           ],
                         ),
                 ),
