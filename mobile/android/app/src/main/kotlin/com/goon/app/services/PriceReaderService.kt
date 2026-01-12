@@ -397,75 +397,46 @@ class PriceReaderService : AccessibilityService() {
 
                 AutomationState.WAITING_FOR_PRICE -> {
                     val elapsedTime = System.currentTimeMillis() - automationStartTime
-                    Log.i(TAG, "🤖 Waiting for price (step $automationStep/25, elapsed: ${elapsedTime}ms)...")
-
                     val isUber = packageName == UBER_PACKAGE
+                    val cachedPrice = latestPrices[packageName]
+
+                    Log.i(TAG, "🤖 Waiting for price (elapsed: ${elapsedTime}ms, cached: ${cachedPrice?.allPricesFound?.size ?: 0} prices)...")
 
                     // For Uber: Wait minimum time to let prices fully load
                     if (isUber && elapsedTime < UBER_MIN_WAIT_MS) {
-                        Log.i(TAG, "🤖 ⏳ Uber: Waiting for minimum time (${elapsedTime}ms < ${UBER_MIN_WAIT_MS}ms)")
-                        automationStep++
+                        Log.i(TAG, "🤖 ⏳ Uber: Waiting (${elapsedTime}ms < ${UBER_MIN_WAIT_MS}ms)")
                         return
                     }
 
-                    // Check if price was already captured via event monitoring
-                    val cachedPrice = latestPrices[packageName]
-                    if (cachedPrice != null && cachedPrice.price > 0) {
-                        // For Uber: Need multiple prices to be valid (at least 2)
-                        if (isUber && cachedPrice.allPricesFound.size < 2) {
-                            Log.w(TAG, "🤖 ⚠️ Uber: Only ${cachedPrice.allPricesFound.size} price(s) found, waiting for more...")
-                            latestPrices.remove(packageName)
-                            automationStep++
-                            return
-                        }
-
-                        // Validate price for Uber (reject too-low prices as invalid)
-                        if (isUber && cachedPrice.price < UBER_MIN_PRICE) {
-                            Log.w(TAG, "🤖 ⚠️ Uber price ${cachedPrice.price} EGP too low (< $UBER_MIN_PRICE), waiting for real prices...")
-                            latestPrices.remove(packageName)
-                            automationStep++
-                            return
-                        }
-
-                        Log.i(TAG, "🤖 ✓✓✓ PRICE FOUND IN CACHE: ${cachedPrice.price} EGP (${cachedPrice.allPricesFound.size} prices)")
+                    // After minimum wait, check cache
+                    if (cachedPrice != null && cachedPrice.price > 0 && cachedPrice.allPricesFound.size >= 2) {
+                        Log.i(TAG, "🤖 ✓✓✓ PRICE FOUND: ${cachedPrice.price} EGP (${cachedPrice.allPricesFound.size} prices: ${cachedPrice.allPricesFound})")
                         automationState = AutomationState.PRICE_CAPTURED
-                        // AUTO-RETURN: Go back to GO-ON automatically!
                         autoReturnToGoOn()
                         return
                     }
 
-                    // Check for intermediate screens (like airline selection for airport)
-                    Log.i(TAG, "🤖 Checking for intermediate screens...")
-                    if (handleIntermediateScreens(rootNode, packageName)) {
-                        Log.i(TAG, "🤖 📋 Handled intermediate screen, continuing...")
-                        return
-                    }
-                    Log.i(TAG, "🤖 No intermediate screen handled, proceeding to price scan...")
-
+                    // No valid cache, try aggressive scan
+                    Log.i(TAG, "🤖 No valid cache, trying aggressive scan...")
                     val priceInfo = performAggressiveScan(packageName)
-                    if (priceInfo != null && priceInfo.price > 0) {
-                        // For Uber: Need multiple prices
-                        if (isUber && priceInfo.allPricesFound.size < 2) {
-                            Log.w(TAG, "🤖 ⚠️ Uber scan: Only ${priceInfo.allPricesFound.size} price(s), waiting...")
-                            automationStep++
-                            return
-                        }
-
-                        // Validate price for Uber
-                        if (isUber && priceInfo.price < UBER_MIN_PRICE) {
-                            Log.w(TAG, "🤖 ⚠️ Uber scanned price ${priceInfo.price} EGP too low, ignoring...")
-                            automationStep++
-                            return
-                        }
-
-                        Log.i(TAG, "🤖 ✓✓✓ PRICE CAPTURED: ${priceInfo.price} EGP (${priceInfo.allPricesFound.size} prices)")
+                    if (priceInfo != null && priceInfo.price > 0 && priceInfo.allPricesFound.size >= 2) {
+                        Log.i(TAG, "🤖 ✓✓✓ PRICE SCANNED: ${priceInfo.price} EGP (${priceInfo.allPricesFound.size} prices)")
                         automationState = AutomationState.PRICE_CAPTURED
                         notifyPriceCaptured(priceInfo)
                         autoReturnToGoOn()
-                    } else {
-                        automationStep++
-                        if (automationStep > 25) { // Wait ~30 seconds for price (increased)
-                            Log.e(TAG, "🤖 ✗✗✗ FAILED: Timeout waiting for price")
+                        return
+                    }
+
+                    // Still no valid prices, check timeout
+                    automationStep++
+                    if (elapsedTime > 30000) { // 30 seconds total timeout
+                        // Accept whatever we have if any
+                        if (cachedPrice != null && cachedPrice.price > 0) {
+                            Log.i(TAG, "🤖 ⏱️ Timeout - accepting available price: ${cachedPrice.price} EGP")
+                            automationState = AutomationState.PRICE_CAPTURED
+                            autoReturnToGoOn()
+                        } else {
+                            Log.e(TAG, "🤖 ✗✗✗ FAILED: Timeout - no prices found")
                             automationState = AutomationState.FAILED
                             autoReturnToGoOn()
                         }
