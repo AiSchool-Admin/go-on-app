@@ -149,6 +149,7 @@ class MainActivity : FlutterActivity() {
                 "getPriceForApp" -> {
                     val packageName = call.argument<String>("packageName") ?: ""
                     val price = PriceReaderService.instance?.getPriceForApp(packageName)
+                    android.util.Log.i("GO-ON-MainActivity", "💰 getPriceForApp($packageName) returning: $price")
                     result.success(price)
                 }
 

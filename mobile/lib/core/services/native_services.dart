@@ -341,7 +341,9 @@ class NativeServicesManager {
         print('✓ Automation completed with state: $state');
 
         if (state == 'PRICE_CAPTURED') {
-          return await getPriceForApp(packageName);
+          final price = await getPriceForApp(packageName);
+          print('💰 getPriceForApp returned: $price');
+          return price;
         } else {
           print('✗ Automation failed with state: $state');
           return null; // Failed
