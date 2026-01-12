@@ -247,9 +247,9 @@ class PriceReaderService : AccessibilityService() {
         // Clear any old cached prices for this app
         latestPrices.remove(packageName)
 
-        // For Uber and DiDi: deep link includes full coordinates, skip to WAITING_FOR_PRICE
-        // For others: go through full flow (find destination field, enter text, etc.)
-        val hasFullDeepLink = packageName == UBER_PACKAGE || packageName == DIDI_PACKAGE
+        // For Uber: deep link includes full coordinates, skip to WAITING_FOR_PRICE
+        // For DiDi and others: deep links don't work reliably, go through full flow
+        val hasFullDeepLink = packageName == UBER_PACKAGE
         if (hasFullDeepLink) {
             Log.i(TAG, "🤖 Deep link includes coordinates - skipping to WAITING_FOR_PRICE")
             automationState = AutomationState.WAITING_FOR_PRICE

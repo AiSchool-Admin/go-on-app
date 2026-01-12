@@ -167,13 +167,12 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
       return;
     }
 
-    // Apps that are confirmed working with deep links
+    // Apps that are working (Uber uses deep link, DiDi uses full automation)
     final workingApps = [
       {'package': NativeServicesManager.uberPackage, 'name': 'Uber'},
-      // DiDi: deep links not working - opens to home screen instead of price screen
-      // {'package': NativeServicesManager.didiPackage, 'name': 'DiDi'},
-      // Bolt: testing deep link support
-      {'package': NativeServicesManager.boltPackage, 'name': 'Bolt'},
+      {'package': NativeServicesManager.didiPackage, 'name': 'DiDi'},
+      // Bolt: add when tested
+      // {'package': NativeServicesManager.boltPackage, 'name': 'Bolt'},
     ];
 
     setState(() {
@@ -697,7 +696,7 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
                                 onPressed: _fetchRealPricesFromWorkingApps,
                                 icon: const Icon(Icons.refresh),
                                 label: const Text(
-                                  'جلب الأسعار الحقيقية (Uber + Bolt)',
+                                  'جلب الأسعار الحقيقية (Uber + DiDi)',
                                   style: TextStyle(fontWeight: FontWeight.bold),
                                 ),
                                 style: ElevatedButton.styleFrom(
@@ -724,12 +723,12 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
                                 ),
                                 const SizedBox(width: 8),
                                 Expanded(
-                                  child: _buildTestButton('Bolt', NativeServicesManager.boltPackage, const Color(0xFF34D186)),
+                                  child: _buildTestButton('DiDi', NativeServicesManager.didiPackage, const Color(0xFFFF6600)),
                                 ),
-                                // DiDi - deep links not working
+                                // Bolt - add when tested
                                 // const SizedBox(width: 8),
                                 // Expanded(
-                                //   child: _buildTestButton('DiDi', NativeServicesManager.didiPackage, const Color(0xFFFF6600)),
+                                //   child: _buildTestButton('Bolt', NativeServicesManager.boltPackage, const Color(0xFF34D186)),
                                 // ),
                               ],
                             ),
