@@ -195,8 +195,9 @@ class PriceReaderService : AccessibilityService() {
     private var automationRetries = 0
     private val MAX_RETRIES = 10  // Increased for better reliability
     private var automationStartTime = 0L  // Timestamp when automation started
-    private val UBER_MIN_WAIT_MS = 5000L  // Wait at least 5 seconds for Uber to load prices
-    private val UBER_MIN_PRICE = 50.0  // Minimum valid price for Uber (reject lower as invalid)
+    private var uberScreenReady = false  // Flag to indicate Uber ride selection screen is loaded
+    private val UBER_MIN_WAIT_MS = 8000L  // Wait at least 8 seconds for Uber to load prices
+    private val UBER_MIN_PRICE = 50.0  // Minimum valid price for Uber
 
     enum class AutomationState {
         IDLE,
@@ -241,6 +242,7 @@ class PriceReaderService : AccessibilityService() {
         monitoringPackage = packageName
         isActiveMonitoring = true
         automationStartTime = System.currentTimeMillis()  // Track when automation started
+        uberScreenReady = false  // Reset screen ready flag
 
         // Clear any old cached prices for this app
         latestPrices.remove(packageName)
@@ -395,29 +397,60 @@ class PriceReaderService : AccessibilityService() {
 
                 AutomationState.WAITING_FOR_PRICE -> {
                     val elapsedTime = System.currentTimeMillis() - automationStartTime
-                    Log.i(TAG, "🤖 Waiting for price (step $automationStep/10, elapsed: ${elapsedTime}ms)...")
+                    Log.i(TAG, "🤖 Waiting for price (step $automationStep/15, elapsed: ${elapsedTime}ms, screenReady: $uberScreenReady)...")
 
-                    // For Uber: Wait at least 5 seconds before accepting prices
-                    // This gives the app time to load real prices
                     val isUber = packageName == UBER_PACKAGE
+
+                    // For Uber: Check if ride selection screen is ready
+                    if (isUber && !uberScreenReady) {
+                        val allText = getAllTextFromNode(rootNode)
+                        val combinedText = allText.joinToString(" ").lowercase()
+
+                        // Check for indicators that ride selection screen is loaded
+                        val screenIndicators = listOf("choose a trip", "uberx", "comfort", "select uber", "cheaper everyday")
+                        val hasIndicator = screenIndicators.any { combinedText.contains(it) }
+
+                        if (hasIndicator) {
+                            Log.i(TAG, "🤖 ✓ Uber ride selection screen detected!")
+                            uberScreenReady = true
+                        } else {
+                            Log.i(TAG, "🤖 ⏳ Uber: Waiting for ride selection screen...")
+                            automationStep++
+                            if (automationStep > 20) { // Max ~24 seconds waiting for screen
+                                Log.e(TAG, "🤖 ✗ Timeout waiting for Uber ride selection screen")
+                                automationState = AutomationState.FAILED
+                                autoReturnToGoOn()
+                            }
+                            return
+                        }
+                    }
+
+                    // For Uber: Wait minimum time after screen is ready
                     if (isUber && elapsedTime < UBER_MIN_WAIT_MS) {
                         Log.i(TAG, "🤖 ⏳ Uber: Waiting for minimum time (${elapsedTime}ms < ${UBER_MIN_WAIT_MS}ms)")
-                        automationStep++
                         return
                     }
 
                     // Check if price was already captured via event monitoring
                     val cachedPrice = latestPrices[packageName]
                     if (cachedPrice != null && cachedPrice.price > 0) {
-                        // Validate price for Uber (reject too-low prices as invalid)
-                        if (isUber && cachedPrice.price < UBER_MIN_PRICE) {
-                            Log.w(TAG, "🤖 ⚠️ Uber price ${cachedPrice.price} EGP too low (< $UBER_MIN_PRICE), waiting for real prices...")
-                            latestPrices.remove(packageName)  // Clear invalid price
+                        // For Uber: Need multiple prices to be valid (at least 2)
+                        if (isUber && cachedPrice.allPricesFound.size < 2) {
+                            Log.w(TAG, "🤖 ⚠️ Uber: Only ${cachedPrice.allPricesFound.size} price(s) found, waiting for more...")
+                            latestPrices.remove(packageName)
                             automationStep++
                             return
                         }
 
-                        Log.i(TAG, "🤖 ✓✓✓ PRICE FOUND IN CACHE: ${cachedPrice.price} EGP")
+                        // Validate price for Uber (reject too-low prices as invalid)
+                        if (isUber && cachedPrice.price < UBER_MIN_PRICE) {
+                            Log.w(TAG, "🤖 ⚠️ Uber price ${cachedPrice.price} EGP too low (< $UBER_MIN_PRICE), waiting for real prices...")
+                            latestPrices.remove(packageName)
+                            automationStep++
+                            return
+                        }
+
+                        Log.i(TAG, "🤖 ✓✓✓ PRICE FOUND IN CACHE: ${cachedPrice.price} EGP (${cachedPrice.allPricesFound.size} prices)")
                         automationState = AutomationState.PRICE_CAPTURED
                         // AUTO-RETURN: Go back to GO-ON automatically!
                         autoReturnToGoOn()
@@ -428,13 +461,19 @@ class PriceReaderService : AccessibilityService() {
                     Log.i(TAG, "🤖 Checking for intermediate screens...")
                     if (handleIntermediateScreens(rootNode, packageName)) {
                         Log.i(TAG, "🤖 📋 Handled intermediate screen, continuing...")
-                        // Don't increment step counter, wait for next iteration
                         return
                     }
                     Log.i(TAG, "🤖 No intermediate screen handled, proceeding to price scan...")
 
                     val priceInfo = performAggressiveScan(packageName)
                     if (priceInfo != null && priceInfo.price > 0) {
+                        // For Uber: Need multiple prices
+                        if (isUber && priceInfo.allPricesFound.size < 2) {
+                            Log.w(TAG, "🤖 ⚠️ Uber scan: Only ${priceInfo.allPricesFound.size} price(s), waiting...")
+                            automationStep++
+                            return
+                        }
+
                         // Validate price for Uber
                         if (isUber && priceInfo.price < UBER_MIN_PRICE) {
                             Log.w(TAG, "🤖 ⚠️ Uber scanned price ${priceInfo.price} EGP too low, ignoring...")
@@ -442,18 +481,15 @@ class PriceReaderService : AccessibilityService() {
                             return
                         }
 
-                        Log.i(TAG, "🤖 ✓✓✓ PRICE CAPTURED: ${priceInfo.price} EGP")
+                        Log.i(TAG, "🤖 ✓✓✓ PRICE CAPTURED: ${priceInfo.price} EGP (${priceInfo.allPricesFound.size} prices)")
                         automationState = AutomationState.PRICE_CAPTURED
-                        // Notify Flutter
                         notifyPriceCaptured(priceInfo)
-                        // AUTO-RETURN: Go back to GO-ON automatically!
                         autoReturnToGoOn()
                     } else {
                         automationStep++
-                        if (automationStep > 15) { // Wait ~18 seconds for price (increased)
+                        if (automationStep > 25) { // Wait ~30 seconds for price (increased)
                             Log.e(TAG, "🤖 ✗✗✗ FAILED: Timeout waiting for price")
                             automationState = AutomationState.FAILED
-                            // Return to GO-ON even on failure
                             autoReturnToGoOn()
                         }
                     }
