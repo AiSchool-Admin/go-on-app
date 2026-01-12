@@ -1680,11 +1680,12 @@ class PriceReaderService : AccessibilityService() {
             // Strategy 3: Full text scan with all patterns (most comprehensive)
             val allText = getAllTextFromNode(rootNode)
 
-            // Debug: Log ALL texts found (limited to first 30)
-            Log.d(TAG, "📝 All texts found (${allText.size} total):")
+            // Log ALL texts found (limited to first 30)
+            Log.i(TAG, "📝 ====== ALL TEXTS FROM SCREEN (${allText.size} total) ======")
             allText.take(30).forEachIndexed { index, text ->
-                Log.d(TAG, "  [$index] '$text'")
+                Log.i(TAG, "📝 [$index] '$text'")
             }
+            Log.i(TAG, "📝 ====== END SCREEN TEXT ======")
 
             // Check if screen has motorcycle options - we want to exclude them
             val allTextLower = allText.map { it.lowercase() }
