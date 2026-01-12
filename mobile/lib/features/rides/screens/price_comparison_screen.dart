@@ -194,8 +194,8 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
         _fetchStatus = 'جاري انتظار السعر من $appName...';
       });
 
-      // Wait for price with detailed logging
-      final price = await nativeServices.waitForAutomationAndGetPrice(packageName);
+      // Wait for full price info with vehicle types
+      final priceInfo = await nativeServices.waitForAutomationAndGetPriceInfo(packageName);
 
       if (mounted) {
         setState(() {
@@ -203,20 +203,25 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
           _fetchStatus = '';
         });
 
-        if (price != null && price > 0) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('✅ $appName: ${price.round()} ج.م'),
-              backgroundColor: AppColors.success,
-              duration: const Duration(seconds: 5),
-            ),
-          );
+        if (priceInfo != null && priceInfo.price > 0) {
+          // Show dialog with all vehicle prices if available
+          if (priceInfo.vehiclePrices.isNotEmpty) {
+            _showVehiclePricesDialog(appName, priceInfo);
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('✅ $appName: ${priceInfo.price.round()} ج.م'),
+                backgroundColor: AppColors.success,
+                duration: const Duration(seconds: 5),
+              ),
+            );
+          }
 
-          // Update the price in the list
+          // Update the price in the list (use best car price)
           if (_priceOptions != null) {
             final updatedOptions = _priceOptions!.map((option) {
               if (_getPackageName(option.provider) == packageName) {
-                return option.copyWith(price: price, isEstimate: false);
+                return option.copyWith(price: priceInfo.price, isEstimate: false);
               }
               return option;
             }).toList();
@@ -251,6 +256,86 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
         );
       }
     }
+  }
+
+  /// Show dialog with all vehicle prices
+  void _showVehiclePricesDialog(String appName, AppPrice priceInfo) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.directions_car, color: AppColors.primary),
+            const SizedBox(width: 8),
+            Text('أسعار $appName'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Show all vehicle prices
+            ...priceInfo.vehiclePrices.entries.map((entry) {
+              final vehicleType = entry.key;
+              final price = entry.value;
+              final isMoto = vehicleType.toLowerCase().contains('moto');
+              return ListTile(
+                leading: Icon(
+                  isMoto ? Icons.two_wheeler : Icons.directions_car,
+                  color: isMoto ? Colors.orange : AppColors.primary,
+                ),
+                title: Text(vehicleType),
+                trailing: Text(
+                  '${price.round()} ج.م',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                    color: isMoto ? Colors.orange : AppColors.primary,
+                  ),
+                ),
+              );
+            }),
+            const Divider(),
+            // Show all prices found (if different from vehicle prices)
+            if (priceInfo.allPricesFound.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: Text(
+                  'كل الأسعار: ${priceInfo.allPricesFound.map((p) => '${p.round()} ج.م').join(', ')}',
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ),
+            // Best car price
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.success.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('أفضل سعر سيارة:', style: TextStyle(fontWeight: FontWeight.bold)),
+                  Text(
+                    '${priceInfo.price.round()} ج.م',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                      color: AppColors.success,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('إغلاق'),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildTestButton(String appName, String packageName, Color color) {

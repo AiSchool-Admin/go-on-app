@@ -15,6 +15,8 @@ class AppPrice {
   final String serviceType;
   final int eta;
   final DateTime timestamp;
+  final List<double> allPricesFound;
+  final Map<String, double> vehiclePrices; // Vehicle type -> Price
 
   AppPrice({
     required this.appName,
@@ -23,9 +25,30 @@ class AppPrice {
     this.serviceType = '',
     this.eta = 0,
     required this.timestamp,
+    this.allPricesFound = const [],
+    this.vehiclePrices = const {},
   });
 
   factory AppPrice.fromJson(Map<String, dynamic> json) {
+    // Parse allPricesFound
+    List<double> allPrices = [];
+    if (json['allPricesFound'] != null) {
+      allPrices = (json['allPricesFound'] as List)
+          .map((e) => (e as num).toDouble())
+          .toList();
+    }
+
+    // Parse vehiclePrices
+    Map<String, double> vehiclePrices = {};
+    if (json['vehiclePrices'] != null) {
+      final vp = json['vehiclePrices'];
+      if (vp is Map) {
+        vp.forEach((key, value) {
+          vehiclePrices[key.toString()] = (value as num).toDouble();
+        });
+      }
+    }
+
     return AppPrice(
       appName: json['appName'] ?? '',
       packageName: json['packageName'] ?? '',
@@ -33,6 +56,8 @@ class AppPrice {
       serviceType: json['serviceType'] ?? '',
       eta: json['eta'] ?? 0,
       timestamp: DateTime.fromMillisecondsSinceEpoch(json['timestamp'] ?? 0),
+      allPricesFound: allPrices,
+      vehiclePrices: vehiclePrices,
     );
   }
 }
@@ -143,11 +168,45 @@ class NativeServicesManager {
     }
   }
 
-  /// Actively scan the current foreground app for prices
-  Future<AppPrice?> scanCurrentApp() async {
+  /// Get all prices found for a specific app (not just the best one)
+  Future<List<double>> getAllPricesForApp(String packageName) async {
     try {
-      final result = await _channel.invokeMethod<Map<dynamic, dynamic>>('scanCurrentApp');
+      final result = await _channel.invokeMethod<List<dynamic>>('getAllPricesForApp', {
+        'packageName': packageName,
+      });
+      return result?.map((e) => (e as num).toDouble()).toList() ?? [];
+    } on PlatformException catch (e) {
+      print('Error getting all prices for app: ${e.message}');
+      return [];
+    }
+  }
+
+  /// Get full price info for a specific app (including vehicle types)
+  Future<AppPrice?> getPriceInfoForApp(String packageName) async {
+    try {
+      final result = await _channel.invokeMethod<Map<dynamic, dynamic>>('getPriceInfoForApp', {
+        'packageName': packageName,
+      });
       if (result == null) return null;
+
+      // Parse allPricesFound
+      List<double> allPrices = [];
+      if (result['allPricesFound'] != null) {
+        allPrices = (result['allPricesFound'] as List)
+            .map((e) => (e as num).toDouble())
+            .toList();
+      }
+
+      // Parse vehiclePrices
+      Map<String, double> vehiclePrices = {};
+      if (result['vehiclePrices'] != null) {
+        final vp = result['vehiclePrices'];
+        if (vp is Map) {
+          vp.forEach((key, value) {
+            vehiclePrices[key.toString()] = (value as num).toDouble();
+          });
+        }
+      }
 
       return AppPrice(
         appName: result['appName'] ?? '',
@@ -156,6 +215,49 @@ class NativeServicesManager {
         serviceType: result['serviceType'] ?? '',
         eta: result['eta'] ?? 0,
         timestamp: DateTime.now(),
+        allPricesFound: allPrices,
+        vehiclePrices: vehiclePrices,
+      );
+    } on PlatformException catch (e) {
+      print('Error getting price info for app: ${e.message}');
+      return null;
+    }
+  }
+
+  /// Actively scan the current foreground app for prices
+  Future<AppPrice?> scanCurrentApp() async {
+    try {
+      final result = await _channel.invokeMethod<Map<dynamic, dynamic>>('scanCurrentApp');
+      if (result == null) return null;
+
+      // Parse allPricesFound
+      List<double> allPrices = [];
+      if (result['allPricesFound'] != null) {
+        allPrices = (result['allPricesFound'] as List)
+            .map((e) => (e as num).toDouble())
+            .toList();
+      }
+
+      // Parse vehiclePrices
+      Map<String, double> vehiclePrices = {};
+      if (result['vehiclePrices'] != null) {
+        final vp = result['vehiclePrices'];
+        if (vp is Map) {
+          vp.forEach((key, value) {
+            vehiclePrices[key.toString()] = (value as num).toDouble();
+          });
+        }
+      }
+
+      return AppPrice(
+        appName: result['appName'] ?? '',
+        packageName: result['packageName'] ?? '',
+        price: (result['price'] ?? 0).toDouble(),
+        serviceType: result['serviceType'] ?? '',
+        eta: result['eta'] ?? 0,
+        timestamp: DateTime.now(),
+        allPricesFound: allPrices,
+        vehiclePrices: vehiclePrices,
       );
     } on PlatformException catch (e) {
       print('Error scanning current app: ${e.message}');
@@ -344,6 +446,38 @@ class NativeServicesManager {
           final price = await getPriceForApp(packageName);
           print('💰 getPriceForApp returned: $price');
           return price;
+        } else {
+          print('✗ Automation failed with state: $state');
+          return null; // Failed
+        }
+      }
+    }
+
+    print('⏱️ Automation timeout after 30 seconds');
+    return null;
+  }
+
+  /// Wait for automation to complete and get full price info with vehicle types
+  Future<AppPrice?> waitForAutomationAndGetPriceInfo(String packageName) async {
+    // Poll for completion (max 30 seconds for slower apps like Uber)
+    for (int i = 0; i < 60; i++) {
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      // Log progress every 5 seconds
+      if (i % 10 == 0) {
+        final state = await getAutomationState();
+        print('⏳ Waiting for automation... ($i/60) State: $state');
+      }
+
+      final complete = await isAutomationComplete();
+      if (complete) {
+        final state = await getAutomationState();
+        print('✓ Automation completed with state: $state');
+
+        if (state == 'PRICE_CAPTURED') {
+          final priceInfo = await getPriceInfoForApp(packageName);
+          print('💰 getPriceInfoForApp returned: ${priceInfo?.price} with ${priceInfo?.vehiclePrices.length ?? 0} vehicle types');
+          return priceInfo;
         } else {
           print('✗ Automation failed with state: $state');
           return null; // Failed

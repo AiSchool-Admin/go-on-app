@@ -153,6 +153,32 @@ class MainActivity : FlutterActivity() {
                     result.success(price)
                 }
 
+                "getAllPricesForApp" -> {
+                    val packageName = call.argument<String>("packageName") ?: ""
+                    val prices = PriceReaderService.instance?.getAllPricesForApp(packageName) ?: emptyList<Double>()
+                    android.util.Log.i("GO-ON-MainActivity", "💰 getAllPricesForApp($packageName) returning: $prices")
+                    result.success(prices)
+                }
+
+                "getPriceInfoForApp" -> {
+                    val packageName = call.argument<String>("packageName") ?: ""
+                    val priceInfo = PriceReaderService.instance?.getPriceInfoForApp(packageName)
+                    if (priceInfo != null) {
+                        result.success(mapOf(
+                            "appName" to priceInfo.appName,
+                            "packageName" to priceInfo.packageName,
+                            "price" to priceInfo.price,
+                            "serviceType" to priceInfo.serviceType,
+                            "eta" to priceInfo.eta,
+                            "allPricesFound" to priceInfo.allPricesFound,
+                            "vehiclePrices" to priceInfo.vehiclePrices,
+                            "rawTexts" to priceInfo.rawTexts.take(20)
+                        ))
+                    } else {
+                        result.success(null)
+                    }
+                }
+
                 "isServiceActive" -> {
                     result.success(PriceReaderService.instance?.isActive() ?: false)
                 }

@@ -111,6 +111,7 @@ class PriceReaderService : AccessibilityService() {
         val eta: Int = 0,
         val timestamp: Long = System.currentTimeMillis(),
         val allPricesFound: List<Double> = emptyList(),
+        val vehiclePrices: Map<String, Double> = emptyMap(), // Vehicle type -> Price
         val rawTexts: List<String> = emptyList()
     )
 
@@ -2089,30 +2090,115 @@ class PriceReaderService : AccessibilityService() {
     }
 
     /**
-     * Extract prices from Uber app
+     * Extract prices from Uber app - captures ALL prices with vehicle types
      */
     private fun extractUberPrices(rootNode: AccessibilityNodeInfo) {
         val allText = getAllTextFromNode(rootNode)
         val prices = mutableListOf<Double>()
+        val vehiclePrices = mutableMapOf<String, Double>()
 
-        for (text in allText) {
+        // Vehicle type keywords (in order they typically appear)
+        val vehicleTypes = listOf(
+            "Uber Moto" to listOf("moto", "موتو", "موتوسيكل", "uber moto"),
+            "UberX" to listOf("uberx", "uber x"),
+            "Uber Go" to listOf("uber go", "ubergo"),
+            "Comfort" to listOf("comfort", "كمفورت"),
+            "UberXL" to listOf("uberxl", "xl"),
+            "Black" to listOf("black", "بلاك"),
+            "Green" to listOf("green", "أخضر")
+        )
+
+        // Extract all prices with their indices
+        val pricesWithIndex = mutableListOf<Pair<Int, Double>>()
+        for ((index, text) in allText.withIndex()) {
             val price = extractPrice(text)
             if (price != null && price in 15.0..2000.0) {
                 prices.add(price)
+                pricesWithIndex.add(index to price)
             }
         }
 
+        // Find vehicle types and their positions
+        val vehicleTypePositions = mutableListOf<Triple<Int, String, List<String>>>()
+        for ((index, text) in allText.withIndex()) {
+            val textLower = text.lowercase()
+            for ((typeName, keywords) in vehicleTypes) {
+                if (keywords.any { textLower.contains(it) }) {
+                    vehicleTypePositions.add(Triple(index, typeName, keywords))
+                    break // Only match first type for this text
+                }
+            }
+        }
+
+        // Associate prices with vehicle types by proximity
+        // Each vehicle type gets the price found closest after it (within 5 positions)
+        for ((typeIndex, typeName, _) in vehicleTypePositions) {
+            // Find the closest price after this vehicle type
+            var closestPrice: Double? = null
+            var minDistance = Int.MAX_VALUE
+
+            for ((priceIndex, price) in pricesWithIndex) {
+                val distance = priceIndex - typeIndex
+                if (distance > 0 && distance < 10 && distance < minDistance) {
+                    // Price is after vehicle type and within reasonable distance
+                    minDistance = distance
+                    closestPrice = price
+                }
+            }
+
+            if (closestPrice != null && !vehiclePrices.containsKey(typeName)) {
+                vehiclePrices[typeName] = closestPrice
+                Log.d(TAG, "🚗 Vehicle type: $typeName -> ${closestPrice} EGP")
+            }
+        }
+
+        // If we couldn't match any, try alternative: assign prices to types in order
+        if (vehiclePrices.isEmpty() && vehicleTypePositions.isNotEmpty() && pricesWithIndex.isNotEmpty()) {
+            val sortedPrices = pricesWithIndex.sortedBy { it.first }.map { it.second }.distinct()
+            val sortedTypes = vehicleTypePositions.sortedBy { it.first }.map { it.second }.distinct()
+
+            for ((index, typeName) in sortedTypes.withIndex()) {
+                if (index < sortedPrices.size) {
+                    vehiclePrices[typeName] = sortedPrices[index]
+                    Log.d(TAG, "🚗 Vehicle type (ordered): $typeName -> ${sortedPrices[index]} EGP")
+                }
+            }
+        }
+
+        // Log all found vehicle prices
+        if (vehiclePrices.isNotEmpty()) {
+            Log.i(TAG, "🚗 Uber vehicle prices: $vehiclePrices")
+        }
+
         if (prices.isNotEmpty()) {
-            val bestPrice = findBestPrice(prices)
+            val uniquePrices = prices.distinct().sorted()
+
+            // Best price for cars only (exclude Moto which is typically the lowest)
+            val carPrices = vehiclePrices.filterKeys {
+                !it.lowercase().contains("moto")
+            }.values.toList()
+
+            val bestPrice = if (carPrices.isNotEmpty()) {
+                carPrices.minOrNull() ?: findBestPrice(prices)
+            } else {
+                findBestPrice(prices)
+            }
+
+            // Log all found prices
+            Log.i(TAG, "🚗 Uber ALL prices found: $uniquePrices, best car price: $bestPrice")
+
             val priceInfo = PriceInfo(
                 appName = "Uber",
                 packageName = UBER_PACKAGE,
                 price = bestPrice,
                 serviceType = detectServiceType(UBER_PACKAGE, allText),
-                eta = extractETA(allText)
+                eta = extractETA(allText),
+                allPricesFound = uniquePrices,
+                vehiclePrices = vehiclePrices,
+                rawTexts = allText.take(50) // Store first 50 texts for debugging
             )
             updatePrice(priceInfo)
-            Log.d(TAG, "Uber price: $bestPrice EGP")
+            Log.d(TAG, "Uber best car price: $bestPrice EGP, all: $uniquePrices")
         }
     }
 
@@ -2345,7 +2431,28 @@ class PriceReaderService : AccessibilityService() {
             put("serviceType", priceInfo.serviceType)
             put("eta", priceInfo.eta)
             put("timestamp", priceInfo.timestamp)
+            put("allPricesFound", org.json.JSONArray(priceInfo.allPricesFound))
+            // Convert vehiclePrices map to JSONObject
+            val vehiclePricesJson = JSONObject()
+            priceInfo.vehiclePrices.forEach { (type, price) ->
+                vehiclePricesJson.put(type, price)
+            }
+            put("vehiclePrices", vehiclePricesJson)
         }.toString()
+    }
+
+    /**
+     * Get all prices found for a specific app (not just the best one)
+     */
+    fun getAllPricesForApp(packageName: String): List<Double> {
+        return latestPrices[packageName]?.allPricesFound ?: emptyList()
+    }
+
+    /**
+     * Get full price info for a specific app (including vehicle types)
+     */
+    fun getPriceInfoForApp(packageName: String): PriceInfo? {
+        return latestPrices[packageName]
     }
 
     override fun onInterrupt() {
