@@ -167,10 +167,11 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
       return;
     }
 
-    // Apps that are working (Uber uses deep link, DiDi uses full automation)
+    // Apps that are working (Uber uses deep link, others use full automation)
     final workingApps = [
       {'package': NativeServicesManager.uberPackage, 'name': 'Uber'},
       {'package': NativeServicesManager.didiPackage, 'name': 'DiDi'},
+      {'package': NativeServicesManager.indriverPackage, 'name': 'InDriver'},
       // Bolt: add when tested
       // {'package': NativeServicesManager.boltPackage, 'name': 'Bolt'},
     ];
@@ -696,7 +697,7 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
                                 onPressed: _fetchRealPricesFromWorkingApps,
                                 icon: const Icon(Icons.refresh),
                                 label: const Text(
-                                  'جلب الأسعار الحقيقية (Uber + DiDi)',
+                                  'جلب الأسعار الحقيقية',
                                   style: TextStyle(fontWeight: FontWeight.bold),
                                 ),
                                 style: ElevatedButton.styleFrom(
@@ -721,15 +722,14 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
                                 Expanded(
                                   child: _buildTestButton('Uber', NativeServicesManager.uberPackage, Colors.black),
                                 ),
-                                const SizedBox(width: 8),
+                                const SizedBox(width: 4),
                                 Expanded(
                                   child: _buildTestButton('DiDi', NativeServicesManager.didiPackage, const Color(0xFFFF6600)),
                                 ),
-                                // Bolt - add when tested
-                                // const SizedBox(width: 8),
-                                // Expanded(
-                                //   child: _buildTestButton('Bolt', NativeServicesManager.boltPackage, const Color(0xFF34D186)),
-                                // ),
+                                const SizedBox(width: 4),
+                                Expanded(
+                                  child: _buildTestButton('InDriver', NativeServicesManager.indriverPackage, const Color(0xFF2196F3)),
+                                ),
                               ],
                             ),
                           ],
