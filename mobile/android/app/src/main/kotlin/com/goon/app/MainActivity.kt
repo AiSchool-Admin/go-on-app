@@ -106,16 +106,23 @@ class MainActivity : FlutterActivity() {
                     val destLng = call.argument<Double>("destLng") ?: 0.0
 
                     Log.i(TAG, "🤖 Starting FULL AUTOMATION for $packageName")
-                    Log.i(TAG, "   Destination: $destination")
+                    Log.i(TAG, "   Pickup: $pickup ($pickupLat, $pickupLng)")
+                    Log.i(TAG, "   Destination: $destination ($destLat, $destLng)")
 
-                    // Start automation (will automatically enter destination & read price)
+                    // Start automation (will read prices when app shows them)
                     PriceReaderService.instance?.automateGetPrice(
                         packageName, pickup, destination,
                         pickupLat, pickupLng, destLat, destLng
                     )
 
-                    // Open the app
-                    val opened = openApp(packageName)
+                    // Open app with trip details (like "اختر أوبر" does)
+                    // This uses deep links to go directly to the price screen
+                    val opened = openAppWithTrip(
+                        packageName,
+                        pickupLat, pickupLng,
+                        destLat, destLng,
+                        pickup, destination
+                    )
                     result.success(opened)
                 }
 
