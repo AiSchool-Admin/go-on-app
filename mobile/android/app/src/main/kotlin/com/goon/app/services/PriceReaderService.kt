@@ -1041,69 +1041,151 @@ class PriceReaderService : AccessibilityService() {
     }
 
     /**
-     * Select the first search suggestion
+     * Select a suggestion that MATCHES the destination, not just the first one
      */
     private fun selectFirstSuggestion(rootNode: AccessibilityNodeInfo, packageName: String): Boolean {
-        // Look for suggestion list items
-        val suggestionClasses = listOf(
-            "android.widget.TextView",
-            "android.widget.LinearLayout",
-            "android.widget.RelativeLayout",
-            "android.widget.FrameLayout"
-        )
+        // Extract keywords from destination address (remove Plus Codes and numbers)
+        val destKeywords = extractDestinationKeywords(destinationAddress)
+        Log.i(TAG, "🔍 Looking for suggestion matching: $destKeywords")
 
-        // Find RecyclerView or ListView containing suggestions
-        val listNode = findSuggestionList(rootNode)
-        if (listNode != null) {
-            // Get first visible item
-            for (i in 0 until minOf(listNode.childCount, 3)) {
-                val child = listNode.getChild(i) ?: continue
-                if (child.isClickable) {
-                    child.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    Log.i(TAG, "Clicked first suggestion from list")
-                    child.recycle()
-                    listNode.recycle()
-                    return true
-                }
-                // Try clicking child's child
-                for (j in 0 until child.childCount) {
-                    val grandChild = child.getChild(j) ?: continue
-                    if (grandChild.isClickable) {
-                        grandChild.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                        grandChild.recycle()
-                        child.recycle()
-                        listNode.recycle()
-                        Log.i(TAG, "Clicked suggestion grandchild")
-                        return true
-                    }
-                    grandChild.recycle()
-                }
-                child.recycle()
-            }
-            listNode.recycle()
+        // Collect all visible suggestions with their text
+        val suggestions = mutableListOf<Pair<AccessibilityNodeInfo, String>>()
+        collectSuggestions(rootNode, suggestions)
+
+        Log.i(TAG, "📋 Found ${suggestions.size} suggestions:")
+        suggestions.forEachIndexed { index, (_, text) ->
+            Log.i(TAG, "   [$index] '$text'")
         }
 
-        // Fallback: find any clickable item that contains part of destination
+        // Find the best matching suggestion
+        var bestMatch: AccessibilityNodeInfo? = null
+        var bestScore = 0
+
+        for ((node, suggestionText) in suggestions) {
+            val textLower = suggestionText.lowercase()
+            var score = 0
+
+            for (keyword in destKeywords) {
+                if (textLower.contains(keyword.lowercase())) {
+                    score++
+                }
+            }
+
+            if (score > bestScore) {
+                bestScore = score
+                bestMatch = node
+                Log.i(TAG, "✓ Better match: '$suggestionText' (score: $score)")
+            }
+        }
+
+        // If we found a match with score > 0, click it
+        if (bestMatch != null && bestScore > 0) {
+            Log.i(TAG, "✓✓ Selecting best match with score $bestScore")
+            bestMatch.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            // Recycle all nodes
+            suggestions.forEach { (node, _) ->
+                try { node.recycle() } catch (e: Exception) {}
+            }
+            return true
+        }
+
+        // Fallback: click first suggestion if no match found
+        Log.w(TAG, "⚠️ No matching suggestion found, clicking first one")
+        if (suggestions.isNotEmpty()) {
+            suggestions[0].first.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            suggestions.forEach { (node, _) ->
+                try { node.recycle() } catch (e: Exception) {}
+            }
+            return true
+        }
+
+        suggestions.forEach { (node, _) ->
+            try { node.recycle() } catch (e: Exception) {}
+        }
+
+        // Fallback: find any clickable item
         return clickFirstMatchingSuggestion(rootNode)
     }
 
-    private fun findSuggestionList(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+    /**
+     * Extract meaningful keywords from destination address
+     * Removes Plus Codes, numbers, and common words
+     */
+    private fun extractDestinationKeywords(address: String): List<String> {
+        // Remove Plus Codes (format: XXXX+XXX)
+        var cleaned = address.replace(Regex("[A-Z0-9]{4}\\+[A-Z0-9]{2,4}"), "")
+        // Remove standalone numbers
+        cleaned = cleaned.replace(Regex("\\b\\d+\\b"), "")
+        // Remove common prefixes
+        cleaned = cleaned.replace(Regex("محافظة"), "")
+
+        // Split by common separators and filter
+        val words = cleaned.split(Regex("[،,\\s]+"))
+            .map { it.trim() }
+            .filter { it.length > 2 }
+            .filter { !it.matches(Regex("[\\d.]+")) }
+            .distinct()
+
+        return words
+    }
+
+    /**
+     * Collect all visible suggestions from the screen
+     */
+    private fun collectSuggestions(node: AccessibilityNodeInfo, suggestions: MutableList<Pair<AccessibilityNodeInfo, String>>) {
         val className = node.className?.toString() ?: ""
+        val text = node.text?.toString() ?: ""
+        val desc = node.contentDescription?.toString() ?: ""
+
+        // If this is a RecyclerView or ListView, get its children
         if (className.contains("RecyclerView") || className.contains("ListView")) {
-            return AccessibilityNodeInfo.obtain(node)
+            for (i in 0 until minOf(node.childCount, 10)) {
+                val child = node.getChild(i) ?: continue
+                val childText = getNodeText(child)
+                if (childText.isNotBlank() && childText.length > 3 &&
+                    !childText.lowercase().contains("where") &&
+                    !childText.lowercase().contains("search") &&
+                    !childText.contains("إلى أين")) {
+                    suggestions.add(Pair(AccessibilityNodeInfo.obtain(child), childText))
+                }
+                child.recycle()
+            }
+            return
         }
+
+        // Check if this node is a clickable suggestion item
+        if (node.isClickable && text.isNotBlank() && text.length > 5 &&
+            !text.lowercase().contains("where") &&
+            !text.lowercase().contains("search") &&
+            !text.contains("إلى أين") &&
+            !text.contains("بحث")) {
+            suggestions.add(Pair(AccessibilityNodeInfo.obtain(node), text))
+        }
+
+        // Recurse into children
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            collectSuggestions(child, suggestions)
+            child.recycle()
+        }
+    }
+
+    /**
+     * Get combined text from a node and its children
+     */
+    private fun getNodeText(node: AccessibilityNodeInfo): String {
+        val texts = mutableListOf<String>()
+        val nodeText = node.text?.toString() ?: ""
+        if (nodeText.isNotBlank()) texts.add(nodeText)
 
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
-            val found = findSuggestionList(child)
-            if (found != null) {
-                child.recycle()
-                return found
-            }
+            val childText = child.text?.toString() ?: ""
+            if (childText.isNotBlank()) texts.add(childText)
             child.recycle()
         }
 
-        return null
+        return texts.joinToString(" ").trim()
     }
 
     private fun clickFirstMatchingSuggestion(node: AccessibilityNodeInfo): Boolean {
