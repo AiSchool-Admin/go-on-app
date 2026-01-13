@@ -204,6 +204,10 @@ class PriceReaderService : AccessibilityService() {
     // Track if InDriver destination was successfully entered (to avoid accepting default price)
     private var inDriverDestinationEntered = false
 
+    // Track when InDriver "Done" button was clicked - need to wait for real price
+    private var inDriverDoneClickedTime = 0L
+    private val INDRIVER_MIN_WAIT_AFTER_DONE_MS = 5000L  // Wait at least 5 seconds after Done click
+
     enum class AutomationState {
         IDLE,
         WAITING_FOR_APP,
@@ -249,6 +253,7 @@ class PriceReaderService : AccessibilityService() {
         automationStartTime = System.currentTimeMillis()  // Track when automation started
         uberScreenReady = false  // Reset screen ready flag
         inDriverDestinationEntered = false  // Reset InDriver destination flag
+        inDriverDoneClickedTime = 0L  // Reset InDriver Done click time
 
         // Clear any old cached prices for this app
         latestPrices.remove(packageName)
@@ -408,15 +413,21 @@ class PriceReaderService : AccessibilityService() {
                     // CRITICAL: For InDriver, only accept cached price if:
                     // 1. Destination was ACTUALLY entered
                     // 2. We're NOT on an intermediate screen (No Results, Map Confirmation, etc.)
+                    // 3. Enough time has passed since "Done" button was clicked
                     if (packageName == INDRIVER_PACKAGE && !onIntermediateScreen) {
                         val cachedPrice = latestPrices[packageName]
-                        Log.d(TAG, "🤖 InDriver cached price check: price=${cachedPrice?.price}, destinationEntered=$inDriverDestinationEntered")
-                        if (cachedPrice != null && cachedPrice.price > 0 && inDriverDestinationEntered) {
-                            Log.i(TAG, "🤖 ✓✓✓ InDriver PRICES CACHED & DESTINATION ENTERED: ${cachedPrice.price} EGP")
+                        val timeSinceDoneClick = if (inDriverDoneClickedTime > 0) System.currentTimeMillis() - inDriverDoneClickedTime else Long.MAX_VALUE
+                        val doneWaitSatisfied = inDriverDoneClickedTime == 0L || timeSinceDoneClick >= INDRIVER_MIN_WAIT_AFTER_DONE_MS
+                        Log.d(TAG, "🤖 InDriver cached price check: price=${cachedPrice?.price}, destinationEntered=$inDriverDestinationEntered, doneWait=${timeSinceDoneClick}ms, satisfied=$doneWaitSatisfied")
+
+                        if (cachedPrice != null && cachedPrice.price > 0 && inDriverDestinationEntered && doneWaitSatisfied) {
+                            Log.i(TAG, "🤖 ✓✓✓ InDriver PRICES CACHED & DESTINATION ENTERED & WAIT SATISFIED: ${cachedPrice.price} EGP")
                             Log.i(TAG, "🤖 Skipping to PRICE_CAPTURED - no need to continue automation!")
                             automationState = AutomationState.PRICE_CAPTURED
                             autoReturnToGoOn()
                             return
+                        } else if (cachedPrice != null && cachedPrice.price > 0 && inDriverDestinationEntered && !doneWaitSatisfied) {
+                            Log.i(TAG, "🤖 ⏳ InDriver has price ${cachedPrice.price} but waiting (${timeSinceDoneClick}ms < ${INDRIVER_MIN_WAIT_AFTER_DONE_MS}ms since Done click)")
                         } else if (cachedPrice != null && cachedPrice.price > 0 && !inDriverDestinationEntered) {
                             Log.w(TAG, "🤖 ⚠️ InDriver has cached price ${cachedPrice.price} BUT destination NOT entered - ignoring default price")
                         }
@@ -437,13 +448,17 @@ class PriceReaderService : AccessibilityService() {
                         // For InDriver with intermediate screens, go directly to WAITING_FOR_PRICE
                         if (packageName == INDRIVER_PACKAGE) {
                             // Check again for cached price before transitioning
-                            // ONLY if: destination entered AND NOT on intermediate screen
+                            // ONLY if: destination entered AND NOT on intermediate screen AND wait satisfied
                             val cachedPrice = latestPrices[packageName]
-                            if (cachedPrice != null && cachedPrice.price > 0 && inDriverDestinationEntered && !onIntermediateScreen) {
-                                Log.i(TAG, "🤖 InDriver price found during transition: ${cachedPrice.price} EGP")
+                            val timeSinceDone = if (inDriverDoneClickedTime > 0) System.currentTimeMillis() - inDriverDoneClickedTime else Long.MAX_VALUE
+                            val waitOk = inDriverDoneClickedTime == 0L || timeSinceDone >= INDRIVER_MIN_WAIT_AFTER_DONE_MS
+                            if (cachedPrice != null && cachedPrice.price > 0 && inDriverDestinationEntered && !onIntermediateScreen && waitOk) {
+                                Log.i(TAG, "🤖 InDriver price found during transition: ${cachedPrice.price} EGP (wait satisfied)")
                                 automationState = AutomationState.PRICE_CAPTURED
                                 autoReturnToGoOn()
                                 return
+                            } else if (cachedPrice != null && cachedPrice.price > 0 && !waitOk) {
+                                Log.i(TAG, "🤖 ⏳ InDriver transition: price ${cachedPrice.price} but still waiting (${timeSinceDone}ms < ${INDRIVER_MIN_WAIT_AFTER_DONE_MS}ms)")
                             }
                             Log.i(TAG, "🤖 InDriver: Skipping SELECTING_SUGGESTION, going to WAITING_FOR_PRICE...")
                             automationState = AutomationState.WAITING_FOR_PRICE
@@ -530,12 +545,22 @@ class PriceReaderService : AccessibilityService() {
                         }
                     }
 
-                    // CRITICAL: For InDriver, only accept price if NOT on intermediate screen
+                    // CRITICAL: For InDriver, only accept price if:
+                    // 1. NOT on intermediate screen
+                    // 2. Enough time has passed since "Done" button was clicked
                     if (isInDriver && cachedPrice != null && cachedPrice.price > 0 && !onIntermediateScreen) {
-                        Log.i(TAG, "🤖 ✓✓✓ InDriver PRICE FOUND (not on intermediate screen): ${cachedPrice.price} EGP")
-                        automationState = AutomationState.PRICE_CAPTURED
-                        autoReturnToGoOn()
-                        return
+                        val timeSinceDoneClick = if (inDriverDoneClickedTime > 0) System.currentTimeMillis() - inDriverDoneClickedTime else Long.MAX_VALUE
+                        val doneWaitSatisfied = inDriverDoneClickedTime == 0L || timeSinceDoneClick >= INDRIVER_MIN_WAIT_AFTER_DONE_MS
+
+                        if (doneWaitSatisfied) {
+                            Log.i(TAG, "🤖 ✓✓✓ InDriver PRICE FOUND (not intermediate, wait satisfied): ${cachedPrice.price} EGP")
+                            automationState = AutomationState.PRICE_CAPTURED
+                            autoReturnToGoOn()
+                            return
+                        } else {
+                            Log.i(TAG, "🤖 ⏳ InDriver price ${cachedPrice.price} detected but waiting (${timeSinceDoneClick}ms < ${INDRIVER_MIN_WAIT_AFTER_DONE_MS}ms)")
+                            // Continue waiting - don't return yet
+                        }
                     } else if (isInDriver && onIntermediateScreen) {
                         Log.d(TAG, "🤖 InDriver on intermediate screen - skipping price acceptance, will retry")
                         return
@@ -2035,7 +2060,9 @@ class PriceReaderService : AccessibilityService() {
                         lastInDriverClickTime = currentTime
                         // CRITICAL: Clear cached price after clicking Done - wait for real trip price
                         latestPrices.remove(INDRIVER_PACKAGE)
-                        Log.i(TAG, "🗺️ ✓ Cleared cached price after 'Done' click")
+                        // CRITICAL: Set timestamp - must wait INDRIVER_MIN_WAIT_AFTER_DONE_MS before accepting price
+                        inDriverDoneClickedTime = System.currentTimeMillis()
+                        Log.i(TAG, "🗺️ ✓ Cleared cached price after 'Done' click - waiting ${INDRIVER_MIN_WAIT_AFTER_DONE_MS}ms for real price")
                         node.recycle()
                         return true
                     }
