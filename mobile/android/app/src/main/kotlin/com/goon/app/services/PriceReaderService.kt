@@ -391,10 +391,11 @@ class PriceReaderService : AccessibilityService() {
                     }
 
                     // Check for intermediate screens (InDriver or DiDi)
+                    // NOTE: Don't return early - let state transition happen
                     if (packageName == INDRIVER_PACKAGE) {
                         if (handleInDriverIntermediateScreens(rootNode)) {
                             Log.i(TAG, "🤖 📋 Handled InDriver intermediate screen during WAITING_FOR_SUGGESTIONS")
-                            return
+                            // Don't return - continue to check state transition
                         }
                     }
 
@@ -402,14 +403,22 @@ class PriceReaderService : AccessibilityService() {
                     if (packageName == DIDI_PACKAGE) {
                         if (handleDiDiIntermediateScreens(rootNode)) {
                             Log.i(TAG, "🤖 📋 Handled DiDi intermediate screen during WAITING_FOR_SUGGESTIONS")
-                            return
+                            // Don't return - continue to check state transition
                         }
                     }
 
+                    // After enough time, transition to SELECTING_SUGGESTION or WAITING_FOR_PRICE
                     if (automationStep > 3) { // Wait ~3.6 seconds for suggestions
-                        Log.i(TAG, "🤖 Transitioning to SELECTING_SUGGESTION...")
-                        automationState = AutomationState.SELECTING_SUGGESTION
-                        automationStep = 0
+                        // For InDriver with intermediate screens, go directly to WAITING_FOR_PRICE
+                        if (packageName == INDRIVER_PACKAGE) {
+                            Log.i(TAG, "🤖 InDriver: Skipping SELECTING_SUGGESTION, going to WAITING_FOR_PRICE...")
+                            automationState = AutomationState.WAITING_FOR_PRICE
+                            automationStep = 0
+                        } else {
+                            Log.i(TAG, "🤖 Transitioning to SELECTING_SUGGESTION...")
+                            automationState = AutomationState.SELECTING_SUGGESTION
+                            automationStep = 0
+                        }
                     }
                 }
 
@@ -2065,8 +2074,8 @@ class PriceReaderService : AccessibilityService() {
         // Wait a bit and assume it might have worked
         Thread.sleep(300)
 
-        // Strategy 4: Shell tap (requires root - will fail on most devices)
-        shellTap(centerX, centerY)
+        // Strategy 4: Shell tap - DISABLED (requires root, causes SecurityException crashes)
+        // shellTap(centerX, centerY)
 
         // Return true optimistically - we tried everything
         Log.i(TAG, "🎯 Attempted all click strategies")
