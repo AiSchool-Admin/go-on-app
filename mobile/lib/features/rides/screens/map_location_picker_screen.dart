@@ -214,15 +214,13 @@ class _MapLocationPickerScreenState extends ConsumerState<MapLocationPickerScree
               );
 
               if (name != null && name.isNotEmpty && !isGenericType) {
-                debugPrint('Found place: $name (types: $types)');
+                debugPrint('Found place: $name, vicinity: $vicinity (types: $types)');
 
-                // Clean vicinity (remove Plus Codes)
-                String? cleanVicinity;
-                if (vicinity != null && !_isPlusCode(vicinity)) {
-                  cleanVicinity = vicinity;
-                }
+                // Clean vicinity - extract only Arabic location name
+                final cleanVicinity = _cleanVicinity(vicinity);
+                debugPrint('Clean vicinity: $cleanVicinity');
 
-                // Return name with vicinity
+                // Return name with clean vicinity
                 if (cleanVicinity != null && cleanVicinity.isNotEmpty) {
                   return '$name، $cleanVicinity';
                 }
@@ -240,6 +238,39 @@ class _MapLocationPickerScreenState extends ConsumerState<MapLocationPickerScree
       debugPrint('Places API error: $e');
     }
     return null;
+  }
+
+  /// Clean vicinity string - remove English words, Plus Codes, etc.
+  String? _cleanVicinity(String? vicinity) {
+    if (vicinity == null || vicinity.isEmpty) return null;
+
+    // Skip if it's a Plus Code
+    if (_isPlusCode(vicinity)) return null;
+
+    // Split by comma and clean each part
+    final parts = vicinity.split(RegExp(r'[,،]')).map((p) => p.trim()).toList();
+
+    final cleanedParts = <String>[];
+    for (final part in parts) {
+      // Skip Plus Codes
+      if (_isPlusCode(part)) continue;
+
+      // Skip English-only parts (like "Mall", "KALIOBEYA", "Street 400")
+      if (RegExp(r'^[A-Za-z0-9\s]+$').hasMatch(part)) continue;
+
+      // Skip parts that are mostly English
+      final arabicChars = RegExp(r'[\u0600-\u06FF]').allMatches(part).length;
+      final totalChars = part.replaceAll(' ', '').length;
+      if (totalChars > 0 && arabicChars < totalChars * 0.5) continue;
+
+      // Skip very short parts
+      if (part.length < 3) continue;
+
+      cleanedParts.add(part);
+    }
+
+    // Return the first meaningful Arabic part
+    return cleanedParts.isNotEmpty ? cleanedParts.first : null;
   }
 
   /// Get address using Google Geocoding API (same as Google Maps)
