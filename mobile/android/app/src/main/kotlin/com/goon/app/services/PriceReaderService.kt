@@ -394,9 +394,21 @@ class PriceReaderService : AccessibilityService() {
                     automationStep++
                     Log.i(TAG, "🤖 Waiting for suggestions (step $automationStep/3)...")
 
-                    // CRITICAL: For InDriver, only accept cached price if destination was ACTUALLY entered
-                    // This prevents accepting the default price (95 EGP) when destination entry failed
+                    // IMPORTANT: For InDriver, handle intermediate screens FIRST before checking price
+                    // This prevents accepting stale prices from "No Results" or map confirmation screens
+                    var onIntermediateScreen = false
                     if (packageName == INDRIVER_PACKAGE) {
+                        if (handleInDriverIntermediateScreens(rootNode)) {
+                            Log.i(TAG, "🤖 📋 Handled InDriver intermediate screen - NOT accepting price yet")
+                            onIntermediateScreen = true
+                            // Continue but don't accept price
+                        }
+                    }
+
+                    // CRITICAL: For InDriver, only accept cached price if:
+                    // 1. Destination was ACTUALLY entered
+                    // 2. We're NOT on an intermediate screen (No Results, Map Confirmation, etc.)
+                    if (packageName == INDRIVER_PACKAGE && !onIntermediateScreen) {
                         val cachedPrice = latestPrices[packageName]
                         Log.d(TAG, "🤖 InDriver cached price check: price=${cachedPrice?.price}, destinationEntered=$inDriverDestinationEntered")
                         if (cachedPrice != null && cachedPrice.price > 0 && inDriverDestinationEntered) {
@@ -408,15 +420,8 @@ class PriceReaderService : AccessibilityService() {
                         } else if (cachedPrice != null && cachedPrice.price > 0 && !inDriverDestinationEntered) {
                             Log.w(TAG, "🤖 ⚠️ InDriver has cached price ${cachedPrice.price} BUT destination NOT entered - ignoring default price")
                         }
-                    }
-
-                    // Check for intermediate screens (InDriver or DiDi)
-                    // NOTE: Don't return early - let state transition happen
-                    if (packageName == INDRIVER_PACKAGE) {
-                        if (handleInDriverIntermediateScreens(rootNode)) {
-                            Log.i(TAG, "🤖 📋 Handled InDriver intermediate screen during WAITING_FOR_SUGGESTIONS")
-                            // Don't return - continue to check state transition
-                        }
+                    } else if (packageName == INDRIVER_PACKAGE && onIntermediateScreen) {
+                        Log.d(TAG, "🤖 InDriver on intermediate screen - skipping price check")
                     }
 
                     // CRITICAL: DiDi may show "Select Address" screen here
@@ -431,9 +436,10 @@ class PriceReaderService : AccessibilityService() {
                     if (automationStep > 3) { // Wait ~3.6 seconds for suggestions
                         // For InDriver with intermediate screens, go directly to WAITING_FOR_PRICE
                         if (packageName == INDRIVER_PACKAGE) {
-                            // Check again for cached price before transitioning (ONLY if destination entered)
+                            // Check again for cached price before transitioning
+                            // ONLY if: destination entered AND NOT on intermediate screen
                             val cachedPrice = latestPrices[packageName]
-                            if (cachedPrice != null && cachedPrice.price > 0 && inDriverDestinationEntered) {
+                            if (cachedPrice != null && cachedPrice.price > 0 && inDriverDestinationEntered && !onIntermediateScreen) {
                                 Log.i(TAG, "🤖 InDriver price found during transition: ${cachedPrice.price} EGP")
                                 automationState = AutomationState.PRICE_CAPTURED
                                 autoReturnToGoOn()
@@ -1986,6 +1992,10 @@ class PriceReaderService : AccessibilityService() {
                     if (gentleClick(node)) {
                         Log.i(TAG, "🗺️ ✓ Clicked '$chooseText' option - transitioning to map screen")
                         lastInDriverClickTime = currentTime
+                        // CRITICAL: Clear cached price again - we clicked "Choose on map"
+                        // so any price shown before is NOT the real trip price
+                        latestPrices.remove(INDRIVER_PACKAGE)
+                        Log.i(TAG, "🗺️ ✓ Cleared cached price after 'Choose on map' click")
                         node.recycle()
                         return true
                     }
