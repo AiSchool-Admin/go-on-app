@@ -1752,6 +1752,12 @@ class PriceReaderService : AccessibilityService() {
         val allText = getAllTextFromNode(rootNode)
         val allTextLower = allText.map { it.lowercase() }
 
+        // DEBUG: Log all visible text on screen
+        Log.i(TAG, "🗺️ DEBUG: All visible text on InDriver screen:")
+        allText.take(20).forEach { text ->
+            Log.i(TAG, "🗺️   - '$text'")
+        }
+
         // ============================================================
         // STEP 1: Check for "No Results" screen - need to click "Choose on map"
         // This appears when InDriver can't find the coordinates as an address
@@ -1759,29 +1765,45 @@ class PriceReaderService : AccessibilityService() {
         val hasNoResults = allText.any {
             it.contains("لا توجد نتائج") ||
             it.contains("No results") ||
-            it.contains("لا توجد")
+            it.contains("لا توجد") ||
+            it.contains("نتائج") // partial match
         }
 
         if (hasNoResults) {
-            Log.i(TAG, "🗺️ Detected InDriver 'No Results' screen - looking for 'Choose on map' option")
+            Log.i(TAG, "🗺️ ✓ Detected InDriver 'No Results' screen - looking for 'Choose on map' option")
 
-            // Look for "اختر على الخريطة" (Choose on map) button
-            val chooseMapTexts = listOf("اختر على الخريطة", "Choose on map", "على الخريطة", "الخريطة")
+            // Look for "اختر على الخريطة" (Choose on map) button - try many variations
+            val chooseMapTexts = listOf(
+                "اختر على الخريطة",
+                "Choose on map",
+                "على الخريطة",
+                "الخريطة",
+                "اختر",
+                "choose",
+                "map"
+            )
             for (chooseText in chooseMapTexts) {
                 val nodes = rootNode.findAccessibilityNodeInfosByText(chooseText)
+                Log.i(TAG, "🗺️ Searching for '$chooseText' - found ${nodes.size} nodes")
                 for (node in nodes) {
-                    Log.i(TAG, "🗺️ Found '$chooseText', attempting click...")
+                    val nodeText = node.text?.toString() ?: ""
+                    val nodeDesc = node.contentDescription?.toString() ?: ""
+                    Log.i(TAG, "🗺️ Found node: text='$nodeText', desc='$nodeDesc', clickable=${node.isClickable}")
 
                     // Use smartClick for reliability
                     if (smartClick(node)) {
-                        Log.i(TAG, "🗺️ ✓ Clicked 'Choose on map' option")
+                        Log.i(TAG, "🗺️ ✓ Clicked '$chooseText' option - transitioning to map screen")
                         node.recycle()
                         return true
                     }
                     node.recycle()
                 }
             }
-            Log.w(TAG, "🗺️ Could not find 'Choose on map' option")
+
+            // Even if we couldn't click, return true to indicate we're handling "No Results" screen
+            // This prevents the automation from trying to click non-existent suggestions
+            Log.w(TAG, "🗺️ Could not find/click 'Choose on map' option - will retry")
+            return true // Return true to stay in handling mode
         }
 
         // ============================================================
