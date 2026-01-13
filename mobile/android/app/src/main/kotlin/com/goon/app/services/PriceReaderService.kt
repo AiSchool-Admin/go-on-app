@@ -513,16 +513,9 @@ class PriceReaderService : AccessibilityService() {
 
                     Log.i(TAG, "🤖 Waiting for price (elapsed: ${elapsedTime}ms, cached: ${cachedPrice?.price ?: 0} EGP)...")
 
-                    // CRITICAL: For InDriver, if we have ANY price, we're done!
-                    if (isInDriver && cachedPrice != null && cachedPrice.price > 0) {
-                        Log.i(TAG, "🤖 ✓✓✓ InDriver PRICE FOUND: ${cachedPrice.price} EGP")
-                        automationState = AutomationState.PRICE_CAPTURED
-                        autoReturnToGoOn()
-                        return
-                    }
-
-                    // CRITICAL: Check for intermediate screens
+                    // CRITICAL: Check for intermediate screens FIRST before accepting any price
                     // DiDi may still be on "Select Address", InDriver may be on "No Results" or map confirmation
+                    var onIntermediateScreen = false
                     if (packageName == DIDI_PACKAGE) {
                         if (handleDiDiIntermediateScreens(rootNode)) {
                             Log.i(TAG, "🤖 📋 Handled DiDi intermediate screen during WAITING_FOR_PRICE")
@@ -531,16 +524,21 @@ class PriceReaderService : AccessibilityService() {
                     }
                     if (isInDriver) {
                         if (handleInDriverIntermediateScreens(rootNode)) {
-                            Log.i(TAG, "🤖 📋 Handled InDriver intermediate screen during WAITING_FOR_PRICE")
-                            // Check again if price was captured during handling
-                            val newCachedPrice = latestPrices[packageName]
-                            if (newCachedPrice != null && newCachedPrice.price > 0) {
-                                Log.i(TAG, "🤖 ✓✓✓ InDriver PRICE FOUND after handling: ${newCachedPrice.price} EGP")
-                                automationState = AutomationState.PRICE_CAPTURED
-                                autoReturnToGoOn()
-                            }
-                            return
+                            Log.i(TAG, "🤖 📋 InDriver intermediate screen detected in WAITING_FOR_PRICE - NOT accepting price yet")
+                            onIntermediateScreen = true
+                            // Don't return - we need to keep trying
                         }
+                    }
+
+                    // CRITICAL: For InDriver, only accept price if NOT on intermediate screen
+                    if (isInDriver && cachedPrice != null && cachedPrice.price > 0 && !onIntermediateScreen) {
+                        Log.i(TAG, "🤖 ✓✓✓ InDriver PRICE FOUND (not on intermediate screen): ${cachedPrice.price} EGP")
+                        automationState = AutomationState.PRICE_CAPTURED
+                        autoReturnToGoOn()
+                        return
+                    } else if (isInDriver && onIntermediateScreen) {
+                        Log.d(TAG, "🤖 InDriver on intermediate screen - skipping price acceptance, will retry")
+                        return
                     }
 
                     // For Uber: Wait minimum time to let prices fully load
@@ -2035,6 +2033,9 @@ class PriceReaderService : AccessibilityService() {
                     if (gentleClick(node)) {
                         Log.i(TAG, "🗺️ ✓ Clicked '$doneText' button")
                         lastInDriverClickTime = currentTime
+                        // CRITICAL: Clear cached price after clicking Done - wait for real trip price
+                        latestPrices.remove(INDRIVER_PACKAGE)
+                        Log.i(TAG, "🗺️ ✓ Cleared cached price after 'Done' click")
                         node.recycle()
                         return true
                     }
