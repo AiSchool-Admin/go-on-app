@@ -364,7 +364,9 @@ class PriceReaderService : AccessibilityService() {
                         Log.i(TAG, "🤖 ✓ Entered destination, transitioning to WAITING_FOR_SUGGESTIONS...")
                         if (packageName == INDRIVER_PACKAGE) {
                             inDriverDestinationEntered = true
-                            Log.i(TAG, "🤖 ✓ InDriver destination entry SUCCESS - will accept prices now")
+                            // CRITICAL: Clear old cached price - we need to wait for the NEW price after destination entry
+                            latestPrices.remove(packageName)
+                            Log.i(TAG, "🤖 ✓ InDriver destination entry SUCCESS - cleared old price, waiting for new price")
                         }
                         automationState = AutomationState.WAITING_FOR_SUGGESTIONS
                         automationRetries = 0
