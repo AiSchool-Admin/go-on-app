@@ -1,11 +1,14 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
+import 'package:http/http.dart' as http;
 
 import '../../../core/constants/app_colors.dart';
+import '../../../core/constants/app_constants.dart';
 
 /// Screen for precise location selection from map
 /// Shows a centered pin that user can position by moving the map
@@ -128,6 +131,17 @@ class _MapLocationPickerScreenState extends ConsumerState<MapLocationPickerScree
     setState(() => _isLoadingAddress = true);
 
     try {
+      // First try: Google Places API for nearby landmarks (most accurate)
+      final nearbyPlace = await _getNearbyPlaceName(location);
+      if (nearbyPlace != null && nearbyPlace.isNotEmpty) {
+        setState(() {
+          _selectedAddress = nearbyPlace;
+          _isLoadingAddress = false;
+        });
+        return;
+      }
+
+      // Fallback: Standard geocoding
       final placemarks = await placemarkFromCoordinates(
         location.latitude,
         location.longitude,
@@ -135,51 +149,11 @@ class _MapLocationPickerScreenState extends ConsumerState<MapLocationPickerScree
 
       if (placemarks.isNotEmpty) {
         final place = placemarks.first;
-        final parts = <String>[];
-
-        // Priority order: most specific to least specific
-        // This helps ride apps find the location better
-
-        // 1. Sublocality (neighborhood) - most useful for ride apps
-        if (place.subLocality != null &&
-            place.subLocality!.isNotEmpty &&
-            !_isPlusCode(place.subLocality) &&
-            !_isGenericWord(place.subLocality!)) {
-          parts.add(place.subLocality!);
-        }
-
-        // 2. Street name (if meaningful)
-        if (place.street != null &&
-            place.street!.isNotEmpty &&
-            !_isPlusCode(place.street) &&
-            !_isGenericWord(place.street!) &&
-            place.street != place.subLocality) {
-          // Add street only if different from subLocality
-          parts.add(place.street!);
-        }
-
-        // 3. Locality (city/district)
-        if (place.locality != null &&
-            place.locality!.isNotEmpty &&
-            !_isPlusCode(place.locality) &&
-            !_isGenericWord(place.locality!)) {
-          parts.add(place.locality!);
-        }
-
-        // 4. Administrative area (governorate) - only if nothing else
-        if (parts.isEmpty &&
-            place.administrativeArea != null &&
-            place.administrativeArea!.isNotEmpty &&
-            !_isPlusCode(place.administrativeArea)) {
-          parts.add(place.administrativeArea!);
-        }
-
-        // Remove duplicates while preserving order
-        final uniqueParts = parts.toSet().toList();
+        final address = _buildAddressFromPlacemark(place);
 
         setState(() {
-          _selectedAddress = uniqueParts.isNotEmpty
-              ? uniqueParts.join('، ')
+          _selectedAddress = address.isNotEmpty
+              ? address
               : '${location.latitude.toStringAsFixed(6)}, ${location.longitude.toStringAsFixed(6)}';
           _isLoadingAddress = false;
         });
@@ -197,18 +171,107 @@ class _MapLocationPickerScreenState extends ConsumerState<MapLocationPickerScree
     }
   }
 
-  /// Check if a word is too generic to be useful for location search
-  bool _isGenericWord(String text) {
-    final genericWords = [
-      'مصر', 'Egypt', 'القاهرة', 'Cairo', 'الجيزة', 'Giza',
-      'محافظة', 'مدينة', 'قسم', 'حي', 'شارع', 'طريق',
-      'Unnamed Road', 'Unnamed', 'Road',
-    ];
-    final lowerText = text.toLowerCase().trim();
-    return genericWords.any((word) =>
-      lowerText == word.toLowerCase() ||
-      lowerText.startsWith('unnamed')
-    );
+  /// Get nearby place name using Google Places API
+  Future<String?> _getNearbyPlaceName(LatLng location) async {
+    try {
+      final apiKey = AppConstants.googleMapsApiKey;
+      final url = Uri.parse(
+        'https://maps.googleapis.com/maps/api/place/nearbysearch/json'
+        '?location=${location.latitude},${location.longitude}'
+        '&radius=100'  // 100 meters radius
+        '&language=ar'  // Arabic results
+        '&key=$apiKey'
+      );
+
+      final response = await http.get(url).timeout(const Duration(seconds: 5));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final results = data['results'] as List?;
+
+        if (results != null && results.isNotEmpty) {
+          // Get the first result (closest)
+          final firstPlace = results.first;
+          final placeName = firstPlace['name'] as String?;
+          final vicinity = firstPlace['vicinity'] as String?;
+
+          if (placeName != null && placeName.isNotEmpty) {
+            // Return place name with vicinity if available
+            if (vicinity != null && vicinity.isNotEmpty && !vicinity.contains('Unnamed')) {
+              return '$placeName، $vicinity';
+            }
+            return placeName;
+          }
+        }
+      }
+    } catch (e) {
+      // Silently fail and use geocoding fallback
+      debugPrint('Places API error: $e');
+    }
+    return null;
+  }
+
+  /// Build address from placemark with smart filtering
+  String _buildAddressFromPlacemark(Placemark place) {
+    final parts = <String>[];
+
+    // 1. Name (if it's a named place like a building or landmark)
+    if (place.name != null &&
+        place.name!.isNotEmpty &&
+        !_isPlusCode(place.name) &&
+        !_isCoordinate(place.name!) &&
+        place.name != place.street) {
+      parts.add(place.name!);
+    }
+
+    // 2. Street (if meaningful)
+    if (place.street != null &&
+        place.street!.isNotEmpty &&
+        !_isPlusCode(place.street) &&
+        !_isUnnamed(place.street!)) {
+      parts.add(place.street!);
+    }
+
+    // 3. Sublocality (neighborhood)
+    if (place.subLocality != null &&
+        place.subLocality!.isNotEmpty &&
+        !_isPlusCode(place.subLocality) &&
+        !parts.contains(place.subLocality)) {
+      parts.add(place.subLocality!);
+    }
+
+    // 4. Locality (city/district)
+    if (place.locality != null &&
+        place.locality!.isNotEmpty &&
+        !_isPlusCode(place.locality) &&
+        !parts.contains(place.locality)) {
+      parts.add(place.locality!);
+    }
+
+    // 5. If still empty, use administrative area
+    if (parts.isEmpty && place.administrativeArea != null) {
+      parts.add(place.administrativeArea!);
+    }
+
+    // Remove any entries that are just "Governorate" alone
+    final filteredParts = parts.where((p) =>
+      !p.toLowerCase().trim().endsWith('governorate') || p.split(' ').length > 1
+    ).toList();
+
+    return filteredParts.join('، ');
+  }
+
+  /// Check if text looks like coordinates
+  bool _isCoordinate(String text) {
+    return RegExp(r'^\d+\.\d+,?\s*\d+\.\d+$').hasMatch(text.trim());
+  }
+
+  /// Check if text is "Unnamed Road" or similar
+  bool _isUnnamed(String text) {
+    final lower = text.toLowerCase().trim();
+    return lower.startsWith('unnamed') ||
+           lower == 'road' ||
+           lower.contains('unnamed road');
   }
 
   void _confirmLocation() {
