@@ -469,10 +469,17 @@ class PriceReaderService : AccessibilityService() {
 
                     Log.i(TAG, "🤖 Waiting for price (elapsed: ${elapsedTime}ms, cached: ${cachedPrice?.allPricesFound?.size ?: 0} prices)...")
 
-                    // CRITICAL: Check for intermediate screens FIRST (DiDi may still be on "Select Address")
+                    // CRITICAL: Check for intermediate screens FIRST
+                    // DiDi may still be on "Select Address", InDriver may be on "No Results" or map confirmation
                     if (packageName == DIDI_PACKAGE) {
                         if (handleDiDiIntermediateScreens(rootNode)) {
                             Log.i(TAG, "🤖 📋 Handled DiDi intermediate screen during WAITING_FOR_PRICE")
+                            return
+                        }
+                    }
+                    if (packageName == INDRIVER_PACKAGE) {
+                        if (handleInDriverIntermediateScreens(rootNode)) {
+                            Log.i(TAG, "🤖 📋 Handled InDriver intermediate screen during WAITING_FOR_PRICE")
                             return
                         }
                     }
@@ -1735,7 +1742,9 @@ class PriceReaderService : AccessibilityService() {
     /**
      * Handle InDriver intermediate screens
      * InDriver may show: permission dialogs, promo screens, safety tips
-     * CRITICAL: Also handles the MAP CONFIRMATION screen with "تم" (Done) button
+     * CRITICAL: Also handles:
+     * 1. "لا توجد نتائج" (No results) → Click "اختر على الخريطة" (Choose on map)
+     * 2. MAP CONFIRMATION screen with "تم" (Done) button
      */
     private fun handleInDriverIntermediateScreens(rootNode: AccessibilityNodeInfo): Boolean {
         Log.i(TAG, "🗺️ handleInDriverIntermediateScreens called")
@@ -1743,10 +1752,40 @@ class PriceReaderService : AccessibilityService() {
         val allText = getAllTextFromNode(rootNode)
         val allTextLower = allText.map { it.lowercase() }
 
-        Log.i(TAG, "🗺️ Checking for 'تم' button in ${allText.size} texts")
+        // ============================================================
+        // STEP 1: Check for "No Results" screen - need to click "Choose on map"
+        // This appears when InDriver can't find the coordinates as an address
+        // ============================================================
+        val hasNoResults = allText.any {
+            it.contains("لا توجد نتائج") ||
+            it.contains("No results") ||
+            it.contains("لا توجد")
+        }
+
+        if (hasNoResults) {
+            Log.i(TAG, "🗺️ Detected InDriver 'No Results' screen - looking for 'Choose on map' option")
+
+            // Look for "اختر على الخريطة" (Choose on map) button
+            val chooseMapTexts = listOf("اختر على الخريطة", "Choose on map", "على الخريطة", "الخريطة")
+            for (chooseText in chooseMapTexts) {
+                val nodes = rootNode.findAccessibilityNodeInfosByText(chooseText)
+                for (node in nodes) {
+                    Log.i(TAG, "🗺️ Found '$chooseText', attempting click...")
+
+                    // Use smartClick for reliability
+                    if (smartClick(node)) {
+                        Log.i(TAG, "🗺️ ✓ Clicked 'Choose on map' option")
+                        node.recycle()
+                        return true
+                    }
+                    node.recycle()
+                }
+            }
+            Log.w(TAG, "🗺️ Could not find 'Choose on map' option")
+        }
 
         // ============================================================
-        // CRITICAL: Check for MAP CONFIRMATION screen with "تم" button
+        // STEP 2: Check for MAP CONFIRMATION screen with "تم" button
         // This appears after selecting a destination on InDriver
         // ============================================================
         val hasTamButton = allText.any { it == "تم" }
@@ -1759,10 +1798,25 @@ class PriceReaderService : AccessibilityService() {
         val hasGoogleMap = allTextLower.any { it.contains("google") }
 
         if (hasMapConfirmation) {
-            Log.i(TAG, "🗺️ Detected InDriver MAP CONFIRMATION screen - looking for 'تم' button")
+            Log.i(TAG, "🗺️ Detected InDriver MAP CONFIRMATION screen - clicking 'تم' button")
 
-            // InDriver has anti-automation protection that blocks clicks
-            // Show a toast to prompt user to manually tap the button
+            // Try to click the "تم" button using smartClick
+            val doneTexts = listOf("تم", "Done", "Confirm", "تأكيد")
+            for (doneText in doneTexts) {
+                val nodes = rootNode.findAccessibilityNodeInfosByText(doneText)
+                for (node in nodes) {
+                    Log.i(TAG, "🗺️ Found '$doneText' button, attempting smartClick...")
+
+                    if (smartClick(node)) {
+                        Log.i(TAG, "🗺️ ✓ Clicked '$doneText' button")
+                        node.recycle()
+                        return true
+                    }
+                    node.recycle()
+                }
+            }
+
+            // If smartClick didn't work, show toast as fallback
             val currentTime = System.currentTimeMillis()
             if (currentTime - lastInDriverToastTime > toastDebounce) {
                 lastInDriverToastTime = currentTime
@@ -1775,75 +1829,7 @@ class PriceReaderService : AccessibilityService() {
                 }
                 Log.i(TAG, "🗺️ Showed toast prompting user to tap 'تم' button")
             }
-
-            // Still try accessibility click in case it works (it might work on some devices)
-            val doneTexts = listOf("تم", "Done", "Confirm", "تأكيد")
-            for (doneText in doneTexts) {
-                val nodes = rootNode.findAccessibilityNodeInfosByText(doneText)
-                for (node in nodes) {
-                    val nodeText = node.text?.toString() ?: ""
-                    Log.i(TAG, "🗺️ Found '$doneText' button, attempting click...")
-
-                    // Try simple click - may work on some devices
-                    node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-
-                    // Try clicking parent (button container)
-                    node.parent?.let { parent ->
-                        if (parent.isClickable) {
-                            parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                        }
-                        parent.recycle()
-                    }
-
-                    node.recycle()
-                }
-            }
-
-            return true // Let next iteration check if user tapped and screen changed
-        }
-
-        // Check for permission or promo dialogs
-        val hasDialog = allTextLower.any {
-            it.contains("allow") ||
-            it.contains("permit") ||
-            it.contains("ok") ||
-            it.contains("got it") ||
-            it.contains("continue") ||
-            it.contains("skip") ||
-            it.contains("موافق") ||
-            it.contains("تخطي") ||
-            it.contains("متابعة") ||
-            it.contains("السماح")
-        }
-
-        if (hasDialog) {
-            Log.i(TAG, "📋 Detected InDriver dialog, trying to dismiss")
-            val dismissTexts = listOf(
-                "OK", "Got it", "Continue", "Skip", "Allow", "Accept",
-                "موافق", "تخطي", "متابعة", "السماح", "قبول", "حسناً"
-            )
-            for (dismissText in dismissTexts) {
-                val nodes = rootNode.findAccessibilityNodeInfosByText(dismissText)
-                for (node in nodes) {
-                    if (node.isClickable) {
-                        node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                        Log.i(TAG, "✓ Dismissed InDriver dialog with: $dismissText")
-                        node.recycle()
-                        return true
-                    }
-                    // Try parent
-                    val parent = node.parent
-                    if (parent != null && parent.isClickable) {
-                        parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                        Log.i(TAG, "✓ Dismissed InDriver dialog via parent: $dismissText")
-                        parent.recycle()
-                        node.recycle()
-                        return true
-                    }
-                    parent?.recycle()
-                    node.recycle()
-                }
-            }
+            return true // Return true to indicate we're handling this screen
         }
 
         return false
