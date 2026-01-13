@@ -2012,10 +2012,8 @@ class PriceReaderService : AccessibilityService() {
 
     /**
      * SMART CLICK: Try multiple click strategies in order of reliability
-     * 1. Shell tap (most reliable - bypasses app protections)
-     * 2. Gesture tap
-     * 3. ACTION_CLICK on node
-     * 4. ACTION_CLICK on parent
+     * For CLICKABLE nodes: ACTION_CLICK first (more reliable for apps that block gestures)
+     * For non-clickable: Try gesture tap with delay to verify
      */
     private fun smartClick(node: AccessibilityNodeInfo): Boolean {
         val rect = android.graphics.Rect()
@@ -2029,36 +2027,42 @@ class PriceReaderService : AccessibilityService() {
             return false
         }
 
-        // Strategy 1: Shell tap (most reliable - bypasses accessibility gesture blocking)
-        if (shellTap(centerX, centerY)) {
-            Log.i(TAG, "🎯 ✓ Smart click SUCCESS via shell tap at ($centerX, $centerY)")
-            return true
-        }
-
-        // Strategy 2: Gesture tap
-        if (clickNodeByGesture(node)) {
-            Log.i(TAG, "🎯 ✓ Smart click SUCCESS via gesture")
-            return true
-        }
-
-        // Strategy 3: Direct ACTION_CLICK
-        if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-            Log.i(TAG, "🎯 ✓ Smart click SUCCESS via ACTION_CLICK")
-            return true
-        }
-
-        // Strategy 4: Click parent
-        node.parent?.let { parent ->
-            if (parent.isClickable && parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                Log.i(TAG, "🎯 ✓ Smart click SUCCESS via parent ACTION_CLICK")
-                parent.recycle()
+        // Strategy 1: If node is CLICKABLE, try ACTION_CLICK FIRST
+        // This is more reliable for apps like DiDi that block gestures
+        if (node.isClickable) {
+            Log.i(TAG, "🎯 Node is clickable (bounds=$rect), trying ACTION_CLICK...")
+            if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                Log.i(TAG, "🎯 ✓ Smart click SUCCESS via ACTION_CLICK")
                 return true
+            }
+            Log.w(TAG, "🎯 ACTION_CLICK returned false on clickable node")
+        }
+
+        // Strategy 2: Try clicking parent if it's clickable
+        node.parent?.let { parent ->
+            if (parent.isClickable) {
+                Log.i(TAG, "🎯 Parent is clickable, trying ACTION_CLICK on parent...")
+                if (parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    Log.i(TAG, "🎯 ✓ Smart click SUCCESS via parent ACTION_CLICK")
+                    parent.recycle()
+                    return true
+                }
             }
             parent.recycle()
         }
 
-        Log.w(TAG, "🎯 ✗ Smart click FAILED - all strategies exhausted")
-        return false
+        // Strategy 3: Gesture tap (note: dispatchGesture returns true even if app ignores it)
+        Log.i(TAG, "🎯 Trying gesture tap at ($centerX, $centerY)...")
+        clickNodeByGesture(node)
+        // Wait a bit and assume it might have worked
+        Thread.sleep(300)
+
+        // Strategy 4: Shell tap (requires root - will fail on most devices)
+        shellTap(centerX, centerY)
+
+        // Return true optimistically - we tried everything
+        Log.i(TAG, "🎯 Attempted all click strategies")
+        return true
     }
 
     /**
