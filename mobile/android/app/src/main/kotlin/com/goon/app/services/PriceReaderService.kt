@@ -1447,10 +1447,17 @@ class PriceReaderService : AccessibilityService() {
                 val cardText = getNodeText(addressCard)
                 Log.i(TAG, "📍 Found address card: '${cardText.take(50)}...'")
 
-                // Use smart click (gesture-based)
+                // Use smart click (shell tap + gesture)
                 if (smartClick(addressCard)) {
-                    Log.i(TAG, "📍 ✓ Successfully clicked address card")
+                    Log.i(TAG, "📍 ✓ Successfully clicked address card - transitioning to WAITING_FOR_PRICE")
                     addressCard.recycle()
+
+                    // CRITICAL: Transition to WAITING_FOR_PRICE after successful click
+                    // This prevents the loop of clicking repeatedly
+                    automationState = AutomationState.WAITING_FOR_PRICE
+                    automationRetries = 0
+                    automationStep = 0
+
                     return true
                 }
                 addressCard.recycle()
@@ -1538,7 +1545,7 @@ class PriceReaderService : AccessibilityService() {
     /**
      * Find the first clickable address card on DiDi's "Select Address" screen
      * Address cards contain: place name, full address, distance (km)
-     * Returns the clickable node for the first valid address card
+     * Returns the CLICKABLE node (either the card itself or its clickable ancestor)
      */
     private fun findFirstDiDiAddressCard(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
         val combinedText = getNodeText(node)
@@ -1556,7 +1563,8 @@ class PriceReaderService : AccessibilityService() {
             val hasDistance = combinedText.contains("km") || combinedText.contains("كم") || combinedText.contains("m")
             val hasLocation = combinedText.contains("محافظة") || combinedText.contains("مصر") ||
                               combinedText.contains("العبور") || combinedText.contains("القاهرة") ||
-                              combinedText.contains("الجيزة") || combinedText.contains("Egypt")
+                              combinedText.contains("الجيزة") || combinedText.contains("Egypt") ||
+                              combinedText.contains("شارع") || combinedText.contains("الحي")
 
             // Must have EITHER distance OR location indicator (more flexible)
             if (hasDistance || hasLocation) {
@@ -1566,7 +1574,36 @@ class PriceReaderService : AccessibilityService() {
 
                 // Valid card should have reasonable size (at least 100x40 pixels)
                 if (rect.width() > 100 && rect.height() > 40) {
-                    Log.i(TAG, "📍 Found DiDi address card: '${combinedText.take(50)}...' bounds=$rect clickable=${node.isClickable}")
+                    Log.i(TAG, "📍 Found DiDi address text: '${combinedText.take(50)}...' bounds=$rect clickable=${node.isClickable}")
+
+                    // If this node is clickable, return it
+                    if (node.isClickable) {
+                        Log.i(TAG, "📍 ✓ Node is clickable, returning it")
+                        return AccessibilityNodeInfo.obtain(node)
+                    }
+
+                    // Otherwise, find the clickable ancestor (up to 5 levels)
+                    var current: AccessibilityNodeInfo? = node.parent
+                    for (level in 1..5) {
+                        if (current == null) break
+
+                        val parentRect = android.graphics.Rect()
+                        current.getBoundsInScreen(parentRect)
+                        Log.i(TAG, "📍 Checking parent L$level: clickable=${current.isClickable} bounds=$parentRect")
+
+                        if (current.isClickable) {
+                            Log.i(TAG, "📍 ✓ Found clickable parent at level $level")
+                            return AccessibilityNodeInfo.obtain(current)
+                        }
+
+                        val next = current.parent
+                        current.recycle()
+                        current = next
+                    }
+
+                    // If no clickable ancestor found, return the original node anyway
+                    // (smartClick will try shell tap which doesn't need clickable=true)
+                    Log.i(TAG, "📍 ⚠️ No clickable ancestor found, returning original node for shell tap")
                     return AccessibilityNodeInfo.obtain(node)
                 }
             }
@@ -1944,34 +1981,45 @@ class PriceReaderService : AccessibilityService() {
 
     /**
      * SMART CLICK: Try multiple click strategies in order of reliability
-     * 1. Gesture tap (most reliable)
-     * 2. ACTION_CLICK on node
-     * 3. ACTION_CLICK on parent
+     * 1. Shell tap (most reliable - bypasses app protections)
+     * 2. Gesture tap
+     * 3. ACTION_CLICK on node
+     * 4. ACTION_CLICK on parent
      */
     private fun smartClick(node: AccessibilityNodeInfo): Boolean {
-        // Strategy 1: Gesture tap (most reliable for complex UIs)
+        val rect = android.graphics.Rect()
+        node.getBoundsInScreen(rect)
+        val centerX = rect.centerX()
+        val centerY = rect.centerY()
+
+        // Validate coordinates
+        if (centerX <= 0 || centerY <= 0) {
+            Log.w(TAG, "🎯 Invalid coordinates for click: ($centerX, $centerY)")
+            return false
+        }
+
+        // Strategy 1: Shell tap (most reliable - bypasses accessibility gesture blocking)
+        if (shellTap(centerX, centerY)) {
+            Log.i(TAG, "🎯 ✓ Smart click SUCCESS via shell tap at ($centerX, $centerY)")
+            return true
+        }
+
+        // Strategy 2: Gesture tap
         if (clickNodeByGesture(node)) {
             Log.i(TAG, "🎯 ✓ Smart click SUCCESS via gesture")
             return true
         }
 
-        // Strategy 2: Direct ACTION_CLICK
+        // Strategy 3: Direct ACTION_CLICK
         if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
             Log.i(TAG, "🎯 ✓ Smart click SUCCESS via ACTION_CLICK")
             return true
         }
 
-        // Strategy 3: Click parent
+        // Strategy 4: Click parent
         node.parent?.let { parent ->
             if (parent.isClickable && parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
                 Log.i(TAG, "🎯 ✓ Smart click SUCCESS via parent ACTION_CLICK")
-                parent.recycle()
-                return true
-            }
-
-            // Strategy 4: Gesture tap on parent
-            if (clickNodeByGesture(parent)) {
-                Log.i(TAG, "🎯 ✓ Smart click SUCCESS via parent gesture")
                 parent.recycle()
                 return true
             }
@@ -1980,6 +2028,30 @@ class PriceReaderService : AccessibilityService() {
 
         Log.w(TAG, "🎯 ✗ Smart click FAILED - all strategies exhausted")
         return false
+    }
+
+    /**
+     * Execute shell tap command - bypasses accessibility service limitations
+     * Uses 'input tap x y' command which directly injects input events
+     */
+    private fun shellTap(x: Int, y: Int): Boolean {
+        return try {
+            Log.i(TAG, "🖱️ Shell tap at ($x, $y)")
+            val process = Runtime.getRuntime().exec(arrayOf("input", "tap", x.toString(), y.toString()))
+            val exitCode = process.waitFor()
+            if (exitCode == 0) {
+                Log.i(TAG, "🖱️ ✓ Shell tap SUCCESS")
+                // Give the app time to process the tap
+                Thread.sleep(200)
+                true
+            } else {
+                Log.w(TAG, "🖱️ ✗ Shell tap failed with exit code: $exitCode")
+                false
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "🖱️ ✗ Shell tap error: ${e.message}")
+            false
+        }
     }
 
     private fun notifyPriceCaptured(priceInfo: PriceInfo) {
