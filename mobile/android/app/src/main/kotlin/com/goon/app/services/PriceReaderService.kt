@@ -122,6 +122,7 @@ class PriceReaderService : AccessibilityService() {
     private var lastInDriverToastTime = 0L
     private val toastDebounce = 3000L // Show toast every 3 seconds max
     private var lastDiDiSelectAddressClickTime = 0L // Cooldown for DiDi address selection
+    private var lastInDriverClickTime = 0L // Cooldown for InDriver (crashes with rapid clicks)
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -1767,6 +1768,13 @@ class PriceReaderService : AccessibilityService() {
             Log.i(TAG, "🗺️   - '$text'")
         }
 
+        // Cooldown to prevent clicking too fast (InDriver crashes with rapid interactions)
+        val currentTime = System.currentTimeMillis()
+        if (currentTime - lastInDriverClickTime < 3000) {
+            Log.i(TAG, "🗺️ InDriver cooldown active, waiting...")
+            return true // Return true to prevent other actions
+        }
+
         // ============================================================
         // STEP 1: Check for "No Results" screen - need to click "Choose on map"
         // This appears when InDriver can't find the coordinates as an address
@@ -1799,9 +1807,10 @@ class PriceReaderService : AccessibilityService() {
                     val nodeDesc = node.contentDescription?.toString() ?: ""
                     Log.i(TAG, "🗺️ Found node: text='$nodeText', desc='$nodeDesc', clickable=${node.isClickable}")
 
-                    // Use smartClick for reliability
-                    if (smartClick(node)) {
+                    // Use gentle click for InDriver - just ACTION_CLICK, no gestures
+                    if (gentleClick(node)) {
                         Log.i(TAG, "🗺️ ✓ Clicked '$chooseText' option - transitioning to map screen")
+                        lastInDriverClickTime = currentTime
                         node.recycle()
                         return true
                     }
@@ -1831,15 +1840,16 @@ class PriceReaderService : AccessibilityService() {
         if (hasMapConfirmation) {
             Log.i(TAG, "🗺️ Detected InDriver MAP CONFIRMATION screen - clicking 'تم' button")
 
-            // Try to click the "تم" button using smartClick
+            // Try to click the "تم" button using gentleClick (safer for InDriver)
             val doneTexts = listOf("تم", "Done", "Confirm", "تأكيد")
             for (doneText in doneTexts) {
                 val nodes = rootNode.findAccessibilityNodeInfosByText(doneText)
                 for (node in nodes) {
-                    Log.i(TAG, "🗺️ Found '$doneText' button, attempting smartClick...")
+                    Log.i(TAG, "🗺️ Found '$doneText' button, attempting gentleClick...")
 
-                    if (smartClick(node)) {
+                    if (gentleClick(node)) {
                         Log.i(TAG, "🗺️ ✓ Clicked '$doneText' button")
+                        lastInDriverClickTime = currentTime
                         node.recycle()
                         return true
                     }
@@ -1847,8 +1857,7 @@ class PriceReaderService : AccessibilityService() {
                 }
             }
 
-            // If smartClick didn't work, show toast as fallback
-            val currentTime = System.currentTimeMillis()
+            // If gentleClick didn't work, show toast as fallback
             if (currentTime - lastInDriverToastTime > toastDebounce) {
                 lastInDriverToastTime = currentTime
                 handler.post {
@@ -2080,6 +2089,41 @@ class PriceReaderService : AccessibilityService() {
         // Return true optimistically - we tried everything
         Log.i(TAG, "🎯 Attempted all click strategies")
         return true
+    }
+
+    /**
+     * Gentle click for apps that crash with aggressive interactions (like InDriver)
+     * Only uses simple ACTION_CLICK, no gestures or shell commands
+     */
+    private fun gentleClick(node: AccessibilityNodeInfo): Boolean {
+        Log.i(TAG, "🎯 Gentle click on node...")
+
+        // Try ACTION_CLICK on the node itself
+        if (node.isClickable) {
+            Log.i(TAG, "🎯 Node is clickable, trying ACTION_CLICK...")
+            if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                Log.i(TAG, "🎯 ✓ Gentle click SUCCESS")
+                Thread.sleep(500) // Wait after click
+                return true
+            }
+        }
+
+        // Try clicking parent if it's clickable
+        node.parent?.let { parent ->
+            if (parent.isClickable) {
+                Log.i(TAG, "🎯 Parent is clickable, trying ACTION_CLICK on parent...")
+                if (parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    Log.i(TAG, "🎯 ✓ Gentle click SUCCESS via parent")
+                    Thread.sleep(500)
+                    parent.recycle()
+                    return true
+                }
+            }
+            parent.recycle()
+        }
+
+        Log.w(TAG, "🎯 Gentle click failed")
+        return false
     }
 
     /**
