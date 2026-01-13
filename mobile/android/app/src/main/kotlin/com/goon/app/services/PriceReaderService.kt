@@ -121,6 +121,7 @@ class PriceReaderService : AccessibilityService() {
     private val handler = Handler(Looper.getMainLooper())
     private var lastInDriverToastTime = 0L
     private val toastDebounce = 3000L // Show toast every 3 seconds max
+    private var lastDiDiSelectAddressClickTime = 0L // Cooldown for DiDi address selection
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -467,6 +468,14 @@ class PriceReaderService : AccessibilityService() {
                     val cachedPrice = latestPrices[packageName]
 
                     Log.i(TAG, "🤖 Waiting for price (elapsed: ${elapsedTime}ms, cached: ${cachedPrice?.allPricesFound?.size ?: 0} prices)...")
+
+                    // CRITICAL: Check for intermediate screens FIRST (DiDi may still be on "Select Address")
+                    if (packageName == DIDI_PACKAGE) {
+                        if (handleDiDiIntermediateScreens(rootNode)) {
+                            Log.i(TAG, "🤖 📋 Handled DiDi intermediate screen during WAITING_FOR_PRICE")
+                            return
+                        }
+                    }
 
                     // For Uber: Wait minimum time to let prices fully load
                     if (isUber && elapsedTime < UBER_MIN_WAIT_MS) {
@@ -1454,7 +1463,16 @@ class PriceReaderService : AccessibilityService() {
         }
 
         if (hasSelectAddressScreen) {
-            Log.i(TAG, "📍 Detected DiDi 'Select Address' screen - selecting first address card")
+            Log.i(TAG, "📍 Detected DiDi 'Select Address' screen")
+
+            // Check cooldown to prevent clicking too fast (wait 3 seconds between clicks)
+            val currentTime = System.currentTimeMillis()
+            if (currentTime - lastDiDiSelectAddressClickTime < 3000) {
+                Log.i(TAG, "📍 Waiting for cooldown (${3000 - (currentTime - lastDiDiSelectAddressClickTime)}ms remaining)")
+                return false // Don't handle - let automation continue waiting
+            }
+
+            Log.i(TAG, "📍 Selecting first address card...")
 
             // Find the first clickable address card
             val addressCard = findFirstDiDiAddressCard(rootNode)
@@ -1464,15 +1482,13 @@ class PriceReaderService : AccessibilityService() {
 
                 // Use smart click (shell tap + gesture)
                 if (smartClick(addressCard)) {
-                    Log.i(TAG, "📍 ✓ Successfully clicked address card - transitioning to WAITING_FOR_PRICE")
+                    Log.i(TAG, "📍 ✓ Successfully clicked address card")
                     addressCard.recycle()
 
-                    // CRITICAL: Transition to WAITING_FOR_PRICE after successful click
-                    // This prevents the loop of clicking repeatedly
-                    automationState = AutomationState.WAITING_FOR_PRICE
-                    automationRetries = 0
-                    automationStep = 0
+                    // Record click time for cooldown
+                    lastDiDiSelectAddressClickTime = currentTime
 
+                    // Don't change state - let caller decide
                     return true
                 }
                 addressCard.recycle()
