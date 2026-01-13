@@ -13,7 +13,7 @@ class AppConstants {
   static const String supabaseAnonKey = 'sb_publishable_2n0QoHCnJwNFmyTEFMmGzg_8If3NZw0';
 
   // Google Maps
-  static const String googleMapsApiKey = 'AIzaSyCbznPtCPWycj73Hbvj0NFXy77Uffk5L7Y';
+  static const String googleMapsApiKey = 'AIzaSyCNjLxDwYspgUFPiauhiHj5Hy9NdL9f-u4';
 
   // API Endpoints
   static const String railwayBaseUrl = 'https://your-railway-app.railway.app';
