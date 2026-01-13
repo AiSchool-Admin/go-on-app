@@ -2020,6 +2020,16 @@ class PriceReaderService : AccessibilityService() {
         val hasGoogleMap = allTextLower.any { it.contains("google") }
 
         if (hasMapConfirmation) {
+            // CRITICAL: If we already clicked "Done", DON'T click again!
+            // Double-clicking "تم" cancels the trip in InDriver
+            if (inDriverDoneClickedTime > 0) {
+                val timeSinceDoneClick = System.currentTimeMillis() - inDriverDoneClickedTime
+                Log.i(TAG, "🗺️ Map confirmation screen detected but 'Done' already clicked ${timeSinceDoneClick}ms ago - NOT clicking again!")
+                // Return false to indicate we're NOT on an intermediate screen anymore
+                // (we already handled it, just waiting for screen transition)
+                return false
+            }
+
             Log.i(TAG, "🗺️ Detected InDriver MAP CONFIRMATION screen - clicking 'تم' button")
 
             // Try to click the "تم" button using gentleClick (safer for InDriver)
