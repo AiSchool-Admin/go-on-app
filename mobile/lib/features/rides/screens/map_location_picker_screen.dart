@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:geocoding/geocoding.dart';
 import 'package:http/http.dart' as http;
 
 import '../../../core/constants/app_colors.dart';
@@ -131,39 +130,24 @@ class _MapLocationPickerScreenState extends ConsumerState<MapLocationPickerScree
     setState(() => _isLoadingAddress = true);
 
     try {
-      // First try: Google Places API for nearby landmarks (most accurate)
-      final nearbyPlace = await _getNearbyPlaceName(location);
-      if (nearbyPlace != null && nearbyPlace.isNotEmpty) {
+      // Use Google Geocoding API directly (same as Google Maps app)
+      final address = await _getAddressFromGoogleAPI(location);
+
+      if (address != null && address.isNotEmpty) {
         setState(() {
-          _selectedAddress = nearbyPlace;
+          _selectedAddress = address;
           _isLoadingAddress = false;
         });
         return;
       }
 
-      // Fallback: Standard geocoding
-      final placemarks = await placemarkFromCoordinates(
-        location.latitude,
-        location.longitude,
-      );
-
-      if (placemarks.isNotEmpty) {
-        final place = placemarks.first;
-        final address = _buildAddressFromPlacemark(place);
-
-        setState(() {
-          _selectedAddress = address.isNotEmpty
-              ? address
-              : '${location.latitude.toStringAsFixed(6)}, ${location.longitude.toStringAsFixed(6)}';
-          _isLoadingAddress = false;
-        });
-      } else {
-        setState(() {
-          _selectedAddress = '${location.latitude.toStringAsFixed(6)}, ${location.longitude.toStringAsFixed(6)}';
-          _isLoadingAddress = false;
-        });
-      }
+      // Fallback to coordinates if API fails
+      setState(() {
+        _selectedAddress = '${location.latitude.toStringAsFixed(6)}, ${location.longitude.toStringAsFixed(6)}';
+        _isLoadingAddress = false;
+      });
     } catch (e) {
+      debugPrint('Address lookup error: $e');
       setState(() {
         _selectedAddress = '${location.latitude.toStringAsFixed(6)}, ${location.longitude.toStringAsFixed(6)}';
         _isLoadingAddress = false;
@@ -171,107 +155,92 @@ class _MapLocationPickerScreenState extends ConsumerState<MapLocationPickerScree
     }
   }
 
-  /// Get nearby place name using Google Places API
-  Future<String?> _getNearbyPlaceName(LatLng location) async {
+  /// Get address using Google Geocoding API (same as Google Maps)
+  Future<String?> _getAddressFromGoogleAPI(LatLng location) async {
     try {
       final apiKey = AppConstants.googleMapsApiKey;
+
+      // Use Google Geocoding API with Arabic language
       final url = Uri.parse(
-        'https://maps.googleapis.com/maps/api/place/nearbysearch/json'
-        '?location=${location.latitude},${location.longitude}'
-        '&radius=100'  // 100 meters radius
-        '&language=ar'  // Arabic results
+        'https://maps.googleapis.com/maps/api/geocode/json'
+        '?latlng=${location.latitude},${location.longitude}'
+        '&language=ar'
+        '&result_type=street_address|route|sublocality|locality|point_of_interest|establishment'
         '&key=$apiKey'
       );
 
-      final response = await http.get(url).timeout(const Duration(seconds: 5));
+      final response = await http.get(url).timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        final results = data['results'] as List?;
+        final status = data['status'] as String?;
 
-        if (results != null && results.isNotEmpty) {
-          // Get the first result (closest)
-          final firstPlace = results.first;
-          final placeName = firstPlace['name'] as String?;
-          final vicinity = firstPlace['vicinity'] as String?;
+        debugPrint('Geocoding API status: $status');
 
-          if (placeName != null && placeName.isNotEmpty) {
-            // Return place name with vicinity if available
-            if (vicinity != null && vicinity.isNotEmpty && !vicinity.contains('Unnamed')) {
-              return '$placeName، $vicinity';
+        if (status == 'OK') {
+          final results = data['results'] as List?;
+
+          if (results != null && results.isNotEmpty) {
+            // Try to find the best result
+            for (final result in results) {
+              final formattedAddress = result['formatted_address'] as String?;
+              final types = (result['types'] as List?)?.cast<String>() ?? [];
+
+              // Prefer specific addresses over general ones
+              if (formattedAddress != null && formattedAddress.isNotEmpty) {
+                // Skip if it's just a Plus Code
+                if (_isPlusCode(formattedAddress.split(',').first)) {
+                  continue;
+                }
+
+                // Clean up the address
+                final cleanedAddress = _cleanGoogleAddress(formattedAddress);
+                if (cleanedAddress.isNotEmpty) {
+                  debugPrint('Found address: $cleanedAddress');
+                  return cleanedAddress;
+                }
+              }
             }
-            return placeName;
+
+            // If no good result, use the first one
+            final firstResult = results.first;
+            final formattedAddress = firstResult['formatted_address'] as String?;
+            if (formattedAddress != null) {
+              return _cleanGoogleAddress(formattedAddress);
+            }
           }
+        } else if (status == 'REQUEST_DENIED') {
+          debugPrint('Geocoding API denied - check API key and enable Geocoding API');
+        } else if (status == 'ZERO_RESULTS') {
+          debugPrint('Geocoding API: No results for this location');
         }
       }
     } catch (e) {
-      // Silently fail and use geocoding fallback
-      debugPrint('Places API error: $e');
+      debugPrint('Google Geocoding API error: $e');
     }
     return null;
   }
 
-  /// Build address from placemark with smart filtering
-  String _buildAddressFromPlacemark(Placemark place) {
-    final parts = <String>[];
+  /// Clean up Google's formatted address
+  String _cleanGoogleAddress(String address) {
+    // Split by comma
+    final parts = address.split(',').map((p) => p.trim()).toList();
 
-    // 1. Name (if it's a named place like a building or landmark)
-    if (place.name != null &&
-        place.name!.isNotEmpty &&
-        !_isPlusCode(place.name) &&
-        !_isCoordinate(place.name!) &&
-        place.name != place.street) {
-      parts.add(place.name!);
-    }
+    // Remove unwanted parts
+    final cleanedParts = parts.where((part) {
+      final lower = part.toLowerCase();
+      // Remove Plus Codes
+      if (_isPlusCode(part)) return false;
+      // Remove country name
+      if (lower == 'egypt' || lower == 'مصر') return false;
+      // Remove postal codes (numbers only)
+      if (RegExp(r'^\d+$').hasMatch(part)) return false;
+      return true;
+    }).toList();
 
-    // 2. Street (if meaningful)
-    if (place.street != null &&
-        place.street!.isNotEmpty &&
-        !_isPlusCode(place.street) &&
-        !_isUnnamed(place.street!)) {
-      parts.add(place.street!);
-    }
-
-    // 3. Sublocality (neighborhood)
-    if (place.subLocality != null &&
-        place.subLocality!.isNotEmpty &&
-        !_isPlusCode(place.subLocality) &&
-        !parts.contains(place.subLocality)) {
-      parts.add(place.subLocality!);
-    }
-
-    // 4. Locality (city/district)
-    if (place.locality != null &&
-        place.locality!.isNotEmpty &&
-        !_isPlusCode(place.locality) &&
-        !parts.contains(place.locality)) {
-      parts.add(place.locality!);
-    }
-
-    // 5. If still empty, use administrative area
-    if (parts.isEmpty && place.administrativeArea != null) {
-      parts.add(place.administrativeArea!);
-    }
-
-    // Remove any entries that are just "Governorate" alone
-    final filteredParts = parts.where((p) =>
-      !p.toLowerCase().trim().endsWith('governorate') || p.split(' ').length > 1
-    ).toList();
-
-    return filteredParts.join('، ');
-  }
-
-  /// Check if text looks like coordinates
-  bool _isCoordinate(String text) {
-    return RegExp(r'^\d+\.\d+,?\s*\d+\.\d+$').hasMatch(text.trim());
-  }
-
-  /// Check if text is "Unnamed Road" or similar
-  bool _isUnnamed(String text) {
-    final lower = text.toLowerCase().trim();
-    return lower.startsWith('unnamed') ||
-           lower == 'road' ||
-           lower.contains('unnamed road');
+    // Take first 2-3 meaningful parts
+    final result = cleanedParts.take(3).join('، ');
+    return result;
   }
 
   void _confirmLocation() {
