@@ -201,6 +201,9 @@ class PriceReaderService : AccessibilityService() {
     private val UBER_MIN_WAIT_MS = 8000L  // Wait at least 8 seconds for Uber to load prices
     private val UBER_MIN_PRICE = 50.0  // Minimum valid price for Uber
 
+    // Track if InDriver destination was successfully entered (to avoid accepting default price)
+    private var inDriverDestinationEntered = false
+
     enum class AutomationState {
         IDLE,
         WAITING_FOR_APP,
@@ -245,6 +248,7 @@ class PriceReaderService : AccessibilityService() {
         isActiveMonitoring = true
         automationStartTime = System.currentTimeMillis()  // Track when automation started
         uberScreenReady = false  // Reset screen ready flag
+        inDriverDestinationEntered = false  // Reset InDriver destination flag
 
         // Clear any old cached prices for this app
         latestPrices.remove(packageName)
@@ -358,6 +362,10 @@ class PriceReaderService : AccessibilityService() {
                     val entered = enterDestinationText(rootNode, packageName)
                     if (entered) {
                         Log.i(TAG, "🤖 ✓ Entered destination, transitioning to WAITING_FOR_SUGGESTIONS...")
+                        if (packageName == INDRIVER_PACKAGE) {
+                            inDriverDestinationEntered = true
+                            Log.i(TAG, "🤖 ✓ InDriver destination entry SUCCESS - will accept prices now")
+                        }
                         automationState = AutomationState.WAITING_FOR_SUGGESTIONS
                         automationRetries = 0
                         automationStep = 0
@@ -365,9 +373,15 @@ class PriceReaderService : AccessibilityService() {
                         Log.w(TAG, "🤖 ✗ Failed to enter destination text")
                         automationRetries++
                         if (automationRetries > 3) {
-                            // Skip to suggestion selection anyway
-                            Log.w(TAG, "🤖 Skipping to WAITING_FOR_SUGGESTIONS despite enter failure")
-                            automationState = AutomationState.WAITING_FOR_SUGGESTIONS
+                            if (packageName == INDRIVER_PACKAGE) {
+                                // For InDriver: Don't skip - mark as FAILED since we can't trust default prices
+                                Log.e(TAG, "🤖 ✗✗✗ InDriver destination entry FAILED - cannot trust default price")
+                                automationState = AutomationState.FAILED
+                            } else {
+                                // For other apps: Skip to suggestion selection anyway
+                                Log.w(TAG, "🤖 Skipping to WAITING_FOR_SUGGESTIONS despite enter failure")
+                                automationState = AutomationState.WAITING_FOR_SUGGESTIONS
+                            }
                             automationRetries = 0
                         }
                     }
@@ -378,17 +392,19 @@ class PriceReaderService : AccessibilityService() {
                     automationStep++
                     Log.i(TAG, "🤖 Waiting for suggestions (step $automationStep/3)...")
 
-                    // CRITICAL: For InDriver, check if prices are ALREADY cached before continuing automation
-                    // InDriver shows prices on the map screen, so we might have them already!
+                    // CRITICAL: For InDriver, only accept cached price if destination was ACTUALLY entered
+                    // This prevents accepting the default price (95 EGP) when destination entry failed
                     if (packageName == INDRIVER_PACKAGE) {
                         val cachedPrice = latestPrices[packageName]
-                        Log.d(TAG, "🤖 InDriver cached price check: price=${cachedPrice?.price}, allPrices=${cachedPrice?.allPricesFound}")
-                        if (cachedPrice != null && cachedPrice.price > 0) {
-                            Log.i(TAG, "🤖 ✓✓✓ InDriver PRICES ALREADY CACHED: ${cachedPrice.price} EGP")
+                        Log.d(TAG, "🤖 InDriver cached price check: price=${cachedPrice?.price}, destinationEntered=$inDriverDestinationEntered")
+                        if (cachedPrice != null && cachedPrice.price > 0 && inDriverDestinationEntered) {
+                            Log.i(TAG, "🤖 ✓✓✓ InDriver PRICES CACHED & DESTINATION ENTERED: ${cachedPrice.price} EGP")
                             Log.i(TAG, "🤖 Skipping to PRICE_CAPTURED - no need to continue automation!")
                             automationState = AutomationState.PRICE_CAPTURED
                             autoReturnToGoOn()
                             return
+                        } else if (cachedPrice != null && cachedPrice.price > 0 && !inDriverDestinationEntered) {
+                            Log.w(TAG, "🤖 ⚠️ InDriver has cached price ${cachedPrice.price} BUT destination NOT entered - ignoring default price")
                         }
                     }
 
@@ -413,9 +429,9 @@ class PriceReaderService : AccessibilityService() {
                     if (automationStep > 3) { // Wait ~3.6 seconds for suggestions
                         // For InDriver with intermediate screens, go directly to WAITING_FOR_PRICE
                         if (packageName == INDRIVER_PACKAGE) {
-                            // Check again for cached price before transitioning
+                            // Check again for cached price before transitioning (ONLY if destination entered)
                             val cachedPrice = latestPrices[packageName]
-                            if (cachedPrice != null && cachedPrice.price > 0) {
+                            if (cachedPrice != null && cachedPrice.price > 0 && inDriverDestinationEntered) {
                                 Log.i(TAG, "🤖 InDriver price found during transition: ${cachedPrice.price} EGP")
                                 automationState = AutomationState.PRICE_CAPTURED
                                 autoReturnToGoOn()
@@ -668,6 +684,21 @@ class PriceReaderService : AccessibilityService() {
         logAllVisibleTextDetailed(rootNode, 0)
         Log.i(TAG, "🚗 === END OF VISIBLE TEXT ===")
 
+        // Strategy 0: Find InDriver's address bar by resource ID (most reliable)
+        Log.i(TAG, "🚗 Strategy 0: Looking for InDriver address bar by resource ID...")
+        val addressBarIds = listOf(
+            "form_addresses_bar_compose",  // Main address bar in InDriver
+            "form_addresses_bar",
+            "addresses_bar",
+            "destination_input",
+            "where_to_input"
+        )
+        val addressBarClicked = findAndClickByResourceId(rootNode, addressBarIds)
+        if (addressBarClicked) {
+            Log.i(TAG, "🚗 ✓✓✓ SUCCESS via address bar resource ID")
+            return true
+        }
+
         // InDriver specific search texts - Arabic and English
         // IMPORTANT: Include the EXACT text from InDriver's UI
         val inDriverTexts = listOf(
@@ -789,18 +820,53 @@ class PriceReaderService : AccessibilityService() {
 
     /**
      * Find and click element by partial text match
+     * EXCLUDES: icons, contractor elements, images, and other false positives
      */
     private fun findAndClickByPartialText(node: AccessibilityNodeInfo, keywords: List<String>): Boolean {
         val text = node.text?.toString()?.lowercase() ?: ""
         val desc = node.contentDescription?.toString()?.lowercase() ?: ""
         val hint = (if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O)
             node.hintText?.toString()?.lowercase() else null) ?: ""
+        val viewId = node.viewIdResourceName?.lowercase() ?: ""
+        val className = node.className?.toString()?.lowercase() ?: ""
 
-        val combined = "$text $desc $hint"
+        // EXCLUSION LIST - skip elements that are likely NOT destination fields
+        val excludePatterns = listOf(
+            "icon", "image", "contractor", "avatar", "photo", "picture",
+            "button", "menu", "drawer", "navigation", "back", "close",
+            "rating", "star", "badge", "notification"
+        )
+
+        // Check if this element should be excluded
+        val combinedForExclusion = "$desc $viewId $className"
+        for (pattern in excludePatterns) {
+            if (combinedForExclusion.contains(pattern)) {
+                // Log exclusion for debugging
+                if (text.isNotEmpty() || desc.isNotEmpty()) {
+                    Log.d(TAG, "🚗 Excluding element due to '$pattern': viewId=$viewId, class=$className")
+                }
+                // Continue checking children, don't return false
+                break
+            }
+        }
+
+        // Only match against actual text content, not IDs or class names
+        val textToSearch = "$text $hint"
 
         for (keyword in keywords) {
-            if (combined.contains(keyword.lowercase())) {
-                Log.i(TAG, "🚗 Partial match found for '$keyword' in '$combined'")
+            if (textToSearch.contains(keyword.lowercase())) {
+                Log.i(TAG, "🚗 Partial match found for '$keyword' in text='$text', hint='$hint'")
+
+                // Extra validation: skip if viewId contains exclusion patterns
+                var shouldSkip = false
+                for (pattern in excludePatterns) {
+                    if (viewId.contains(pattern) || className.contains(pattern)) {
+                        Log.w(TAG, "🚗 Skipping match - viewId/class contains '$pattern'")
+                        shouldSkip = true
+                        break
+                    }
+                }
+                if (shouldSkip) continue
 
                 // Try to click
                 if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
@@ -810,7 +876,16 @@ class PriceReaderService : AccessibilityService() {
                 // Try parent
                 val parent = node.parent
                 if (parent != null && parent.isClickable) {
-                    if (parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    val parentViewId = parent.viewIdResourceName?.lowercase() ?: ""
+                    // Don't click parent if it's an excluded element
+                    var parentExcluded = false
+                    for (pattern in excludePatterns) {
+                        if (parentViewId.contains(pattern)) {
+                            parentExcluded = true
+                            break
+                        }
+                    }
+                    if (!parentExcluded && parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
                         parent.recycle()
                         return true
                     }
@@ -823,6 +898,79 @@ class PriceReaderService : AccessibilityService() {
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
             if (findAndClickByPartialText(child, keywords)) {
+                child.recycle()
+                return true
+            }
+            child.recycle()
+        }
+
+        return false
+    }
+
+    /**
+     * Find and click element by resource ID
+     * Specifically for InDriver's ComposeView address bar
+     */
+    private fun findAndClickByResourceId(node: AccessibilityNodeInfo, resourceIds: List<String>): Boolean {
+        val viewId = node.viewIdResourceName ?: ""
+
+        // Check if this node matches any of the target resource IDs
+        for (targetId in resourceIds) {
+            if (viewId.contains(targetId, ignoreCase = true)) {
+                Log.i(TAG, "🚗 Found element by resource ID: $viewId")
+
+                // Try to click directly
+                if (node.isClickable) {
+                    Log.i(TAG, "🚗 Clicking on $viewId...")
+                    if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        Log.i(TAG, "🚗 ✓ Click SUCCESS on $viewId")
+                        return true
+                    }
+                }
+
+                // Try to find a clickable child
+                for (i in 0 until node.childCount) {
+                    val child = node.getChild(i) ?: continue
+                    if (child.isClickable) {
+                        Log.i(TAG, "🚗 Clicking on child of $viewId...")
+                        if (child.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                            Log.i(TAG, "🚗 ✓ Click SUCCESS on child of $viewId")
+                            child.recycle()
+                            return true
+                        }
+                    }
+                    child.recycle()
+                }
+
+                // Try gesture click on the element
+                val rect = android.graphics.Rect()
+                node.getBoundsInScreen(rect)
+                if (rect.width() > 0 && rect.height() > 0) {
+                    val centerX = rect.centerX().toFloat()
+                    val centerY = rect.centerY().toFloat()
+                    Log.i(TAG, "🚗 Gesture click on $viewId at ($centerX, $centerY)")
+
+                    val path = android.graphics.Path()
+                    path.moveTo(centerX, centerY)
+
+                    val gestureBuilder = android.accessibilityservice.GestureDescription.Builder()
+                    gestureBuilder.addStroke(
+                        android.accessibilityservice.GestureDescription.StrokeDescription(
+                            path, 0, 100
+                        )
+                    )
+
+                    dispatchGesture(gestureBuilder.build(), null, null)
+                    Thread.sleep(300)
+                    return true
+                }
+            }
+        }
+
+        // Recursively check children
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (findAndClickByResourceId(child, resourceIds)) {
                 child.recycle()
                 return true
             }
