@@ -1038,9 +1038,24 @@ class PriceReaderService : AccessibilityService() {
 
     /**
      * Enter destination text into focused field
+     * For DiDi/InDriver: Uses COORDINATES instead of text address to avoid multiple results
      */
     private fun enterDestinationText(rootNode: AccessibilityNodeInfo, packageName: String): Boolean {
         Log.i(TAG, "🤖 enterDestinationText: Looking for focused input...")
+
+        // Determine what to enter: COORDINATES for DiDi/InDriver, TEXT for others
+        val textToEnter = when (packageName) {
+            DIDI_PACKAGE, INDRIVER_PACKAGE -> {
+                // Use coordinates format that apps recognize
+                val coordText = "$destLat, $destLng"
+                Log.i(TAG, "🤖 Using COORDINATES for $packageName: $coordText")
+                coordText
+            }
+            else -> {
+                Log.i(TAG, "🤖 Using TEXT address for $packageName: $destinationAddress")
+                destinationAddress
+            }
+        }
 
         val focusedNode = rootNode.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
         if (focusedNode != null) {
@@ -1052,13 +1067,13 @@ class PriceReaderService : AccessibilityService() {
             val args = android.os.Bundle()
             args.putCharSequence(
                 AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
-                destinationAddress
+                textToEnter
             )
             val result = focusedNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
             focusedNode.recycle()
 
             if (result) {
-                Log.i(TAG, "🤖 ✓ Successfully entered destination: $destinationAddress")
+                Log.i(TAG, "🤖 ✓ Successfully entered destination: $textToEnter")
                 return true
             } else {
                 Log.w(TAG, "🤖 ✗ ACTION_SET_TEXT failed on focused node")
@@ -1069,7 +1084,7 @@ class PriceReaderService : AccessibilityService() {
 
         // Fallback: find any editable field and enter text
         Log.i(TAG, "🤖 Fallback: searching for any EditText field...")
-        return enterTextIntoAnyEditText(rootNode, destinationAddress)
+        return enterTextIntoAnyEditText(rootNode, textToEnter)
     }
 
     private fun enterTextIntoAnyEditText(node: AccessibilityNodeInfo, text: String): Boolean {
