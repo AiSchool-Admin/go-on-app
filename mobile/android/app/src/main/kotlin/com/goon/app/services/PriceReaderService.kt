@@ -1108,6 +1108,11 @@ class PriceReaderService : AccessibilityService() {
             collectInDriverSuggestions(rootNode, suggestions)
         }
 
+        // Also try DiDi-specific suggestion collection (for "Select Address" screen)
+        if (suggestions.isEmpty() && packageName == DIDI_PACKAGE) {
+            collectDiDiSuggestions(rootNode, suggestions)
+        }
+
         Log.i(TAG, "📋 Found ${suggestions.size} suggestions:")
         suggestions.forEachIndexed { index, (_, text) ->
             Log.i(TAG, "   [$index] '$text'")
@@ -1222,6 +1227,54 @@ class PriceReaderService : AccessibilityService() {
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
             collectInDriverSuggestions(child, suggestions)
+            child.recycle()
+        }
+    }
+
+    /**
+     * Collect suggestions specifically for DiDi's "Select Address" screen
+     */
+    private fun collectDiDiSuggestions(node: AccessibilityNodeInfo, suggestions: MutableList<Pair<AccessibilityNodeInfo, String>>) {
+        val className = node.className?.toString() ?: ""
+        val text = node.text?.toString() ?: ""
+
+        // DiDi shows address suggestions with location names and distances
+        // Look for clickable items that contain location text
+        if (node.isClickable && text.isNotBlank() && text.length > 5) {
+            val isNotButton = !text.contains("Pin your location") &&
+                              !text.contains("Select Address") &&
+                              !text.contains("العبور مصر") &&  // Skip the search field text
+                              !text.lowercase().contains("search") &&
+                              !text.contains("بحث") &&
+                              !text.contains("Powered by")
+            if (isNotButton) {
+                suggestions.add(Pair(AccessibilityNodeInfo.obtain(node), text))
+                Log.i(TAG, "📍 DiDi suggestion: '$text'")
+            }
+        }
+
+        // Also check for ViewGroups with multiple text children (address cards)
+        if (className.contains("ViewGroup") || className.contains("LinearLayout") || className.contains("FrameLayout")) {
+            val combinedText = getNodeText(node)
+            if (combinedText.isNotBlank() && combinedText.length > 10 &&
+                node.isClickable &&
+                !combinedText.contains("Pin your location") &&
+                !combinedText.contains("Select Address") &&
+                !combinedText.contains("Powered by")) {
+
+                // Check if it looks like an address (contains distance like "km" or "كم")
+                if (combinedText.contains("km") || combinedText.contains("كم") ||
+                    combinedText.contains("محافظة") || combinedText.contains("العبور")) {
+                    suggestions.add(Pair(AccessibilityNodeInfo.obtain(node), combinedText))
+                    Log.i(TAG, "📍 DiDi suggestion (combined): '$combinedText'")
+                }
+            }
+        }
+
+        // Recurse into children
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            collectDiDiSuggestions(child, suggestions)
             child.recycle()
         }
     }
