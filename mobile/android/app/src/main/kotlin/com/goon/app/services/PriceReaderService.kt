@@ -382,8 +382,9 @@ class PriceReaderService : AccessibilityService() {
                     // InDriver shows prices on the map screen, so we might have them already!
                     if (packageName == INDRIVER_PACKAGE) {
                         val cachedPrice = latestPrices[packageName]
-                        if (cachedPrice != null && cachedPrice.price > 0 && cachedPrice.allPricesFound.isNotEmpty()) {
-                            Log.i(TAG, "🤖 ✓✓✓ InDriver PRICES ALREADY CACHED: ${cachedPrice.price} EGP (${cachedPrice.allPricesFound})")
+                        Log.d(TAG, "🤖 InDriver cached price check: price=${cachedPrice?.price}, allPrices=${cachedPrice?.allPricesFound}")
+                        if (cachedPrice != null && cachedPrice.price > 0) {
+                            Log.i(TAG, "🤖 ✓✓✓ InDriver PRICES ALREADY CACHED: ${cachedPrice.price} EGP")
                             Log.i(TAG, "🤖 Skipping to PRICE_CAPTURED - no need to continue automation!")
                             automationState = AutomationState.PRICE_CAPTURED
                             autoReturnToGoOn()
@@ -412,6 +413,14 @@ class PriceReaderService : AccessibilityService() {
                     if (automationStep > 3) { // Wait ~3.6 seconds for suggestions
                         // For InDriver with intermediate screens, go directly to WAITING_FOR_PRICE
                         if (packageName == INDRIVER_PACKAGE) {
+                            // Check again for cached price before transitioning
+                            val cachedPrice = latestPrices[packageName]
+                            if (cachedPrice != null && cachedPrice.price > 0) {
+                                Log.i(TAG, "🤖 InDriver price found during transition: ${cachedPrice.price} EGP")
+                                automationState = AutomationState.PRICE_CAPTURED
+                                autoReturnToGoOn()
+                                return
+                            }
                             Log.i(TAG, "🤖 InDriver: Skipping SELECTING_SUGGESTION, going to WAITING_FOR_PRICE...")
                             automationState = AutomationState.WAITING_FOR_PRICE
                             automationStep = 0
@@ -475,11 +484,20 @@ class PriceReaderService : AccessibilityService() {
                 AutomationState.WAITING_FOR_PRICE -> {
                     val elapsedTime = System.currentTimeMillis() - automationStartTime
                     val isUber = packageName == UBER_PACKAGE
+                    val isInDriver = packageName == INDRIVER_PACKAGE
                     val cachedPrice = latestPrices[packageName]
 
-                    Log.i(TAG, "🤖 Waiting for price (elapsed: ${elapsedTime}ms, cached: ${cachedPrice?.allPricesFound?.size ?: 0} prices)...")
+                    Log.i(TAG, "🤖 Waiting for price (elapsed: ${elapsedTime}ms, cached: ${cachedPrice?.price ?: 0} EGP)...")
 
-                    // CRITICAL: Check for intermediate screens FIRST
+                    // CRITICAL: For InDriver, if we have ANY price, we're done!
+                    if (isInDriver && cachedPrice != null && cachedPrice.price > 0) {
+                        Log.i(TAG, "🤖 ✓✓✓ InDriver PRICE FOUND: ${cachedPrice.price} EGP")
+                        automationState = AutomationState.PRICE_CAPTURED
+                        autoReturnToGoOn()
+                        return
+                    }
+
+                    // CRITICAL: Check for intermediate screens
                     // DiDi may still be on "Select Address", InDriver may be on "No Results" or map confirmation
                     if (packageName == DIDI_PACKAGE) {
                         if (handleDiDiIntermediateScreens(rootNode)) {
@@ -487,9 +505,16 @@ class PriceReaderService : AccessibilityService() {
                             return
                         }
                     }
-                    if (packageName == INDRIVER_PACKAGE) {
+                    if (isInDriver) {
                         if (handleInDriverIntermediateScreens(rootNode)) {
                             Log.i(TAG, "🤖 📋 Handled InDriver intermediate screen during WAITING_FOR_PRICE")
+                            // Check again if price was captured during handling
+                            val newCachedPrice = latestPrices[packageName]
+                            if (newCachedPrice != null && newCachedPrice.price > 0) {
+                                Log.i(TAG, "🤖 ✓✓✓ InDriver PRICE FOUND after handling: ${newCachedPrice.price} EGP")
+                                automationState = AutomationState.PRICE_CAPTURED
+                                autoReturnToGoOn()
+                            }
                             return
                         }
                     }
@@ -500,7 +525,7 @@ class PriceReaderService : AccessibilityService() {
                         return
                     }
 
-                    // After minimum wait, check cache
+                    // After minimum wait, check cache (for non-InDriver apps)
                     if (cachedPrice != null && cachedPrice.price > 0 && cachedPrice.allPricesFound.size >= 2) {
                         Log.i(TAG, "🤖 ✓✓✓ PRICE FOUND: ${cachedPrice.price} EGP (${cachedPrice.allPricesFound.size} prices: ${cachedPrice.allPricesFound})")
                         automationState = AutomationState.PRICE_CAPTURED
