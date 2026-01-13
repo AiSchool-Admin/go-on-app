@@ -132,10 +132,21 @@ class _MapLocationPickerScreenState extends ConsumerState<MapLocationPickerScree
     setState(() => _isLoadingAddress = true);
 
     try {
-      // Use Google Geocoding API directly (same as Google Maps app)
-      final address = await _getAddressFromGoogleAPI(location);
+      // STEP 1: Try Google Places API to get actual place name (like Google Maps does)
+      final placeName = await _getNearbyPlaceName(location);
+      if (placeName != null && placeName.isNotEmpty) {
+        debugPrint('✓ Got place name from Places API: $placeName');
+        setState(() {
+          _selectedAddress = placeName;
+          _isLoadingAddress = false;
+        });
+        return;
+      }
 
+      // STEP 2: Fallback to Geocoding API for street address
+      final address = await _getAddressFromGoogleAPI(location);
       if (address != null && address.isNotEmpty) {
+        debugPrint('✓ Got address from Geocoding API: $address');
         setState(() {
           _selectedAddress = address;
           _isLoadingAddress = false;
@@ -143,7 +154,7 @@ class _MapLocationPickerScreenState extends ConsumerState<MapLocationPickerScree
         return;
       }
 
-      // Fallback to coordinates if API fails
+      // STEP 3: Fallback to coordinates
       setState(() {
         _selectedAddress = '${location.latitude.toStringAsFixed(6)}, ${location.longitude.toStringAsFixed(6)}';
         _isLoadingAddress = false;
@@ -155,6 +166,80 @@ class _MapLocationPickerScreenState extends ConsumerState<MapLocationPickerScree
         _isLoadingAddress = false;
       });
     }
+  }
+
+  /// Get nearby place name using Google Places API (this is what Google Maps uses!)
+  Future<String?> _getNearbyPlaceName(LatLng location) async {
+    try {
+      final apiKey = AppConstants.googleMapsApiKey;
+
+      // Use Places Nearby Search API
+      final url = Uri.parse(
+        'https://maps.googleapis.com/maps/api/place/nearbysearch/json'
+        '?location=${location.latitude},${location.longitude}'
+        '&radius=50'  // 50 meters - very close places only
+        '&language=ar'
+        '&key=$apiKey'
+      );
+
+      debugPrint('Calling Places API...');
+      final response = await http.get(url).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final status = data['status'] as String?;
+
+        debugPrint('Places API status: $status');
+
+        if (status == 'OK') {
+          final results = data['results'] as List?;
+
+          if (results != null && results.isNotEmpty) {
+            debugPrint('Places API found ${results.length} nearby places');
+
+            // Get the closest/most relevant place
+            for (final place in results) {
+              final name = place['name'] as String?;
+              final vicinity = place['vicinity'] as String?;
+              final types = (place['types'] as List?)?.cast<String>() ?? [];
+
+              // Skip generic types like "locality", "political", "route"
+              final isGenericType = types.any((t) =>
+                t == 'locality' ||
+                t == 'political' ||
+                t == 'route' ||
+                t == 'street_address' ||
+                t == 'administrative_area_level_1' ||
+                t == 'administrative_area_level_2'
+              );
+
+              if (name != null && name.isNotEmpty && !isGenericType) {
+                debugPrint('Found place: $name (types: $types)');
+
+                // Clean vicinity (remove Plus Codes)
+                String? cleanVicinity;
+                if (vicinity != null && !_isPlusCode(vicinity)) {
+                  cleanVicinity = vicinity;
+                }
+
+                // Return name with vicinity
+                if (cleanVicinity != null && cleanVicinity.isNotEmpty) {
+                  return '$name، $cleanVicinity';
+                }
+                return name;
+              }
+            }
+          }
+        } else if (status == 'REQUEST_DENIED') {
+          debugPrint('⚠️ Places API denied - make sure Places API is enabled!');
+        } else if (status == 'ZERO_RESULTS') {
+          debugPrint('Places API: No nearby places found');
+        }
+      }
+    } catch (e) {
+      debugPrint('Places API error: $e');
+    }
+    return null;
   }
 
   /// Get address using Google Geocoding API (same as Google Maps)
