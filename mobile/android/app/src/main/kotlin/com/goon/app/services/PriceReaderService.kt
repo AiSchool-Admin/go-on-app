@@ -389,10 +389,18 @@ class PriceReaderService : AccessibilityService() {
                         }
                     }
 
-                    // Check for intermediate screens (InDriver might show map confirmation here)
+                    // Check for intermediate screens (InDriver or DiDi)
                     if (packageName == INDRIVER_PACKAGE) {
                         if (handleInDriverIntermediateScreens(rootNode)) {
                             Log.i(TAG, "🤖 📋 Handled InDriver intermediate screen during WAITING_FOR_SUGGESTIONS")
+                            return
+                        }
+                    }
+
+                    // CRITICAL: DiDi may show "Select Address" screen here
+                    if (packageName == DIDI_PACKAGE) {
+                        if (handleDiDiIntermediateScreens(rootNode)) {
+                            Log.i(TAG, "🤖 📋 Handled DiDi intermediate screen during WAITING_FOR_SUGGESTIONS")
                             return
                         }
                     }
@@ -419,11 +427,18 @@ class PriceReaderService : AccessibilityService() {
                         }
                     }
 
-                    // SECOND: Check if we're on the map confirmation screen (InDriver shows this AFTER suggestion)
+                    // Check for intermediate screens (InDriver or DiDi)
                     if (packageName == INDRIVER_PACKAGE) {
                         if (handleInDriverIntermediateScreens(rootNode)) {
                             Log.i(TAG, "🤖 📋 Handled InDriver intermediate screen during SELECTING_SUGGESTION")
-                            // Stay in this state for next iteration
+                            return
+                        }
+                    }
+
+                    // CRITICAL: DiDi may show "Select Address" screen here
+                    if (packageName == DIDI_PACKAGE) {
+                        if (handleDiDiIntermediateScreens(rootNode)) {
+                            Log.i(TAG, "🤖 📋 Handled DiDi intermediate screen during SELECTING_SUGGESTION")
                             return
                         }
                     }
@@ -1153,39 +1168,32 @@ class PriceReaderService : AccessibilityService() {
             }
         }
 
-        // If we found a match with score > 0, click it
+        // If we found a match with score > 0, click it using SMART CLICK
         if (bestMatch != null && bestScore > 0) {
             Log.i(TAG, "✓✓ SELECTED: '$bestText' (score: $bestScore)")
-            bestMatch.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-            // Try parent click too for some apps
-            bestMatch.parent?.let { parent ->
-                if (parent.isClickable) {
-                    parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                }
-                parent.recycle()
-            }
+
+            // Use smart click (gesture-based) for reliability
+            val clicked = smartClick(bestMatch)
+
             // Recycle all nodes
             suggestions.forEach { (node, _) ->
                 try { node.recycle() } catch (e: Exception) {}
             }
-            return true
+            return clicked
         }
 
         // Fallback: click first suggestion if no match found
         Log.w(TAG, "⚠️ No matching suggestion found, clicking first one")
         if (suggestions.isNotEmpty()) {
             Log.i(TAG, "⚠️ Fallback: selecting '${suggestions[0].second}'")
-            suggestions[0].first.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-            suggestions[0].first.parent?.let { parent ->
-                if (parent.isClickable) {
-                    parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                }
-                parent.recycle()
-            }
+
+            // Use smart click (gesture-based) for reliability
+            val clicked = smartClick(suggestions[0].first)
+
             suggestions.forEach { (node, _) ->
                 try { node.recycle() } catch (e: Exception) {}
             }
-            return true
+            return clicked
         }
 
         suggestions.forEach { (node, _) ->
@@ -1412,12 +1420,44 @@ class PriceReaderService : AccessibilityService() {
 
     /**
      * Handle DiDi intermediate screens:
+     * - "Select Address" screen with multiple address options
      * - "Which airline?" for airport destinations
      * - Other promotional/info dialogs
      */
     private fun handleDiDiIntermediateScreens(rootNode: AccessibilityNodeInfo): Boolean {
         val allText = getAllTextFromNode(rootNode)
         val allTextLower = allText.map { it.lowercase() }
+
+        // ============================================================
+        // CRITICAL: Check for "Select Address" screen
+        // This appears when DiDi finds multiple addresses for a destination
+        // ============================================================
+        val hasSelectAddressScreen = allTextLower.any {
+            it.contains("select address") ||
+            it.contains("اختر العنوان") ||
+            it.contains("pin your location")
+        }
+
+        if (hasSelectAddressScreen) {
+            Log.i(TAG, "📍 Detected DiDi 'Select Address' screen - selecting first address card")
+
+            // Find the first clickable address card
+            val addressCard = findFirstDiDiAddressCard(rootNode)
+            if (addressCard != null) {
+                val cardText = getNodeText(addressCard)
+                Log.i(TAG, "📍 Found address card: '${cardText.take(50)}...'")
+
+                // Use smart click (gesture-based)
+                if (smartClick(addressCard)) {
+                    Log.i(TAG, "📍 ✓ Successfully clicked address card")
+                    addressCard.recycle()
+                    return true
+                }
+                addressCard.recycle()
+            } else {
+                Log.w(TAG, "📍 No address card found on Select Address screen")
+            }
+        }
 
         // Check for airline selection screen
         val hasAirlineScreen = allTextLower.any {
@@ -1493,6 +1533,57 @@ class PriceReaderService : AccessibilityService() {
         }
 
         return false
+    }
+
+    /**
+     * Find the first clickable address card on DiDi's "Select Address" screen
+     * Address cards contain: place name, full address, distance (km)
+     * Returns the clickable node for the first valid address card
+     */
+    private fun findFirstDiDiAddressCard(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val combinedText = getNodeText(node)
+
+        // Skip UI elements that are not address cards
+        val skipTexts = listOf(
+            "Pin your location", "Select Address", "Powered by",
+            "Back", "Where to", "Add stop", "Pickup point", "Search"
+        )
+        val shouldSkip = skipTexts.any { combinedText.contains(it, ignoreCase = true) }
+
+        if (!shouldSkip && combinedText.length > 15) {
+            // Check if it looks like an address card
+            // Address cards have: location name AND (distance OR governorate)
+            val hasDistance = combinedText.contains("km") || combinedText.contains("كم") || combinedText.contains("m")
+            val hasLocation = combinedText.contains("محافظة") || combinedText.contains("مصر") ||
+                              combinedText.contains("العبور") || combinedText.contains("القاهرة") ||
+                              combinedText.contains("الجيزة") || combinedText.contains("Egypt")
+
+            // Must have EITHER distance OR location indicator (more flexible)
+            if (hasDistance || hasLocation) {
+                // Get bounds to verify it's a visible card (not tiny or off-screen)
+                val rect = android.graphics.Rect()
+                node.getBoundsInScreen(rect)
+
+                // Valid card should have reasonable size (at least 100x40 pixels)
+                if (rect.width() > 100 && rect.height() > 40) {
+                    Log.i(TAG, "📍 Found DiDi address card: '${combinedText.take(50)}...' bounds=$rect clickable=${node.isClickable}")
+                    return AccessibilityNodeInfo.obtain(node)
+                }
+            }
+        }
+
+        // Recurse into children
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = findFirstDiDiAddressCard(child)
+            if (found != null) {
+                child.recycle()
+                return found
+            }
+            child.recycle()
+        }
+
+        return null
     }
 
     /**
@@ -1816,16 +1907,78 @@ class PriceReaderService : AccessibilityService() {
 
             val result = dispatchGesture(gestureBuilder.build(), object : GestureResultCallback() {
                 override fun onCompleted(gestureDescription: android.accessibilityservice.GestureDescription?) {
-                    Log.i(TAG, "🗺️ Gesture completed at ($x, $y)")
+                    Log.i(TAG, "🎯 Gesture completed at ($x, $y)")
                 }
                 override fun onCancelled(gestureDescription: android.accessibilityservice.GestureDescription?) {
-                    Log.w(TAG, "🗺️ Gesture cancelled at ($x, $y)")
+                    Log.w(TAG, "🎯 Gesture cancelled at ($x, $y)")
                 }
             }, null)
 
-            Log.i(TAG, "🗺️ dispatchGesture result: $result")
+            Log.i(TAG, "🎯 dispatchGesture at ($x, $y) result: $result")
             return result
         }
+        return false
+    }
+
+    /**
+     * UNIFIED CLICK MECHANISM: Click a node using gesture tap (more reliable than ACTION_CLICK)
+     * Gets the node's screen bounds and taps the center
+     */
+    private fun clickNodeByGesture(node: AccessibilityNodeInfo): Boolean {
+        val rect = android.graphics.Rect()
+        node.getBoundsInScreen(rect)
+
+        // Calculate center point
+        val centerX = rect.centerX().toFloat()
+        val centerY = rect.centerY().toFloat()
+
+        // Validate coordinates
+        if (centerX <= 0 || centerY <= 0 || rect.width() <= 0 || rect.height() <= 0) {
+            Log.w(TAG, "🎯 Invalid bounds for gesture tap: $rect")
+            return false
+        }
+
+        Log.i(TAG, "🎯 Gesture tap on node at ($centerX, $centerY) - bounds: $rect")
+        return clickAtPosition(centerX, centerY)
+    }
+
+    /**
+     * SMART CLICK: Try multiple click strategies in order of reliability
+     * 1. Gesture tap (most reliable)
+     * 2. ACTION_CLICK on node
+     * 3. ACTION_CLICK on parent
+     */
+    private fun smartClick(node: AccessibilityNodeInfo): Boolean {
+        // Strategy 1: Gesture tap (most reliable for complex UIs)
+        if (clickNodeByGesture(node)) {
+            Log.i(TAG, "🎯 ✓ Smart click SUCCESS via gesture")
+            return true
+        }
+
+        // Strategy 2: Direct ACTION_CLICK
+        if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            Log.i(TAG, "🎯 ✓ Smart click SUCCESS via ACTION_CLICK")
+            return true
+        }
+
+        // Strategy 3: Click parent
+        node.parent?.let { parent ->
+            if (parent.isClickable && parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                Log.i(TAG, "🎯 ✓ Smart click SUCCESS via parent ACTION_CLICK")
+                parent.recycle()
+                return true
+            }
+
+            // Strategy 4: Gesture tap on parent
+            if (clickNodeByGesture(parent)) {
+                Log.i(TAG, "🎯 ✓ Smart click SUCCESS via parent gesture")
+                parent.recycle()
+                return true
+            }
+            parent.recycle()
+        }
+
+        Log.w(TAG, "🎯 ✗ Smart click FAILED - all strategies exhausted")
         return false
     }
 
