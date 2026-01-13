@@ -1233,45 +1233,34 @@ class PriceReaderService : AccessibilityService() {
 
     /**
      * Collect suggestions specifically for DiDi's "Select Address" screen
+     * DiDi shows address cards with combined text like:
+     * "Tasty BitesTasty Bites, الحى الخامس العبور محافظة القليوبية 6361223 مصر"
      */
     private fun collectDiDiSuggestions(node: AccessibilityNodeInfo, suggestions: MutableList<Pair<AccessibilityNodeInfo, String>>) {
-        val className = node.className?.toString() ?: ""
-        val text = node.text?.toString() ?: ""
+        // Get combined text from this node and children
+        val combinedText = getNodeText(node)
 
-        // DiDi shows address suggestions with location names and distances
-        // Look for clickable items that contain location text
-        if (node.isClickable && text.isNotBlank() && text.length > 5) {
-            val isNotButton = !text.contains("Pin your location") &&
-                              !text.contains("Select Address") &&
-                              !text.contains("العبور مصر") &&  // Skip the search field text
-                              !text.lowercase().contains("search") &&
-                              !text.contains("بحث") &&
-                              !text.contains("Powered by")
-            if (isNotButton) {
-                suggestions.add(Pair(AccessibilityNodeInfo.obtain(node), text))
-                Log.i(TAG, "📍 DiDi suggestion: '$text'")
+        // Skip UI elements and empty nodes
+        val skipTexts = listOf(
+            "Pin your location", "Select Address", "Powered by",
+            "Back", "Where to", "Add stop", "Pickup point", "Search"
+        )
+        val shouldSkip = skipTexts.any { combinedText.contains(it, ignoreCase = true) }
+
+        if (!shouldSkip && node.isClickable && combinedText.length > 20) {
+            // Check if it looks like a FULL address card (has distance + location)
+            val hasDistance = combinedText.contains("km") || combinedText.contains("كم")
+            val hasLocation = combinedText.contains("محافظة") || combinedText.contains("مصر") ||
+                              combinedText.contains("العبور") || combinedText.contains("القاهرة")
+
+            if (hasDistance && hasLocation) {
+                Log.i(TAG, "📍 DiDi FULL address card: '${combinedText.take(60)}...'")
+                suggestions.add(Pair(AccessibilityNodeInfo.obtain(node), combinedText))
+                return // Don't recurse - we found the full card
             }
         }
 
-        // Also check for ViewGroups with multiple text children (address cards)
-        if (className.contains("ViewGroup") || className.contains("LinearLayout") || className.contains("FrameLayout")) {
-            val combinedText = getNodeText(node)
-            if (combinedText.isNotBlank() && combinedText.length > 10 &&
-                node.isClickable &&
-                !combinedText.contains("Pin your location") &&
-                !combinedText.contains("Select Address") &&
-                !combinedText.contains("Powered by")) {
-
-                // Check if it looks like an address (contains distance like "km" or "كم")
-                if (combinedText.contains("km") || combinedText.contains("كم") ||
-                    combinedText.contains("محافظة") || combinedText.contains("العبور")) {
-                    suggestions.add(Pair(AccessibilityNodeInfo.obtain(node), combinedText))
-                    Log.i(TAG, "📍 DiDi suggestion (combined): '$combinedText'")
-                }
-            }
-        }
-
-        // Recurse into children
+        // Recurse into children to find address cards
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
             collectDiDiSuggestions(child, suggestions)
