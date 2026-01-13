@@ -208,6 +208,10 @@ class PriceReaderService : AccessibilityService() {
     private var inDriverDoneClickedTime = 0L
     private val INDRIVER_MIN_WAIT_AFTER_DONE_MS = 5000L  // Wait at least 5 seconds after Done click
 
+    // CRITICAL: Block ALL InDriver price detection until automation is complete
+    // This prevents the 95 EGP default price from being cached during automation
+    private var inDriverAutomationComplete = false
+
     enum class AutomationState {
         IDLE,
         WAITING_FOR_APP,
@@ -254,6 +258,7 @@ class PriceReaderService : AccessibilityService() {
         uberScreenReady = false  // Reset screen ready flag
         inDriverDestinationEntered = false  // Reset InDriver destination flag
         inDriverDoneClickedTime = 0L  // Reset InDriver Done click time
+        inDriverAutomationComplete = false  // CRITICAL: Block price detection until automation is complete
 
         // Clear any old cached prices for this app
         latestPrices.remove(packageName)
@@ -399,40 +404,20 @@ class PriceReaderService : AccessibilityService() {
                     automationStep++
                     Log.i(TAG, "🤖 Waiting for suggestions (step $automationStep/3)...")
 
-                    // IMPORTANT: For InDriver, handle intermediate screens FIRST before checking price
-                    // This prevents accepting stale prices from "No Results" or map confirmation screens
-                    var onIntermediateScreen = false
+                    // For InDriver: Handle intermediate screens (No Results, Map Confirmation)
+                    // Price detection is BLOCKED during automation, so we just handle UI navigation
                     if (packageName == INDRIVER_PACKAGE) {
                         if (handleInDriverIntermediateScreens(rootNode)) {
-                            Log.i(TAG, "🤖 📋 Handled InDriver intermediate screen - NOT accepting price yet")
-                            onIntermediateScreen = true
-                            // Continue but don't accept price
+                            Log.i(TAG, "🤖 📋 Handled InDriver intermediate screen")
+                            // Don't transition yet - stay in this state until intermediate screens are done
                         }
-                    }
-
-                    // CRITICAL: For InDriver, only accept cached price if:
-                    // 1. Destination was ACTUALLY entered
-                    // 2. We're NOT on an intermediate screen (No Results, Map Confirmation, etc.)
-                    // 3. Enough time has passed since "Done" button was clicked
-                    if (packageName == INDRIVER_PACKAGE && !onIntermediateScreen) {
-                        val cachedPrice = latestPrices[packageName]
-                        val timeSinceDoneClick = if (inDriverDoneClickedTime > 0) System.currentTimeMillis() - inDriverDoneClickedTime else Long.MAX_VALUE
-                        val doneWaitSatisfied = inDriverDoneClickedTime == 0L || timeSinceDoneClick >= INDRIVER_MIN_WAIT_AFTER_DONE_MS
-                        Log.d(TAG, "🤖 InDriver cached price check: price=${cachedPrice?.price}, destinationEntered=$inDriverDestinationEntered, doneWait=${timeSinceDoneClick}ms, satisfied=$doneWaitSatisfied")
-
-                        if (cachedPrice != null && cachedPrice.price > 0 && inDriverDestinationEntered && doneWaitSatisfied) {
-                            Log.i(TAG, "🤖 ✓✓✓ InDriver PRICES CACHED & DESTINATION ENTERED & WAIT SATISFIED: ${cachedPrice.price} EGP")
-                            Log.i(TAG, "🤖 Skipping to PRICE_CAPTURED - no need to continue automation!")
-                            automationState = AutomationState.PRICE_CAPTURED
-                            autoReturnToGoOn()
-                            return
-                        } else if (cachedPrice != null && cachedPrice.price > 0 && inDriverDestinationEntered && !doneWaitSatisfied) {
-                            Log.i(TAG, "🤖 ⏳ InDriver has price ${cachedPrice.price} but waiting (${timeSinceDoneClick}ms < ${INDRIVER_MIN_WAIT_AFTER_DONE_MS}ms since Done click)")
-                        } else if (cachedPrice != null && cachedPrice.price > 0 && !inDriverDestinationEntered) {
-                            Log.w(TAG, "🤖 ⚠️ InDriver has cached price ${cachedPrice.price} BUT destination NOT entered - ignoring default price")
+                        // Always go to WAITING_FOR_PRICE after some steps
+                        if (automationStep > 3) {
+                            Log.i(TAG, "🤖 InDriver: Going to WAITING_FOR_PRICE...")
+                            automationState = AutomationState.WAITING_FOR_PRICE
+                            automationStep = 0
                         }
-                    } else if (packageName == INDRIVER_PACKAGE && onIntermediateScreen) {
-                        Log.d(TAG, "🤖 InDriver on intermediate screen - skipping price check")
+                        return
                     }
 
                     // CRITICAL: DiDi may show "Select Address" screen here
@@ -445,53 +430,22 @@ class PriceReaderService : AccessibilityService() {
 
                     // After enough time, transition to SELECTING_SUGGESTION or WAITING_FOR_PRICE
                     if (automationStep > 3) { // Wait ~3.6 seconds for suggestions
-                        // For InDriver with intermediate screens, go directly to WAITING_FOR_PRICE
-                        if (packageName == INDRIVER_PACKAGE) {
-                            // Check again for cached price before transitioning
-                            // ONLY if: destination entered AND NOT on intermediate screen AND wait satisfied
-                            val cachedPrice = latestPrices[packageName]
-                            val timeSinceDone = if (inDriverDoneClickedTime > 0) System.currentTimeMillis() - inDriverDoneClickedTime else Long.MAX_VALUE
-                            val waitOk = inDriverDoneClickedTime == 0L || timeSinceDone >= INDRIVER_MIN_WAIT_AFTER_DONE_MS
-                            if (cachedPrice != null && cachedPrice.price > 0 && inDriverDestinationEntered && !onIntermediateScreen && waitOk) {
-                                Log.i(TAG, "🤖 InDriver price found during transition: ${cachedPrice.price} EGP (wait satisfied)")
-                                automationState = AutomationState.PRICE_CAPTURED
-                                autoReturnToGoOn()
-                                return
-                            } else if (cachedPrice != null && cachedPrice.price > 0 && !waitOk) {
-                                Log.i(TAG, "🤖 ⏳ InDriver transition: price ${cachedPrice.price} but still waiting (${timeSinceDone}ms < ${INDRIVER_MIN_WAIT_AFTER_DONE_MS}ms)")
-                            }
-                            Log.i(TAG, "🤖 InDriver: Skipping SELECTING_SUGGESTION, going to WAITING_FOR_PRICE...")
-                            automationState = AutomationState.WAITING_FOR_PRICE
-                            automationStep = 0
-                        } else {
-                            Log.i(TAG, "🤖 Transitioning to SELECTING_SUGGESTION...")
-                            automationState = AutomationState.SELECTING_SUGGESTION
-                            automationStep = 0
-                        }
+                        Log.i(TAG, "🤖 Transitioning to SELECTING_SUGGESTION...")
+                        automationState = AutomationState.SELECTING_SUGGESTION
+                        automationStep = 0
                     }
                 }
 
                 AutomationState.SELECTING_SUGGESTION -> {
                     Log.i(TAG, "🤖 Selecting first suggestion...")
 
-                    // CRITICAL: For InDriver, check if prices are ALREADY cached before continuing automation
+                    // InDriver should not reach this state (handled separately)
+                    // But if it does, just go to WAITING_FOR_PRICE
                     if (packageName == INDRIVER_PACKAGE) {
-                        val cachedPrice = latestPrices[packageName]
-                        if (cachedPrice != null && cachedPrice.price > 0 && cachedPrice.allPricesFound.isNotEmpty()) {
-                            Log.i(TAG, "🤖 ✓✓✓ InDriver PRICES ALREADY CACHED: ${cachedPrice.price} EGP (${cachedPrice.allPricesFound})")
-                            Log.i(TAG, "🤖 Skipping to PRICE_CAPTURED - no need to continue automation!")
-                            automationState = AutomationState.PRICE_CAPTURED
-                            autoReturnToGoOn()
-                            return
-                        }
-                    }
-
-                    // Check for intermediate screens (InDriver or DiDi)
-                    if (packageName == INDRIVER_PACKAGE) {
-                        if (handleInDriverIntermediateScreens(rootNode)) {
-                            Log.i(TAG, "🤖 📋 Handled InDriver intermediate screen during SELECTING_SUGGESTION")
-                            return
-                        }
+                        Log.i(TAG, "🤖 InDriver: Skipping SELECTING_SUGGESTION, going to WAITING_FOR_PRICE")
+                        automationState = AutomationState.WAITING_FOR_PRICE
+                        automationStep = 0
+                        return
                     }
 
                     // CRITICAL: DiDi may show "Select Address" screen here
@@ -545,25 +499,45 @@ class PriceReaderService : AccessibilityService() {
                         }
                     }
 
-                    // CRITICAL: For InDriver, only accept price if:
-                    // 1. NOT on intermediate screen
-                    // 2. Enough time has passed since "Done" button was clicked
-                    if (isInDriver && cachedPrice != null && cachedPrice.price > 0 && !onIntermediateScreen) {
-                        val timeSinceDoneClick = if (inDriverDoneClickedTime > 0) System.currentTimeMillis() - inDriverDoneClickedTime else Long.MAX_VALUE
-                        val doneWaitSatisfied = inDriverDoneClickedTime == 0L || timeSinceDoneClick >= INDRIVER_MIN_WAIT_AFTER_DONE_MS
+                    // CRITICAL: For InDriver, handle price detection specially
+                    // Price detection is BLOCKED until automation is complete
+                    if (isInDriver) {
+                        if (onIntermediateScreen) {
+                            Log.d(TAG, "🤖 InDriver on intermediate screen - skipping price acceptance, will retry")
+                            return
+                        }
 
-                        if (doneWaitSatisfied) {
-                            Log.i(TAG, "🤖 ✓✓✓ InDriver PRICE FOUND (not intermediate, wait satisfied): ${cachedPrice.price} EGP")
+                        val timeSinceDoneClick = if (inDriverDoneClickedTime > 0) System.currentTimeMillis() - inDriverDoneClickedTime else Long.MAX_VALUE
+                        val doneWaitSatisfied = inDriverDoneClickedTime > 0 && timeSinceDoneClick >= INDRIVER_MIN_WAIT_AFTER_DONE_MS
+
+                        if (!doneWaitSatisfied) {
+                            if (inDriverDoneClickedTime > 0) {
+                                Log.i(TAG, "🤖 ⏳ InDriver waiting for price (${timeSinceDoneClick}ms < ${INDRIVER_MIN_WAIT_AFTER_DONE_MS}ms since Done click)")
+                            } else {
+                                Log.i(TAG, "🤖 ⏳ InDriver waiting for 'Done' button to be clicked...")
+                            }
+                            return
+                        }
+
+                        // Wait time satisfied - NOW enable price detection
+                        if (!inDriverAutomationComplete) {
+                            Log.i(TAG, "🤖 ✓ InDriver wait time satisfied - ENABLING price detection!")
+                            inDriverAutomationComplete = true
+                        }
+
+                        // Now actively scan for price (cache was blocked, so do a fresh scan)
+                        val priceInfo = performAggressiveScan(packageName)
+                        if (priceInfo != null && priceInfo.price > 0) {
+                            Log.i(TAG, "🤖 ✓✓✓ InDriver REAL PRICE FOUND: ${priceInfo.price} EGP")
                             automationState = AutomationState.PRICE_CAPTURED
+                            notifyPriceCaptured(priceInfo)
                             autoReturnToGoOn()
                             return
                         } else {
-                            Log.i(TAG, "🤖 ⏳ InDriver price ${cachedPrice.price} detected but waiting (${timeSinceDoneClick}ms < ${INDRIVER_MIN_WAIT_AFTER_DONE_MS}ms)")
-                            // Continue waiting - don't return yet
+                            Log.i(TAG, "🤖 InDriver scanning for price... (automation complete, waiting for detection)")
+                            // Continue waiting for price to appear
+                            return
                         }
-                    } else if (isInDriver && onIntermediateScreen) {
-                        Log.d(TAG, "🤖 InDriver on intermediate screen - skipping price acceptance, will retry")
-                        return
                     }
 
                     // For Uber: Wait minimum time to let prices fully load
@@ -3058,8 +3032,17 @@ class PriceReaderService : AccessibilityService() {
 
     /**
      * Extract prices from InDriver app
+     * CRITICAL: During automation, prices are BLOCKED until automation is complete
+     * This prevents the 95 EGP default price from being cached
      */
     private fun extractInDriverPrices(rootNode: AccessibilityNodeInfo) {
+        // CRITICAL: Block ALL price detection during active InDriver automation
+        // until we confirm we're on the final price screen
+        if (isActiveMonitoring && monitoringPackage == INDRIVER_PACKAGE && !inDriverAutomationComplete) {
+            Log.d(TAG, "InDriver price detection BLOCKED - automation not complete")
+            return
+        }
+
         val allText = getAllTextFromNode(rootNode)
         val prices = mutableListOf<Double>()
 
