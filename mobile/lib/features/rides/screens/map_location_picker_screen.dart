@@ -120,10 +120,12 @@ class _MapLocationPickerScreenState extends ConsumerState<MapLocationPickerScree
   /// Check if a string is a Plus Code (format: XXXX+XXX)
   bool _isPlusCode(String? text) {
     if (text == null || text.isEmpty) return false;
+    final trimmed = text.trim();
     // Plus Codes contain + and alphanumeric characters
-    // Format: 4-8 characters + 2-3 characters (e.g., XVC5+2Q2)
-    final plusCodeRegex = RegExp(r'^[A-Z0-9]{4,8}\+[A-Z0-9]{2,3}$', caseSensitive: false);
-    return plusCodeRegex.hasMatch(text.trim());
+    // Format: 4-8 characters + 2-4 characters (e.g., XVC5+2Q2, 5FX9+PVR)
+    // Also check if the string CONTAINS a plus code (not just equals)
+    final plusCodeRegex = RegExp(r'[A-Z0-9]{4,8}\+[A-Z0-9]{2,4}', caseSensitive: false);
+    return plusCodeRegex.hasMatch(trimmed);
   }
 
   Future<void> _getAddressFromLocation(LatLng location) async {
@@ -181,32 +183,35 @@ class _MapLocationPickerScreenState extends ConsumerState<MapLocationPickerScree
           final results = data['results'] as List?;
 
           if (results != null && results.isNotEmpty) {
-            // Try to find the best result
+            debugPrint('Geocoding returned ${results.length} results');
+
+            // Try each result and clean it
             for (final result in results) {
               final formattedAddress = result['formatted_address'] as String?;
-              final types = (result['types'] as List?)?.cast<String>() ?? [];
 
-              // Prefer specific addresses over general ones
               if (formattedAddress != null && formattedAddress.isNotEmpty) {
-                // Skip if it's just a Plus Code
-                if (_isPlusCode(formattedAddress.split(',').first)) {
-                  continue;
-                }
+                debugPrint('Raw address: $formattedAddress');
 
-                // Clean up the address
+                // Clean up the address (removes Plus Codes, country, postal codes)
                 final cleanedAddress = _cleanGoogleAddress(formattedAddress);
-                if (cleanedAddress.isNotEmpty) {
-                  debugPrint('Found address: $cleanedAddress');
+
+                // Check if we got a meaningful address (not empty or just governorate)
+                if (cleanedAddress.isNotEmpty &&
+                    !cleanedAddress.toLowerCase().contains('governorate') &&
+                    cleanedAddress.length > 5) {
+                  debugPrint('Cleaned address: $cleanedAddress');
                   return cleanedAddress;
                 }
               }
             }
 
-            // If no good result, use the first one
+            // Fallback: use first result even if not perfect
             final firstResult = results.first;
             final formattedAddress = firstResult['formatted_address'] as String?;
             if (formattedAddress != null) {
-              return _cleanGoogleAddress(formattedAddress);
+              final cleaned = _cleanGoogleAddress(formattedAddress);
+              debugPrint('Fallback address: $cleaned');
+              return cleaned.isNotEmpty ? cleaned : null;
             }
           }
         } else if (status == 'REQUEST_DENIED') {
@@ -223,18 +228,23 @@ class _MapLocationPickerScreenState extends ConsumerState<MapLocationPickerScree
 
   /// Clean up Google's formatted address
   String _cleanGoogleAddress(String address) {
-    // Split by comma
-    final parts = address.split(',').map((p) => p.trim()).toList();
+    // Split by both English and Arabic commas
+    final parts = address.split(RegExp(r'[,،]')).map((p) => p.trim()).toList();
 
     // Remove unwanted parts
     final cleanedParts = parts.where((part) {
+      if (part.isEmpty) return false;
       final lower = part.toLowerCase();
-      // Remove Plus Codes
+      // Remove Plus Codes (e.g., 5FX9+PVR, 6F49+2PX)
       if (_isPlusCode(part)) return false;
       // Remove country name
       if (lower == 'egypt' || lower == 'مصر') return false;
-      // Remove postal codes (numbers only)
-      if (RegExp(r'^\d+$').hasMatch(part)) return false;
+      // Remove postal codes (numbers only or with governorate code like 6361122)
+      if (RegExp(r'^\d{5,}$').hasMatch(part)) return false;
+      // Remove parts that start with postal code
+      if (RegExp(r'^\d{5,}\s').hasMatch(part)) return false;
+      // Remove "محافظة" prefix standalone
+      if (part == 'محافظة') return false;
       return true;
     }).toList();
 
