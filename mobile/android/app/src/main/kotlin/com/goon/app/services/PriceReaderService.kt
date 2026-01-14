@@ -2070,14 +2070,39 @@ class PriceReaderService : AccessibilityService() {
             val clickType = if (inDriverDoneClickCount == 0) "DESTINATION" else "PICKUP"
             Log.i(TAG, "🗺️ Detected InDriver MAP CONFIRMATION screen ($clickType) - clicking 'تم' button")
 
-            // Try to click the "تم" button using gentleClick (safer for InDriver)
+            // Try to click the "تم" button - USE GESTURE CLICK because ACTION_CLICK doesn't work reliably
             val doneTexts = listOf("تم", "Done", "Confirm", "تأكيد")
             for (doneText in doneTexts) {
                 val nodes = rootNode.findAccessibilityNodeInfosByText(doneText)
                 for (node in nodes) {
-                    Log.i(TAG, "🗺️ Found '$doneText' button, attempting gentleClick...")
+                    Log.i(TAG, "🗺️ Found '$doneText' button, attempting GESTURE click...")
 
-                    if (gentleClick(node)) {
+                    // Get bounds for gesture click
+                    val bounds = android.graphics.Rect()
+                    node.getBoundsInScreen(bounds)
+                    Log.i(TAG, "🗺️ Button bounds: ${bounds.left},${bounds.top},${bounds.right},${bounds.bottom} (${bounds.width()}x${bounds.height()})")
+
+                    var clicked = false
+
+                    // Strategy 1: Gesture click at center (most reliable for InDriver)
+                    if (bounds.width() > 0 && bounds.height() > 0) {
+                        val centerX = bounds.centerX().toFloat()
+                        val centerY = bounds.centerY().toFloat()
+                        Log.i(TAG, "🗺️ Strategy 1: Gesture click at ($centerX, $centerY)")
+
+                        if (clickAtPosition(centerX, centerY)) {
+                            Log.i(TAG, "🗺️ ✓✓✓ GESTURE CLICK SUCCESS at ($centerX, $centerY)")
+                            clicked = true
+                        }
+                    }
+
+                    // Strategy 2: If gesture failed, try gentleClick as fallback
+                    if (!clicked) {
+                        Log.i(TAG, "🗺️ Strategy 2: Trying gentleClick as fallback...")
+                        clicked = gentleClick(node)
+                    }
+
+                    if (clicked) {
                         inDriverDoneClickCount++
                         val clickTypeMsg = if (inDriverDoneClickCount == 1) "DESTINATION" else "PICKUP"
                         Log.i(TAG, "🗺️ ✓ Clicked '$doneText' button for $clickTypeMsg (click #$inDriverDoneClickCount)")
