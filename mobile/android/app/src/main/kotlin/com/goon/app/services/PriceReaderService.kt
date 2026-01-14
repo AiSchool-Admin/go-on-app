@@ -2213,16 +2213,21 @@ class PriceReaderService : AccessibilityService() {
             }
             val combinedText = childTexts.joinToString(" | ")
 
-            // Check if this looks like a suggestion row (has distance like "كم" or location indicators)
-            val hasDistance = combinedText.contains("كم") || combinedText.contains("km")
+            // Check if this looks like a suggestion row (has distance like "كم", "متر", "km", "m")
+            val hasDistance = combinedText.contains("كم") || combinedText.contains("km") ||
+                              combinedText.contains("متر") || combinedText.matches(Regex(".*\\d+\\s*m\\b.*"))
             val hasLocation = combinedText.contains("مصر") || combinedText.contains("Egypt") ||
-                              combinedText.contains("محافظة") || combinedText.contains("قسم")
+                              combinedText.contains("محافظة") || combinedText.contains("قسم") ||
+                              combinedText.contains("Obour") || combinedText.contains("العبور") ||
+                              combinedText.contains("Riyad") || combinedText.contains("رياض")
             val hasName = childTexts.any { it.contains("Coffee") || it.contains("Shop") || it.contains("Mall") ||
                                           it.contains("كافيه") || it.contains("مطعم") || it.length in 3..50 }
 
             if ((hasDistance || hasLocation) && combinedText.length > 10 && !combinedText.contains("اختر على الخريطة")) {
                 // Use the first child text as the name (usually the location name)
-                val name = childTexts.firstOrNull { it.length > 3 && !it.contains("كم") && !it.matches(Regex("\\d+[,.]\\d+.*")) } ?: combinedText.take(50)
+                // Exclude distance indicators (كم, متر, km, m) and coordinates
+                val name = childTexts.firstOrNull { it.length > 3 && !it.contains("كم") && !it.contains("متر") &&
+                                                    !it.matches(Regex("\\d+[,.]\\d+.*")) && !it.matches(Regex("^\\d+\\s*(m|km)$")) } ?: combinedText.take(50)
                 Log.d(TAG, "📍 InDriver suggestion ROW: '$name' (combined: '${combinedText.take(60)}...')")
                 suggestions.add(Pair(AccessibilityNodeInfo.obtain(node), name))
                 return // Don't recurse further - we found the row
