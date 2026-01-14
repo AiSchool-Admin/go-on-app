@@ -910,13 +910,26 @@ class PriceReaderService : AccessibilityService() {
 
     /**
      * Enter PICKUP coordinates/text into InDriver's focused input field
+     * IMPORTANT: First clears existing "الموقع الحالي" (Current Location) by clicking X button
      */
     private fun enterInDriverPickupText(rootNode: AccessibilityNodeInfo): Boolean {
         Log.i(TAG, "🤖 enterInDriverPickupText: Entering pickup coordinates...")
 
-        // Use coordinates format for InDriver
+        // STEP 1: Clear existing pickup location by clicking "x" button
+        // InDriver pre-fills "الموقع الحالي" (Current Location) which we need to clear first
+        Log.i(TAG, "🤖 STEP 1: Looking for 'x' clear button to remove current location...")
+        val cleared = clearInDriverPickupField(rootNode)
+        if (cleared) {
+            Log.i(TAG, "🤖 ✓ Cleared existing pickup location")
+            // Wait a moment for UI to update after clearing
+            Thread.sleep(300)
+        } else {
+            Log.w(TAG, "🤖 Could not find/click clear button - will try to overwrite")
+        }
+
+        // STEP 2: Enter new pickup coordinates
         val textToEnter = "$pickupLat, $pickupLng"
-        Log.i(TAG, "🤖 Using COORDINATES for pickup: $textToEnter")
+        Log.i(TAG, "🤖 STEP 2: Entering pickup coordinates: $textToEnter")
 
         val focusedNode = rootNode.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
         if (focusedNode != null) {
@@ -946,6 +959,94 @@ class PriceReaderService : AccessibilityService() {
         // Fallback: find any editable field and enter text
         Log.i(TAG, "🤖 Fallback: searching for any EditText field...")
         return enterTextIntoAnyEditText(rootNode, textToEnter)
+    }
+
+    /**
+     * Clear InDriver's pickup field by clicking the "x" clear button
+     * This removes "الموقع الحالي" (Current Location) so we can enter custom pickup
+     */
+    private fun clearInDriverPickupField(rootNode: AccessibilityNodeInfo): Boolean {
+        Log.i(TAG, "🗑️ Looking for clear button (x) to remove current pickup...")
+
+        // Strategy 1: Find by content description (accessibility label)
+        val clearDescriptions = listOf(
+            "مسح", "Clear", "حذف", "Delete", "إزالة", "Remove",
+            "clear", "close", "x", "×", "✕", "✖"
+        )
+
+        for (desc in clearDescriptions) {
+            val nodes = rootNode.findAccessibilityNodeInfosByText(desc)
+            for (node in nodes) {
+                val nodeDesc = node.contentDescription?.toString() ?: ""
+                val nodeText = node.text?.toString() ?: ""
+                Log.i(TAG, "🗑️ Found node: text='$nodeText', desc='$nodeDesc', clickable=${node.isClickable}")
+
+                if (node.isClickable) {
+                    if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        Log.i(TAG, "🗑️ ✓ Clicked clear button: '$desc'")
+                        node.recycle()
+                        return true
+                    }
+                }
+
+                // Try clicking parent
+                val parent = node.parent
+                if (parent != null && parent.isClickable) {
+                    if (parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        Log.i(TAG, "🗑️ ✓ Clicked clear button parent: '$desc'")
+                        parent.recycle()
+                        node.recycle()
+                        return true
+                    }
+                    parent.recycle()
+                }
+                node.recycle()
+            }
+        }
+
+        // Strategy 2: Find ImageButton or ImageView with clear-like resource ID
+        val found = findClearButtonByTraversal(rootNode)
+        if (found) {
+            return true
+        }
+
+        Log.w(TAG, "🗑️ Could not find clear button")
+        return false
+    }
+
+    /**
+     * Traverse UI tree to find clear/close button by class and position
+     */
+    private fun findClearButtonByTraversal(node: AccessibilityNodeInfo): Boolean {
+        val className = node.className?.toString()?.lowercase() ?: ""
+        val desc = node.contentDescription?.toString()?.lowercase() ?: ""
+        val viewId = node.viewIdResourceName?.lowercase() ?: ""
+
+        // Look for ImageButton/ImageView that might be a clear button
+        val isClearButton = (className.contains("imagebutton") || className.contains("imageview")) &&
+            (desc.contains("clear") || desc.contains("close") || desc.contains("مسح") ||
+             desc.contains("delete") || desc.contains("حذف") ||
+             viewId.contains("clear") || viewId.contains("close") || viewId.contains("delete"))
+
+        if (isClearButton && node.isClickable) {
+            Log.i(TAG, "🗑️ Found potential clear button: class=$className, desc=$desc, viewId=$viewId")
+            if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                Log.i(TAG, "🗑️ ✓ Clicked clear button via traversal")
+                return true
+            }
+        }
+
+        // Check children
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (findClearButtonByTraversal(child)) {
+                child.recycle()
+                return true
+            }
+            child.recycle()
+        }
+
+        return false
     }
 
     /**
