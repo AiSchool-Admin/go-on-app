@@ -208,6 +208,11 @@ class PriceReaderService : AccessibilityService() {
     private var inDriverDoneClickedTime = 0L
     private val INDRIVER_MIN_WAIT_AFTER_DONE_MS = 5000L  // Wait at least 5 seconds after Done click
 
+    // Track InDriver confirmation clicks (destination + pickup = 2 clicks needed)
+    // InDriver flow: Search destination → Map confirm (تم) → Search pickup → Map confirm (تم) → Prices
+    private var inDriverDoneClickCount = 0
+    private val INDRIVER_MAX_DONE_CLICKS = 2  // Allow 2 clicks: one for destination, one for pickup
+
     // CRITICAL: Block ALL InDriver price detection until automation is complete
     // This prevents the 95 EGP default price from being cached during automation
     private var inDriverAutomationComplete = false
@@ -258,6 +263,7 @@ class PriceReaderService : AccessibilityService() {
         uberScreenReady = false  // Reset screen ready flag
         inDriverDestinationEntered = false  // Reset InDriver destination flag
         inDriverDoneClickedTime = 0L  // Reset InDriver Done click time
+        inDriverDoneClickCount = 0  // Reset Done click counter (2 clicks needed: destination + pickup)
         inDriverAutomationComplete = false  // CRITICAL: Block price detection until automation is complete
 
         // Clear any old cached prices for this app
@@ -501,6 +507,7 @@ class PriceReaderService : AccessibilityService() {
 
                     // CRITICAL: For InDriver, handle price detection specially
                     // Price detection is BLOCKED until automation is complete
+                    // InDriver requires TWO "تم" clicks: destination + pickup
                     if (isInDriver) {
                         if (onIntermediateScreen) {
                             Log.d(TAG, "🤖 InDriver on intermediate screen - skipping price acceptance, will retry")
@@ -508,20 +515,21 @@ class PriceReaderService : AccessibilityService() {
                         }
 
                         val timeSinceDoneClick = if (inDriverDoneClickedTime > 0) System.currentTimeMillis() - inDriverDoneClickedTime else Long.MAX_VALUE
-                        val doneWaitSatisfied = inDriverDoneClickedTime > 0 && timeSinceDoneClick >= INDRIVER_MIN_WAIT_AFTER_DONE_MS
+                        val bothClicksMade = inDriverDoneClickCount >= INDRIVER_MAX_DONE_CLICKS
+                        val doneWaitSatisfied = bothClicksMade && timeSinceDoneClick >= INDRIVER_MIN_WAIT_AFTER_DONE_MS
 
                         if (!doneWaitSatisfied) {
-                            if (inDriverDoneClickedTime > 0) {
-                                Log.i(TAG, "🤖 ⏳ InDriver waiting for price (${timeSinceDoneClick}ms < ${INDRIVER_MIN_WAIT_AFTER_DONE_MS}ms since Done click)")
+                            if (!bothClicksMade) {
+                                Log.i(TAG, "🤖 ⏳ InDriver waiting for 'تم' clicks ($inDriverDoneClickCount/$INDRIVER_MAX_DONE_CLICKS done)")
                             } else {
-                                Log.i(TAG, "🤖 ⏳ InDriver waiting for 'Done' button to be clicked...")
+                                Log.i(TAG, "🤖 ⏳ InDriver waiting after PICKUP click (${timeSinceDoneClick}ms < ${INDRIVER_MIN_WAIT_AFTER_DONE_MS}ms)")
                             }
                             return
                         }
 
-                        // Wait time satisfied - NOW enable price detection
+                        // Both clicks made and wait time satisfied - NOW enable price detection
                         if (!inDriverAutomationComplete) {
-                            Log.i(TAG, "🤖 ✓ InDriver wait time satisfied - ENABLING price detection!")
+                            Log.i(TAG, "🤖 ✓ InDriver BOTH clicks done + wait time satisfied - ENABLING price detection!")
                             inDriverAutomationComplete = true
                         }
 
@@ -2020,17 +2028,47 @@ class PriceReaderService : AccessibilityService() {
         val hasGoogleMap = allTextLower.any { it.contains("google") }
 
         if (hasMapConfirmation) {
-            // CRITICAL: If we already clicked "Done", DON'T click again!
-            // Double-clicking "تم" cancels the trip in InDriver
-            if (inDriverDoneClickedTime > 0) {
-                val timeSinceDoneClick = System.currentTimeMillis() - inDriverDoneClickedTime
-                Log.i(TAG, "🗺️ Map confirmation screen detected but 'Done' already clicked ${timeSinceDoneClick}ms ago - NOT clicking again!")
-                // Return false to indicate we're NOT on an intermediate screen anymore
-                // (we already handled it, just waiting for screen transition)
+            // InDriver has TWO map confirmation screens:
+            // 1. Destination confirmation - first "تم" click
+            // 2. Pickup confirmation - second "تم" click
+            // We need to allow both clicks but prevent rapid double-clicking
+
+            val timeSinceDoneClick = if (inDriverDoneClickedTime > 0) System.currentTimeMillis() - inDriverDoneClickedTime else Long.MAX_VALUE
+            val minTimeBetweenClicks = 2000L  // Wait at least 2 seconds between clicks
+
+            // Check for pickup screen markers (indicates we need second click)
+            val isPickupScreen = allText.any {
+                it.contains("نقطة الإقلال") || it.contains("من أين") || it.contains("Pickup")
+            }
+
+            // Check for destination screen markers
+            val isDestinationScreen = allText.any {
+                it.contains("الوجهة") || it.contains("إلى أين") || it.contains("Where to")
+            }
+
+            Log.i(TAG, "🗺️ Map confirmation: clickCount=$inDriverDoneClickCount, isPickup=$isPickupScreen, isDest=$isDestinationScreen, timeSinceClick=${timeSinceDoneClick}ms")
+
+            // Block if we've already made max clicks
+            if (inDriverDoneClickCount >= INDRIVER_MAX_DONE_CLICKS) {
+                Log.i(TAG, "🗺️ Already clicked 'تم' $inDriverDoneClickCount times (max=$INDRIVER_MAX_DONE_CLICKS) - NOT clicking again!")
                 return false
             }
 
-            Log.i(TAG, "🗺️ Detected InDriver MAP CONFIRMATION screen - clicking 'تم' button")
+            // Block rapid double-clicking (wait at least 2 seconds between clicks)
+            if (inDriverDoneClickedTime > 0 && timeSinceDoneClick < minTimeBetweenClicks) {
+                Log.i(TAG, "🗺️ Too soon since last click (${timeSinceDoneClick}ms < ${minTimeBetweenClicks}ms) - waiting...")
+                return true  // Return true to stay in handling mode
+            }
+
+            // If we clicked once for destination and now see pickup screen, allow second click
+            if (inDriverDoneClickCount == 1 && !isPickupScreen && timeSinceDoneClick < 10000L) {
+                // We clicked once but no pickup markers yet - might still be transitioning
+                Log.i(TAG, "🗺️ Clicked once, waiting for pickup screen to appear (${timeSinceDoneClick}ms)")
+                return true  // Return true to stay in handling mode and wait
+            }
+
+            val clickType = if (inDriverDoneClickCount == 0) "DESTINATION" else "PICKUP"
+            Log.i(TAG, "🗺️ Detected InDriver MAP CONFIRMATION screen ($clickType) - clicking 'تم' button")
 
             // Try to click the "تم" button using gentleClick (safer for InDriver)
             val doneTexts = listOf("تم", "Done", "Confirm", "تأكيد")
@@ -2040,13 +2078,15 @@ class PriceReaderService : AccessibilityService() {
                     Log.i(TAG, "🗺️ Found '$doneText' button, attempting gentleClick...")
 
                     if (gentleClick(node)) {
-                        Log.i(TAG, "🗺️ ✓ Clicked '$doneText' button")
+                        inDriverDoneClickCount++
+                        val clickTypeMsg = if (inDriverDoneClickCount == 1) "DESTINATION" else "PICKUP"
+                        Log.i(TAG, "🗺️ ✓ Clicked '$doneText' button for $clickTypeMsg (click #$inDriverDoneClickCount)")
                         lastInDriverClickTime = currentTime
                         // CRITICAL: Clear cached price after clicking Done - wait for real trip price
                         latestPrices.remove(INDRIVER_PACKAGE)
                         // CRITICAL: Set timestamp - must wait INDRIVER_MIN_WAIT_AFTER_DONE_MS before accepting price
                         inDriverDoneClickedTime = System.currentTimeMillis()
-                        Log.i(TAG, "🗺️ ✓ Cleared cached price after 'Done' click - waiting ${INDRIVER_MIN_WAIT_AFTER_DONE_MS}ms for real price")
+                        Log.i(TAG, "🗺️ ✓ Cleared cached price after '$clickTypeMsg' click - waiting for screen transition")
                         node.recycle()
                         return true
                     }
