@@ -3082,13 +3082,27 @@ class PriceReaderService : AccessibilityService() {
                     lastInDriverClickTime = currentTime
                     return true
                 } else {
-                    Log.w(TAG, "🗺️ ✗ Could not click suggestion '$text'")
+                    Log.w(TAG, "🗺️ ✗ Could not click suggestion '$text' - trying keyboard Done as fallback...")
+
+                    // FALLBACK: Try pressing keyboard "Done" key instead of clicking suggestion
+                    if (pressKeyboardDone()) {
+                        Log.i(TAG, "🗺️ ✓✓✓ KEYBOARD DONE pressed - should navigate to price screen!")
+                        lastInDriverClickTime = currentTime
+                        return true
+                    }
                 }
             } else {
-                Log.w(TAG, "🗺️ No real suggestions found (all were 'Choose on map' variants)")
+                Log.w(TAG, "🗺️ No real suggestions found - trying keyboard Done...")
                 // Recycle nodes anyway
                 suggestions.forEach { (n, _) ->
                     try { n.recycle() } catch (e: Exception) {}
+                }
+
+                // FALLBACK: Try pressing keyboard "Done" key
+                if (pressKeyboardDone()) {
+                    Log.i(TAG, "🗺️ ✓✓✓ KEYBOARD DONE pressed (no suggestions) - should navigate to price screen!")
+                    lastInDriverClickTime = currentTime
+                    return true
                 }
             }
         }
@@ -3398,6 +3412,102 @@ class PriceReaderService : AccessibilityService() {
             child.recycle()
         }
 
+        return false
+    }
+
+    /**
+     * Simulate pressing the keyboard "Done" key
+     * This triggers the IME_ACTION_DONE which InDriver uses to navigate to price screen
+     */
+    private fun pressKeyboardDone(): Boolean {
+        Log.i(TAG, "⌨️ Attempting to press keyboard Done key...")
+
+        // Method 1: Try clicking the "Done" button in the keyboard if visible
+        // Look for text like "Done", "تم", "Go", etc. in the lower part of screen
+        val rootNode = rootInActiveWindow ?: return false
+
+        // Try to find keyboard Done button
+        val doneTexts = listOf("Done", "تم", "Go", "Search", "Enter", "بحث")
+        for (doneText in doneTexts) {
+            val nodes = rootNode.findAccessibilityNodeInfosByText(doneText)
+            for (node in nodes) {
+                val bounds = android.graphics.Rect()
+                node.getBoundsInScreen(bounds)
+
+                // Keyboard buttons are usually at the bottom of the screen (y > 1500)
+                if (bounds.top > 1200 && node.isClickable) {
+                    Log.i(TAG, "⌨️ Found keyboard '$doneText' button at ${bounds.left},${bounds.top}")
+                    if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        Log.i(TAG, "⌨️ ✓ Clicked keyboard Done button!")
+                        node.recycle()
+                        rootNode.recycle()
+                        return true
+                    }
+                }
+
+                // Try gesture click on the button
+                if (bounds.top > 1200 && bounds.width() > 0 && bounds.height() > 0) {
+                    val x = (bounds.left + bounds.right) / 2f
+                    val y = (bounds.top + bounds.bottom) / 2f
+                    Log.i(TAG, "⌨️ Trying gesture click on '$doneText' at ($x, $y)")
+                    if (clickAtPositionWithDuration(x, y, 150)) {
+                        Log.i(TAG, "⌨️ ✓ Gesture clicked keyboard Done!")
+                        node.recycle()
+                        rootNode.recycle()
+                        return true
+                    }
+                }
+                node.recycle()
+            }
+        }
+
+        // Method 2: Find focused EditText and perform IME action
+        val focusedNode = rootNode.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        if (focusedNode != null) {
+            Log.i(TAG, "⌨️ Found focused input: ${focusedNode.className}")
+
+            // Try ACTION_NEXT which often triggers Done behavior
+            if (focusedNode.performAction(AccessibilityNodeInfo.ACTION_NEXT_AT_MOVEMENT_GRANULARITY)) {
+                Log.i(TAG, "⌨️ ACTION_NEXT succeeded")
+            }
+
+            // For API 30+, try IME action
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                val args = android.os.Bundle()
+                args.putInt(
+                    "android.view.accessibility.action.ARGUMENT_IME_ACTION_ID_INT",
+                    android.view.inputmethod.EditorInfo.IME_ACTION_DONE
+                )
+                if (focusedNode.performAction(AccessibilityNodeInfo.ACTION_IME_ENTER)) {
+                    Log.i(TAG, "⌨️ ✓ ACTION_IME_ENTER succeeded!")
+                    focusedNode.recycle()
+                    rootNode.recycle()
+                    return true
+                }
+            }
+            focusedNode.recycle()
+        }
+
+        // Method 3: Try to find and click "البحث عن عروض" or similar buttons
+        val searchTexts = listOf("البحث عن عروض", "بحث", "Search", "Find offers")
+        for (searchText in searchTexts) {
+            val nodes = rootNode.findAccessibilityNodeInfosByText(searchText)
+            for (node in nodes) {
+                if (node.isClickable) {
+                    Log.i(TAG, "⌨️ Found '$searchText' button, clicking...")
+                    if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        Log.i(TAG, "⌨️ ✓ Clicked '$searchText' button!")
+                        node.recycle()
+                        rootNode.recycle()
+                        return true
+                    }
+                }
+                node.recycle()
+            }
+        }
+
+        rootNode.recycle()
+        Log.w(TAG, "⌨️ Could not find keyboard Done button")
         return false
     }
 
