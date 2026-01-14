@@ -910,16 +910,29 @@ class PriceReaderService : AccessibilityService() {
     private fun enterInDriverPickupText(rootNode: AccessibilityNodeInfo): Boolean {
         Log.i(TAG, "🤖 enterInDriverPickupText: Entering pickup coordinates...")
 
-        // STEP 1: Clear existing pickup location by clicking "x" button
-        // InDriver pre-fills "الموقع الحالي" (Current Location) which we need to clear first
-        Log.i(TAG, "🤖 STEP 1: Looking for 'x' clear button to remove current location...")
-        val cleared = clearInDriverPickupField(rootNode)
-        if (cleared) {
-            Log.i(TAG, "🤖 ✓ Cleared existing pickup location")
-            // Wait a moment for UI to update after clearing
-            Thread.sleep(300)
+        // STEP 0: Check if the pickup field already has content that needs clearing
+        // If field is empty (shows "من" placeholder), skip clearing
+        val pickupField = findPickupEditText(rootNode)
+        val currentText = pickupField?.text?.toString() ?: ""
+        pickupField?.recycle()
+
+        val isFieldEmpty = currentText.isBlank() || currentText == "من" || currentText == "From" ||
+                           currentText == "من أين" || currentText.length < 3
+
+        if (isFieldEmpty) {
+            Log.i(TAG, "🤖 Pickup field is empty ('$currentText') - no need to clear, will enter text directly")
         } else {
-            Log.w(TAG, "🤖 Could not find/click clear button - will try to overwrite")
+            // STEP 1: Clear existing pickup location by clicking "x" button
+            // InDriver pre-fills "الموقع الحالي" (Current Location) which we need to clear first
+            Log.i(TAG, "🤖 STEP 1: Looking for 'x' clear button to remove current location...")
+            val cleared = clearInDriverPickupField(rootNode)
+            if (cleared) {
+                Log.i(TAG, "🤖 ✓ Cleared existing pickup location")
+                // Wait a moment for UI to update after clearing
+                Thread.sleep(300)
+            } else {
+                Log.w(TAG, "🤖 Could not find/click clear button - will try to overwrite")
+            }
         }
 
         // STEP 2: Enter new pickup coordinates
@@ -957,6 +970,33 @@ class PriceReaderService : AccessibilityService() {
     }
 
     /**
+     * Find the pickup EditText field in InDriver
+     */
+    private fun findPickupEditText(rootNode: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        // Try to find by resource ID first
+        val pickupIds = listOf(
+            "sinet.startup.inDriver:id/address_edittext_from",
+            "sinet.startup.indriver:id/address_edittext_from"
+        )
+        for (id in pickupIds) {
+            val nodes = rootNode.findAccessibilityNodeInfosByViewId(id)
+            if (nodes.isNotEmpty()) {
+                return nodes[0]
+            }
+        }
+
+        // Fallback: find EditText with "من" text
+        val nodes = rootNode.findAccessibilityNodeInfosByText("من")
+        for (node in nodes) {
+            if (node.className?.toString()?.contains("EditText") == true) {
+                return node
+            }
+            node.recycle()
+        }
+        return null
+    }
+
+    /**
      * Clear InDriver's pickup field by clicking the "x" clear button
      * This removes "الموقع الحالي" (Current Location) so we can enter custom pickup
      */
@@ -967,10 +1007,33 @@ class PriceReaderService : AccessibilityService() {
         Log.i(TAG, "🗑️ === Searching for clear button ===")
         logAllClearButtonCandidates(rootNode, 0)
 
+        // Strategy 0: Find by resource ID first (most reliable)
+        // The clear button in InDriver has ID: etl_end_button
+        val clearButtonIds = listOf(
+            "sinet.startup.inDriver:id/etl_end_button",
+            "sinet.startup.indriver:id/etl_end_button"
+        )
+        for (id in clearButtonIds) {
+            val nodes = rootNode.findAccessibilityNodeInfosByViewId(id)
+            for (node in nodes) {
+                if (node.isClickable) {
+                    val desc = node.contentDescription?.toString() ?: ""
+                    Log.i(TAG, "🗑️ Found clear button by ID: desc='$desc'")
+                    if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        Log.i(TAG, "🗑️ ✓ Clicked clear button (etl_end_button)")
+                        node.recycle()
+                        return true
+                    }
+                }
+                node.recycle()
+            }
+        }
+
         // Strategy 1: Find by content description (accessibility label)
+        // IMPORTANT: Do NOT include "إغلاق" (Close) - that's the cancel button!
         val clearDescriptions = listOf(
             "مسح", "Clear", "حذف", "Delete", "إزالة", "Remove",
-            "clear", "close", "x", "×", "✕", "✖", "إغلاق"
+            "clear", "x", "×", "✕", "✖"
         )
 
         for (desc in clearDescriptions) {
