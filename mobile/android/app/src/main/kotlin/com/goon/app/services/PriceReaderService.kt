@@ -2857,18 +2857,39 @@ class PriceReaderService : AccessibilityService() {
             it.contains("إلى أين") || it.contains("Where to") || it.contains("الى")
         }
         // Check if we see suggestions by looking for typical location patterns
+        // IMPORTANT: Include DISTANCE INDICATORS (متر, كم) which appear with pickup suggestions!
         val hasSuggestionItems = allText.any {
-            (it.contains("Egypt") || it.contains("مصر") || it.contains("KALIOBEYA") ||
+            // Destination-type patterns (locations, areas)
+            ((it.contains("Egypt") || it.contains("مصر") || it.contains("KALIOBEYA") ||
              it.contains("محافظة") || it.contains("القاهرة") || it.contains("العبور") ||
-             it.contains("الحي") || it.contains("Mall") || it.contains("كارفور")) &&
+             it.contains("الحي") || it.contains("Mall") || it.contains("كارفور") ||
+             it.contains("شارع") || it.contains("ميدان") || it.contains("حي") ||
+             // PICKUP SUGGESTION indicators - distance markers!
+             it.contains("متر") || it.contains("كم") || it.contains("km") || it.contains(" m ") ||
+             // Common areas that might appear
+             it.contains("Obour") || it.contains("Nasr") || it.contains("Heliopolis") ||
+             it.contains("Maadi") || it.contains("Zamalek") || it.contains("Mohandessin") ||
+             it.contains("مدينة") || it.contains("منطقة") || it.contains("مركز") ||
+             // When pickup suggestions appear, might see these
+             it.contains("Riyad") || it.contains("رياض") || it.contains("Abdel"))) &&
             !it.contains("اختر على الخريطة") && !it.contains("Choose on map")
         }
 
-        Log.i(TAG, "🗺️ SUGGESTIONS CHECK: hasChooseOnMap=$hasChooseOnMapOption, hasDestField=$hasDestinationField, hasSuggestions=$hasSuggestionItems")
+        // Also check for PICKUP field focus (indicates we need to click pickup suggestion)
+        val hasPickupFieldFocus = allText.any {
+            it.contains("من أين") || it.contains("From where") || it.contains("نقطة الإقلال")
+        }
 
-        // If we see "Choose on map" AND other suggestion items (not "No results"), click the first real suggestion
-        if (hasChooseOnMapOption && hasSuggestionItems && !hasNoResults) {
-            Log.i(TAG, "🗺️ ✓ Detected SUGGESTIONS SCREEN - looking for first real suggestion to click")
+        Log.i(TAG, "🗺️ SUGGESTIONS CHECK: hasChooseOnMap=$hasChooseOnMapOption, hasDestField=$hasDestinationField, hasSuggestions=$hasSuggestionItems, hasPickupFocus=$hasPickupFieldFocus")
+
+        // If we see suggestions (either with "Choose on map" for destination, OR pickup suggestions with distance markers)
+        // IMPORTANT: Pickup suggestions after destination click may NOT have "Choose on map"!
+        val shouldClickSuggestion = (hasChooseOnMapOption && hasSuggestionItems && !hasNoResults) ||
+                                     (hasPickupFieldFocus && hasSuggestionItems && !hasNoResults)
+
+        if (shouldClickSuggestion) {
+            val suggestionType = if (hasPickupFieldFocus) "PICKUP" else "DESTINATION"
+            Log.i(TAG, "🗺️ ✓ Detected $suggestionType SUGGESTIONS SCREEN - looking for first real suggestion to click")
 
             // Collect all suggestions from the screen
             val suggestions = mutableListOf<Pair<AccessibilityNodeInfo, String>>()
@@ -2896,10 +2917,18 @@ class PriceReaderService : AccessibilityService() {
             if (realSuggestions.isEmpty()) {
                 Log.i(TAG, "🗺️ No suggestions from collectInDriverSuggestions - trying TEXT SEARCH fallback")
 
-                // Look for suggestion names we saw in allText (Coffee Zone, Coffee time, etc.)
+                // Look for suggestion names we saw in allText
+                // Include BOTH destination patterns (Coffee, Mall) AND pickup patterns (distance indicators)
                 val potentialSuggestions = allText.filter { text ->
                     (text.contains("Coffee") || text.contains("Shop") || text.contains("Mall") ||
-                     text.contains("كافيه") || text.contains("مطعم") || text.contains("Restaurant")) &&
+                     text.contains("كافيه") || text.contains("مطعم") || text.contains("Restaurant") ||
+                     // Pickup suggestion patterns - distance indicators
+                     text.contains("متر") || text.contains("كم") || text.contains("km") ||
+                     // Common location patterns
+                     text.contains("Obour") || text.contains("العبور") || text.contains("Nasr") ||
+                     text.contains("Heliopolis") || text.contains("مصر") || text.contains("Cairo") ||
+                     text.contains("Riyad") || text.contains("رياض") || text.contains("شارع") ||
+                     text.contains("ميدان") || text.contains("مدينة") || text.contains("منطقة")) &&
                     !text.contains("اختر") && !text.contains("Choose") &&
                     text.length > 5 && text.length < 100
                 }
