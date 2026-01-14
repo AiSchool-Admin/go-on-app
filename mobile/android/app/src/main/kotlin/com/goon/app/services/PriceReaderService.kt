@@ -1966,6 +1966,42 @@ class PriceReaderService : AccessibilityService() {
         }
 
         // ============================================================
+        // STEP 0: Check if we're on the PRICE SCREEN (البحث عن عروض)
+        // If InDriver auto-filled pickup & destination, it goes directly here!
+        // No need to click "تم" at all!
+        // ============================================================
+        val hasPriceScreen = allText.any {
+            it.contains("البحث عن عروض") ||
+            it.contains("الأجر المقترح") ||
+            it.contains("Search for offers") ||
+            it.contains("Suggested fare")
+        }
+
+        // Also check for price indicators (EGP with numbers)
+        val hasPriceIndicator = allText.any {
+            it.contains("EGP") || it.matches(Regex(".*\\d+\\s*(جنيه|ج\\.م|EGP).*"))
+        }
+
+        // Check for vehicle type selection (indicates price screen)
+        val hasVehicleTypes = allText.count {
+            it == "رحلة" || it == "مريحة" || it == "درجة نارية" || it == "بريميوم"
+        } >= 2
+
+        if (hasPriceScreen || (hasPriceIndicator && hasVehicleTypes)) {
+            Log.i(TAG, "🗺️ ✓✓✓ DETECTED PRICE SCREEN! (البحث عن عروض)")
+            Log.i(TAG, "🗺️ hasPriceScreen=$hasPriceScreen, hasPriceIndicator=$hasPriceIndicator, hasVehicleTypes=$hasVehicleTypes")
+
+            // Enable price detection NOW - we're on the real price screen!
+            if (!inDriverAutomationComplete) {
+                Log.i(TAG, "🗺️ ✓ ENABLING price detection - on price screen!")
+                inDriverAutomationComplete = true
+            }
+
+            // NOT an intermediate screen - return false to allow price extraction
+            return false
+        }
+
+        // ============================================================
         // STEP 1: Check for "No Results" screen - need to click "Choose on map"
         // This appears when InDriver can't find the coordinates as an address
         // ============================================================
