@@ -1107,9 +1107,69 @@ class PriceReaderService : AccessibilityService() {
     }
 
     /**
+     * Find InDriver destination field by resource ID "address_edittext_to"
+     * This is the most reliable way to find the correct field
+     */
+    private fun findDestinationFieldById(node: AccessibilityNodeInfo): Boolean {
+        val viewId = node.viewIdResourceName?.lowercase() ?: ""
+        val nodeText = node.text?.toString() ?: ""
+        val className = node.className?.toString()?.substringAfterLast(".") ?: ""
+
+        // Look for the destination EditText specifically
+        if (viewId.contains("address_edittext_to") || viewId.contains("edittext_to")) {
+            Log.i(TAG, "🎯 Found destination field by ID: '$viewId' text='$nodeText'")
+
+            // Make sure it's NOT containing coordinates (pickup field)
+            if (nodeText.contains(",") && nodeText.matches(Regex(".*\\d+\\.\\d+.*"))) {
+                Log.i(TAG, "🎯 SKIP - contains coordinates (wrong field)")
+            } else {
+                // Try to click
+                if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    Log.i(TAG, "🎯 ✓✓✓ Clicked destination field by ID!")
+                    return true
+                }
+
+                // Try focus then click
+                if (node.isFocusable) {
+                    node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+                    Thread.sleep(100)
+                    if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        Log.i(TAG, "🎯 ✓✓✓ Focus+Click destination field by ID!")
+                        return true
+                    }
+                }
+
+                // Try parent click
+                val parent = node.parent
+                if (parent != null && parent.isClickable) {
+                    if (parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        Log.i(TAG, "🎯 ✓✓✓ Clicked destination field parent!")
+                        parent.recycle()
+                        return true
+                    }
+                    parent.recycle()
+                }
+            }
+        }
+
+        // Check children
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (findDestinationFieldById(child)) {
+                child.recycle()
+                return true
+            }
+            child.recycle()
+        }
+
+        return false
+    }
+
+    /**
      * Find InDriver destination field by position on screen
      * The destination field ("إلى") is the second input field, below pickup
      * It should be in the top portion of the screen, NOT in the suggestions list
+     * CRITICAL: Must NOT click on pickup field which has coordinates!
      */
     private fun findDestinationFieldByPosition(node: AccessibilityNodeInfo): Boolean {
         val bounds = android.graphics.Rect()
@@ -1117,9 +1177,23 @@ class PriceReaderService : AccessibilityService() {
         val className = node.className?.toString()?.lowercase() ?: ""
         val text = node.text?.toString() ?: ""
 
-        // Look for clickable/focusable elements in the top portion of screen (y < 400)
+        // SKIP if this contains coordinates (it's the pickup field!)
+        if (text.contains(",") && text.matches(Regex(".*\\d+\\.\\d+.*"))) {
+            // This is the pickup field with coordinates - skip!
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i) ?: continue
+                if (findDestinationFieldByPosition(child)) {
+                    child.recycle()
+                    return true
+                }
+                child.recycle()
+            }
+            return false
+        }
+
+        // Look for clickable/focusable elements in the top portion of screen (y < 600)
         // that could be the destination input field
-        val isTopOfScreen = bounds.top in 100..400
+        val isTopOfScreen = bounds.top in 100..600
         val isClickableOrFocusable = node.isClickable || node.isFocusable
         val isInputLike = className.contains("edit") || className.contains("text") ||
             className.contains("input") || className.contains("view")
@@ -1205,12 +1279,20 @@ class PriceReaderService : AccessibilityService() {
         Log.i(TAG, "🚗 Pickup already entered: $inDriverPickupEntered")
 
         // If pickup was already entered, we need to find the "إلى" field specifically
-        // It should be the second input field (below the pickup field)
+        // CRITICAL: Must NOT click on the pickup field which already has coordinates!
         if (inDriverPickupEntered) {
             Log.i(TAG, "🚗 Looking for 'إلى' field specifically (pickup was already entered)...")
 
+            // Strategy 0: Find by resource ID "address_edittext_to" (MOST RELIABLE!)
+            Log.i(TAG, "🚗 Strategy 0: Looking for address_edittext_to by resource ID...")
+            val destFieldById = findDestinationFieldById(rootNode)
+            if (destFieldById) {
+                return true
+            }
+
             // Strategy A: Find "إلى" text that is near the top of the screen (input field, not suggestion)
-            val destinationFieldTexts = listOf("إلى", "To", "الوجهة")
+            Log.i(TAG, "🚗 Strategy A: Looking for 'إلى' text...")
+            val destinationFieldTexts = listOf("إلى", "To")
             for (searchText in destinationFieldTexts) {
                 val nodes = rootNode.findAccessibilityNodeInfosByText(searchText)
                 for (node in nodes) {
@@ -1218,13 +1300,23 @@ class PriceReaderService : AccessibilityService() {
                     node.getBoundsInScreen(bounds)
                     val nodeText = node.text?.toString() ?: ""
                     val nodeClass = node.className?.toString()?.substringAfterLast(".") ?: ""
+                    val viewId = node.viewIdResourceName ?: ""
 
-                    Log.i(TAG, "🚗 Found '$searchText': [$nodeClass] y=${bounds.top} text='$nodeText'")
+                    Log.i(TAG, "🚗 Found '$searchText': [$nodeClass] y=${bounds.top} text='$nodeText' id='$viewId'")
 
-                    // The destination field should be near the top of the screen (y < 400)
-                    // Suggestions are lower on the screen
-                    if (bounds.top < 500 && (node.isClickable || node.isFocusable)) {
-                        Log.i(TAG, "🚗 ✓ This looks like the destination field (y=${bounds.top} < 500)")
+                    // SKIP if this contains coordinates (it's the pickup field!)
+                    if (nodeText.contains(",") && nodeText.matches(Regex(".*\\d+\\.\\d+.*"))) {
+                        Log.i(TAG, "🚗 SKIP - this is the pickup field with coordinates!")
+                        node.recycle()
+                        continue
+                    }
+
+                    // The destination field should be the "إلى" text or address_edittext_to
+                    val isDestinationField = viewId.contains("address_edittext_to") ||
+                        nodeText == "إلى" || nodeText == "To"
+
+                    if (isDestinationField && (node.isClickable || node.isFocusable)) {
+                        Log.i(TAG, "🚗 ✓ This is the destination field!")
 
                         // Try to click
                         if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
@@ -1254,7 +1346,7 @@ class PriceReaderService : AccessibilityService() {
                 }
             }
 
-            // Strategy B: Find by orange dot indicator (الوجهة has an orange dot)
+            // Strategy B: Find by position (avoid fields with coordinates)
             Log.i(TAG, "🚗 Strategy B: Looking for destination field by position...")
             val foundByPosition = findDestinationFieldByPosition(rootNode)
             if (foundByPosition) {
