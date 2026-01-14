@@ -2726,8 +2726,9 @@ class PriceReaderService : AccessibilityService() {
         }
 
         // Cooldown to prevent clicking too fast (InDriver crashes with rapid interactions)
+        // Reduced from 3000 to 1500ms to allow faster retries
         val currentTime = System.currentTimeMillis()
-        if (currentTime - lastInDriverClickTime < 3000) {
+        if (currentTime - lastInDriverClickTime < 1500) {
             Log.i(TAG, "🗺️ InDriver cooldown active, waiting...")
             return true // Return true to prevent other actions
         }
@@ -2971,24 +2972,75 @@ class PriceReaderService : AccessibilityService() {
 
                 var clicked = false
 
-                // Try gesture click first (most reliable)
-                if (bounds.width() > 0 && bounds.height() > 0) {
+                // Strategy 1: Try ACTION_CLICK on the node directly (most reliable for accessibility)
+                Log.i(TAG, "🗺️ Strategy 1: Trying ACTION_CLICK on suggestion node...")
+                if (node.isClickable) {
+                    clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    Log.i(TAG, "🗺️ ACTION_CLICK result: $clicked")
+                }
+
+                // Strategy 2: Try clicking on clickable CHILDREN of the suggestion row
+                if (!clicked) {
+                    Log.i(TAG, "🗺️ Strategy 2: Looking for clickable children...")
+                    for (i in 0 until node.childCount) {
+                        val child = node.getChild(i) ?: continue
+                        if (child.isClickable) {
+                            Log.i(TAG, "🗺️ Found clickable child at index $i, clicking...")
+                            clicked = child.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                            child.recycle()
+                            if (clicked) {
+                                Log.i(TAG, "🗺️ Child click succeeded!")
+                                break
+                            }
+                        }
+                        child.recycle()
+                    }
+                }
+
+                // Strategy 3: Try gentleClick (works by finding clickable parent/child)
+                if (!clicked) {
+                    Log.i(TAG, "🗺️ Strategy 3: Trying gentleClick...")
+                    clicked = gentleClick(node)
+                    Log.i(TAG, "🗺️ gentleClick result: $clicked")
+                }
+
+                // Strategy 4: Try gesture click at center of bounds
+                if (!clicked && bounds.width() > 0 && bounds.height() > 0) {
                     val centerX = bounds.centerX().toFloat()
                     val centerY = bounds.centerY().toFloat()
-                    Log.i(TAG, "🗺️ Trying gesture click at ($centerX, $centerY)")
+                    Log.i(TAG, "🗺️ Strategy 4: Trying gesture click at ($centerX, $centerY)")
                     clicked = clickAtPosition(centerX, centerY)
+                    Log.i(TAG, "🗺️ Gesture click result: $clicked")
                 }
 
-                // Fallback to ACTION_CLICK
-                if (!clicked) {
-                    Log.i(TAG, "🗺️ Trying ACTION_CLICK...")
-                    clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                // Strategy 5: Try gesture click at different Y positions with LONGER duration (200ms)
+                // InDriver may need a longer tap duration to register the click
+                if (!clicked || true) { // Always try this as extra measure
+                    Log.i(TAG, "🗺️ Strategy 5: Trying LONGER TAP (200ms) at multiple positions...")
+                    val centerX = bounds.centerX().toFloat()
+                    // Try clicking at 1/3, 1/2, and 2/3 of the row height with longer duration
+                    val positions = listOf(
+                        bounds.top + bounds.height() * 0.33f,
+                        bounds.top + bounds.height() * 0.5f,
+                        bounds.top + bounds.height() * 0.67f
+                    )
+                    for (yPos in positions) {
+                        Log.i(TAG, "🗺️ Long tap at ($centerX, $yPos) with 200ms duration...")
+                        if (clickAtPositionWithDuration(centerX, yPos, 200)) {
+                            clicked = true
+                            Log.i(TAG, "🗺️ Long tap at Y=$yPos succeeded!")
+                            break
+                        }
+                    }
                 }
 
-                // Fallback to gentle click
+                // Strategy 6: Try even LONGER tap (300ms) at center if nothing else worked
                 if (!clicked) {
-                    Log.i(TAG, "🗺️ Trying gentleClick...")
-                    clicked = gentleClick(node)
+                    Log.i(TAG, "🗺️ Strategy 6: Trying EXTRA LONG TAP (300ms)...")
+                    val centerX = bounds.centerX().toFloat()
+                    val centerY = bounds.centerY().toFloat()
+                    clicked = clickAtPositionWithDuration(centerX, centerY, 300)
+                    Log.i(TAG, "🗺️ Extra long tap result: $clicked")
                 }
 
                 // Recycle all nodes
@@ -3325,6 +3377,14 @@ class PriceReaderService : AccessibilityService() {
      * This is more reliable than performAction for some UI elements
      */
     private fun clickAtPosition(x: Float, y: Float): Boolean {
+        return clickAtPositionWithDuration(x, y, 100)
+    }
+
+    /**
+     * Click at position with configurable duration
+     * Longer durations (200-300ms) may work better for some apps like InDriver
+     */
+    private fun clickAtPositionWithDuration(x: Float, y: Float, durationMs: Long): Boolean {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
             val path = android.graphics.Path()
             path.moveTo(x, y)
@@ -3332,20 +3392,20 @@ class PriceReaderService : AccessibilityService() {
             val gestureBuilder = android.accessibilityservice.GestureDescription.Builder()
             gestureBuilder.addStroke(
                 android.accessibilityservice.GestureDescription.StrokeDescription(
-                    path, 0, 100
+                    path, 0, durationMs
                 )
             )
 
             val result = dispatchGesture(gestureBuilder.build(), object : GestureResultCallback() {
                 override fun onCompleted(gestureDescription: android.accessibilityservice.GestureDescription?) {
-                    Log.i(TAG, "🎯 Gesture completed at ($x, $y)")
+                    Log.i(TAG, "🎯 Gesture completed at ($x, $y) duration=${durationMs}ms")
                 }
                 override fun onCancelled(gestureDescription: android.accessibilityservice.GestureDescription?) {
                     Log.w(TAG, "🎯 Gesture cancelled at ($x, $y)")
                 }
             }, null)
 
-            Log.i(TAG, "🎯 dispatchGesture at ($x, $y) result: $result")
+            Log.i(TAG, "🎯 dispatchGesture at ($x, $y) duration=${durationMs}ms result: $result")
             return result
         }
         return false
