@@ -208,14 +208,15 @@ class PriceReaderService : AccessibilityService() {
     private var inDriverDoneClickedTime = 0L
     private val INDRIVER_MIN_WAIT_AFTER_DONE_MS = 5000L  // Wait at least 5 seconds after Done click
 
-    // Track InDriver confirmation clicks (3 clicks needed!)
-    // InDriver flow:
+    // Track InDriver confirmation clicks (5 clicks needed!)
+    // InDriver flow after entering coordinates:
     //   1. Map confirm destination → "تم"
     //   2. Map confirm pickup → "تم"
-    //   3. Confirm pickup screen → "تطبيق"
-    //   4. THEN prices appear
+    //   3. Additional confirm screens → "تم" or "تطبيق"
+    //   4. Final confirm → "تطبيق" or "تأكيد"
+    //   5. THEN "البحث عن عروض" prices screen appears
     private var inDriverDoneClickCount = 0
-    private val INDRIVER_MAX_DONE_CLICKS = 3  // Allow 3 clicks: destination تم, pickup تم, final تطبيق
+    private val INDRIVER_MAX_DONE_CLICKS = 5  // Allow 5 clicks to handle all confirmation screens
 
     // CRITICAL: Block ALL InDriver price detection until automation is complete
     // This prevents the 95 EGP default price from being cached during automation
@@ -2634,8 +2635,13 @@ class PriceReaderService : AccessibilityService() {
         val hasPriceScreen = allText.any {
             it.contains("البحث عن عروض") ||
             it.contains("الأجر المقترح") ||
+            it.contains("اطلب رحلة") ||
+            it.contains("السعر المقترح") ||
+            it.contains("عرض السعر") ||
+            it.contains("اختر سيارة") ||
             it.contains("Search for offers") ||
-            it.contains("Suggested fare")
+            it.contains("Suggested fare") ||
+            it.contains("Request ride")
         }
 
         // Also check for price indicators (EGP with numbers)
@@ -2645,11 +2651,17 @@ class PriceReaderService : AccessibilityService() {
 
         // Check for vehicle type selection (indicates price screen)
         val hasVehicleTypes = allText.count {
-            it == "رحلة" || it == "مريحة" || it == "درجة نارية" || it == "بريميوم"
+            it == "رحلة" || it == "مريحة" || it == "درجة نارية" || it == "بريميوم" ||
+            it == "اقتصادي" || it == "Economy" || it == "Comfort" || it == "Premium"
         } >= 2
 
+        // Log all text for debugging when we think we might be on price screen
+        if (hasPriceScreen || hasPriceIndicator) {
+            Log.i(TAG, "🗺️ Checking for price screen. All text: ${allText.take(20)}")
+        }
+
         if (hasPriceScreen || (hasPriceIndicator && hasVehicleTypes)) {
-            Log.i(TAG, "🗺️ ✓✓✓ DETECTED PRICE SCREEN! (البحث عن عروض)")
+            Log.i(TAG, "🗺️ ✓✓✓ DETECTED PRICE SCREEN! (البحث عن عروض / الأجر المقترح)")
             Log.i(TAG, "🗺️ hasPriceScreen=$hasPriceScreen, hasPriceIndicator=$hasPriceIndicator, hasVehicleTypes=$hasVehicleTypes")
 
             // Enable price detection NOW - we're on the real price screen!
@@ -2720,14 +2732,21 @@ class PriceReaderService : AccessibilityService() {
         // InDriver has 3 confirmation screens:
         //   1. Destination map → "تم"
         //   2. Pickup map → "تم"
-        //   3. Final pickup confirmation → "تطبيق"
+        //   3. Final pickup confirmation → "تطبيق" (or "تأكيد")
         // ============================================================
         val hasTamButton = allText.any { it == "تم" }
-        val hasTatbeeqButton = allText.any { it == "تطبيق" }  // "Apply" button on final screen
-        val hasDoneButton = allTextLower.any { it == "done" || it == "confirm" || it == "تأكيد" || it == "apply" }
-        val hasMapConfirmation = hasTamButton || hasTatbeeqButton || hasDoneButton
+        val hasTatbeeqButton = allText.any { it == "تطبيق" || it.contains("تطبيق") }  // "Apply" button
+        val hasConfirmButton = allText.any { it == "تأكيد" || it.contains("تأكيد نقطة") }  // "Confirm" button
+        val hasDoneButton = allTextLower.any { it == "done" || it == "confirm" || it == "apply" }
+        val hasMapConfirmation = hasTamButton || hasTatbeeqButton || hasConfirmButton || hasDoneButton
 
-        Log.i(TAG, "🗺️ hasTamButton=$hasTamButton, hasTatbeeqButton=$hasTatbeeqButton, hasDoneButton=$hasDoneButton, hasMapConfirmation=$hasMapConfirmation")
+        // Check for final confirmation screen "تأكيد نقطة الإقلال"
+        val isFinalConfirmScreen = allText.any {
+            it.contains("تأكيد نقطة الإقلال") || it.contains("تأكيد نقطة الانطلاق") ||
+            it.contains("Confirm pickup") || it.contains("confirm pickup")
+        }
+
+        Log.i(TAG, "🗺️ hasTamButton=$hasTamButton, hasTatbeeqButton=$hasTatbeeqButton, hasConfirmButton=$hasConfirmButton, isFinalConfirm=$isFinalConfirmScreen")
 
         // Also check if we see Google maps elements (indicates map confirmation screen)
         val hasGoogleMap = allTextLower.any { it.contains("google") }
@@ -2765,14 +2784,15 @@ class PriceReaderService : AccessibilityService() {
                 return true  // Return true to stay in handling mode
             }
 
-            // If we clicked once for destination and now see pickup screen, allow second click
-            if (inDriverDoneClickCount == 1 && !isPickupScreen && timeSinceDoneClick < 10000L) {
-                // We clicked once but no pickup markers yet - might still be transitioning
-                Log.i(TAG, "🗺️ Clicked once, waiting for pickup screen to appear (${timeSinceDoneClick}ms)")
-                return true  // Return true to stay in handling mode and wait
-            }
+            // REMOVED: Don't block waiting for pickup screen markers - just click "تم" when we see it
+            // After entering both pickup and destination, InDriver may show multiple "تم" screens
+            // Just click through them all to get to "البحث عن عروض"
 
-            val clickType = if (inDriverDoneClickCount == 0) "DESTINATION" else "PICKUP"
+            val clickType = when (inDriverDoneClickCount) {
+                0 -> "DESTINATION"
+                1 -> "PICKUP"
+                else -> "CONFIRM_$inDriverDoneClickCount"
+            }
             Log.i(TAG, "🗺️ Detected InDriver MAP CONFIRMATION screen ($clickType) - clicking 'تم' button")
 
             // Try to click the "تم" button - USE GESTURE CLICK because ACTION_CLICK doesn't work reliably
@@ -3815,6 +3835,10 @@ class PriceReaderService : AccessibilityService() {
      * Extract prices from InDriver app
      * CRITICAL: During automation, prices are BLOCKED until automation is complete
      * This prevents the 95 EGP default price from being cached
+     *
+     * Priority extraction:
+     * 1. "الأجر المقترح" (Suggested fare) - the main price to extract
+     * 2. Other prices on screen as fallback
      */
     private fun extractInDriverPrices(rootNode: AccessibilityNodeInfo) {
         // CRITICAL: Block ALL price detection during active InDriver automation
@@ -3826,6 +3850,7 @@ class PriceReaderService : AccessibilityService() {
 
         val allText = getAllTextFromNode(rootNode)
         val prices = mutableListOf<Double>()
+        var suggestedFare: Double? = null
 
         // InDriver-specific price blacklist:
         // - 95.0 = Default price shown on home screen (NOT a real trip price!)
@@ -3833,6 +3858,22 @@ class PriceReaderService : AccessibilityService() {
         val inDriverBlacklist = setOf(95.0)
         val minCarPrice = 25.0  // Prices below this are motorcycle
 
+        // PRIORITY 1: Look for "الأجر المقترح" (Suggested fare) specifically
+        // This is the main price shown on the "البحث عن عروض" screen
+        for (text in allText) {
+            if (text.contains("الأجر المقترح") || text.contains("السعر المقترح") ||
+                text.contains("Suggested fare") || text.contains("Suggested price")) {
+                // Try to extract price from this text
+                val price = extractPrice(text)
+                if (price != null && price > minCarPrice && price !in inDriverBlacklist) {
+                    suggestedFare = price
+                    Log.i(TAG, "InDriver: Found suggested fare (الأجر المقترح): $price EGP")
+                    break
+                }
+            }
+        }
+
+        // PRIORITY 2: Extract all other prices as fallback
         for (text in allText) {
             val price = extractPrice(text)
             if (price != null && price in 15.0..2000.0) {
@@ -3849,9 +3890,12 @@ class PriceReaderService : AccessibilityService() {
             }
         }
 
-        if (prices.isNotEmpty()) {
-            val bestPrice = findBestPrice(prices)
-            Log.i(TAG, "InDriver filtered prices: $prices -> best: $bestPrice EGP")
+        // Use suggested fare if found, otherwise use best from all prices
+        val bestPrice = suggestedFare ?: if (prices.isNotEmpty()) findBestPrice(prices) else null
+
+        if (bestPrice != null) {
+            val priceSource = if (suggestedFare != null) "الأجر المقترح" else "extracted"
+            Log.i(TAG, "InDriver prices: $prices -> best: $bestPrice EGP (source: $priceSource)")
             val priceInfo = PriceInfo(
                 appName = "InDriver",
                 packageName = INDRIVER_PACKAGE,
