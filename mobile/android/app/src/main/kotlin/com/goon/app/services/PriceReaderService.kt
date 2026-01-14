@@ -2885,15 +2885,23 @@ class PriceReaderService : AccessibilityService() {
             it.contains("من أين") || it.contains("From where") || it.contains("نقطة الإقلال")
         }
 
-        Log.i(TAG, "🗺️ SUGGESTIONS CHECK: hasChooseOnMap=$hasChooseOnMapOption, hasDestField=$hasDestinationField, hasSuggestions=$hasSuggestionItems, hasPickupFocus=$hasPickupFieldFocus")
+        // SPECIAL: Detect pickup suggestions screen by looking for distance patterns with location names
+        // This handles the case where InDriver shows pickup suggestions AFTER destination was clicked
+        val hasPickupSuggestionsWithDistance = allText.any { it.contains("متر") || it.contains("كم") } &&
+            allText.any { it.contains("Abdel") || it.contains("Obour") || it.contains("العبور") ||
+                          it.contains("Riyad") || it.contains("رياض") || it.contains("Nasr") ||
+                          it.contains("Maadi") || it.contains("معادي") || it.contains("Heliopolis") }
+
+        Log.i(TAG, "🗺️ SUGGESTIONS CHECK: hasChooseOnMap=$hasChooseOnMapOption, hasDestField=$hasDestinationField, hasSuggestions=$hasSuggestionItems, hasPickupFocus=$hasPickupFieldFocus, hasPickupWithDist=$hasPickupSuggestionsWithDistance")
 
         // If we see suggestions (either with "Choose on map" for destination, OR pickup suggestions with distance markers)
         // IMPORTANT: Pickup suggestions after destination click may NOT have "Choose on map"!
         val shouldClickSuggestion = (hasChooseOnMapOption && hasSuggestionItems && !hasNoResults) ||
-                                     (hasPickupFieldFocus && hasSuggestionItems && !hasNoResults)
+                                     (hasPickupFieldFocus && hasSuggestionItems && !hasNoResults) ||
+                                     (hasPickupSuggestionsWithDistance && !hasNoResults)  // NEW: Pickup with distance
 
         if (shouldClickSuggestion) {
-            val suggestionType = if (hasPickupFieldFocus) "PICKUP" else "DESTINATION"
+            val suggestionType = if (hasPickupFieldFocus || hasPickupSuggestionsWithDistance) "PICKUP" else "DESTINATION"
             Log.i(TAG, "🗺️ ✓ Detected $suggestionType SUGGESTIONS SCREEN - looking for first real suggestion to click")
 
             // Collect all suggestions from the screen
