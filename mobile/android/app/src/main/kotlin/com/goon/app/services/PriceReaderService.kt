@@ -2655,12 +2655,22 @@ class PriceReaderService : AccessibilityService() {
             it == "اقتصادي" || it == "Economy" || it == "Comfort" || it == "Premium"
         } >= 2
 
+        // Check if "تم" button is present - if so, we're still on intermediate screen
+        val hasTamButtonOnScreen = allText.any { it == "تم" || it == "Done" }
+
         // Log all text for debugging when we think we might be on price screen
-        if (hasPriceScreen || hasPriceIndicator) {
-            Log.i(TAG, "🗺️ Checking for price screen. All text: ${allText.take(20)}")
+        if (hasPriceScreen || hasPriceIndicator || hasVehicleTypes) {
+            Log.i(TAG, "🗺️ Screen analysis: hasPriceScreen=$hasPriceScreen, hasPriceIndicator=$hasPriceIndicator, hasVehicleTypes=$hasVehicleTypes, hasTam=$hasTamButtonOnScreen")
+            Log.i(TAG, "🗺️ All text (first 30): ${allText.take(30)}")
         }
 
-        if (hasPriceScreen || (hasPriceIndicator && hasVehicleTypes)) {
+        // IMPORTANT: If we see "تم" button, we're NOT on the final price screen yet!
+        // We need to click through "تم" first before accepting prices
+        if (hasTamButtonOnScreen) {
+            Log.i(TAG, "🗺️ 'تم' button detected - NOT on final price screen, need to click through")
+            // Don't return false here - let the code below handle clicking "تم"
+        } else if (hasPriceScreen || (hasPriceIndicator && hasVehicleTypes)) {
+            // Only accept as price screen if NO "تم" button is present
             Log.i(TAG, "🗺️ ✓✓✓ DETECTED PRICE SCREEN! (البحث عن عروض / الأجر المقترح)")
             Log.i(TAG, "🗺️ hasPriceScreen=$hasPriceScreen, hasPriceIndicator=$hasPriceIndicator, hasVehicleTypes=$hasVehicleTypes")
 
@@ -2810,8 +2820,11 @@ class PriceReaderService : AccessibilityService() {
 
                     var clicked = false
 
+                    // Check if bounds are VALID (positive width and height)
+                    val boundsValid = bounds.width() > 0 && bounds.height() > 0
+
                     // Strategy 1: Gesture click at center (most reliable for InDriver)
-                    if (bounds.width() > 0 && bounds.height() > 0) {
+                    if (boundsValid) {
                         val centerX = bounds.centerX().toFloat()
                         val centerY = bounds.centerY().toFloat()
                         Log.i(TAG, "🗺️ Strategy 1: Gesture click at ($centerX, $centerY)")
@@ -2820,12 +2833,47 @@ class PriceReaderService : AccessibilityService() {
                             Log.i(TAG, "🗺️ ✓✓✓ GESTURE CLICK SUCCESS at ($centerX, $centerY)")
                             clicked = true
                         }
+                    } else {
+                        Log.w(TAG, "🗺️ Strategy 1 SKIPPED: Invalid bounds (width=${bounds.width()}, height=${bounds.height()})")
                     }
 
-                    // Strategy 2: If gesture failed, try gentleClick as fallback
+                    // Strategy 2: If gesture failed or bounds invalid, try gentleClick
                     if (!clicked) {
                         Log.i(TAG, "🗺️ Strategy 2: Trying gentleClick as fallback...")
                         clicked = gentleClick(node)
+                    }
+
+                    // Strategy 3: If gentleClick also failed, use HARDCODED screen position
+                    // The "تم" button is typically at the bottom center of the screen
+                    if (!clicked) {
+                        Log.i(TAG, "🗺️ Strategy 3: Using HARDCODED bottom button position...")
+                        val displayMetrics = resources.displayMetrics
+                        val screenWidth = displayMetrics.widthPixels.toFloat()
+                        val screenHeight = displayMetrics.heightPixels.toFloat()
+                        // Button is at bottom center - try 85% down the screen
+                        val hardcodedX = screenWidth / 2
+                        val hardcodedY = screenHeight * 0.85f
+                        Log.i(TAG, "🗺️ Hardcoded click at ($hardcodedX, $hardcodedY) - screen size: ${screenWidth}x${screenHeight}")
+
+                        if (clickAtPosition(hardcodedX, hardcodedY)) {
+                            Log.i(TAG, "🗺️ ✓✓✓ HARDCODED CLICK SUCCESS!")
+                            clicked = true
+                        }
+                    }
+
+                    // Strategy 4: Try slightly lower position (90% down)
+                    if (!clicked) {
+                        Log.i(TAG, "🗺️ Strategy 4: Trying lower position (90%)...")
+                        val displayMetrics = resources.displayMetrics
+                        val screenWidth = displayMetrics.widthPixels.toFloat()
+                        val screenHeight = displayMetrics.heightPixels.toFloat()
+                        val hardcodedX = screenWidth / 2
+                        val hardcodedY = screenHeight * 0.90f
+
+                        if (clickAtPosition(hardcodedX, hardcodedY)) {
+                            Log.i(TAG, "🗺️ ✓✓✓ LOWER POSITION CLICK SUCCESS!")
+                            clicked = true
+                        }
                     }
 
                     if (clicked) {
@@ -2845,7 +2893,30 @@ class PriceReaderService : AccessibilityService() {
                 }
             }
 
-            // If gentleClick didn't work, show toast as fallback
+            // If all strategies failed, try clicking at the bottom of screen anyway
+            // This is a last resort when the button can't be found
+            Log.i(TAG, "🗺️ All button click strategies failed, trying direct bottom click...")
+            val displayMetrics = resources.displayMetrics
+            val screenWidth = displayMetrics.widthPixels.toFloat()
+            val screenHeight = displayMetrics.heightPixels.toFloat()
+
+            // Try multiple positions at the bottom
+            val bottomPositions = listOf(0.85f, 0.88f, 0.90f, 0.92f)
+            for (yPercent in bottomPositions) {
+                val x = screenWidth / 2
+                val y = screenHeight * yPercent
+                Log.i(TAG, "🗺️ Trying bottom position: ($x, $y) - ${(yPercent * 100).toInt()}%")
+                if (clickAtPosition(x, y)) {
+                    inDriverDoneClickCount++
+                    Log.i(TAG, "🗺️ ✓ Bottom click at ${(yPercent * 100).toInt()}% worked! (click #$inDriverDoneClickCount)")
+                    lastInDriverClickTime = currentTime
+                    latestPrices.remove(INDRIVER_PACKAGE)
+                    inDriverDoneClickedTime = System.currentTimeMillis()
+                    return true
+                }
+            }
+
+            // If nothing worked, show toast as fallback
             if (currentTime - lastInDriverToastTime > toastDebounce) {
                 lastInDriverToastTime = currentTime
                 handler.post {
