@@ -2140,10 +2140,37 @@ class PriceReaderService : AccessibilityService() {
 
     /**
      * Collect suggestions specifically for InDriver's UI
+     * InDriver suggestions are rows containing: name + address + distance
+     * Example: "Coffee Zone" | "مسجد عباد الرحمن..." | "14.4 كم"
      */
     private fun collectInDriverSuggestions(node: AccessibilityNodeInfo, suggestions: MutableList<Pair<AccessibilityNodeInfo, String>>) {
         val className = node.className?.toString() ?: ""
         val text = node.text?.toString() ?: ""
+        val resourceId = try { node.viewIdResourceName ?: "" } catch (e: Exception) { "" }
+
+        // SKIP: EditText fields (these are input fields, not suggestions!)
+        if (className.contains("EditText")) {
+            Log.d(TAG, "📍 SKIP EditText: '$text'")
+            // Still recurse into children
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i) ?: continue
+                collectInDriverSuggestions(child, suggestions)
+                child.recycle()
+            }
+            return
+        }
+
+        // SKIP: Text that looks like coordinates (e.g., "30.123, 31.456")
+        val coordPattern = Regex("^\\d+\\.\\d+,\\s*\\d+\\.\\d+$")
+        if (text.isNotBlank() && coordPattern.matches(text.trim())) {
+            Log.d(TAG, "📍 SKIP coordinates: '$text'")
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i) ?: continue
+                collectInDriverSuggestions(child, suggestions)
+                child.recycle()
+            }
+            return
+        }
 
         // InDriver shows suggestions in a different format
         // Look for clickable ViewGroups with location text
@@ -2151,18 +2178,55 @@ class PriceReaderService : AccessibilityService() {
             val isNotButton = !text.contains("تم") &&
                               !text.contains("Done") &&
                               !text.contains("بحث") &&
-                              !text.contains("Search")
+                              !text.contains("Search") &&
+                              !text.contains("مسح") &&  // Clear button
+                              !text.contains("إغلاق")   // Close button
             if (isNotButton) {
                 suggestions.add(Pair(AccessibilityNodeInfo.obtain(node), text))
-                Log.d(TAG, "📍 InDriver suggestion: '$text'")
+                Log.d(TAG, "📍 InDriver suggestion: '$text' (class=$className)")
             }
         }
 
         // Check content description too
         val desc = node.contentDescription?.toString() ?: ""
         if (node.isClickable && desc.isNotBlank() && desc.length > 5 && text.isBlank()) {
-            suggestions.add(Pair(AccessibilityNodeInfo.obtain(node), desc))
-            Log.d(TAG, "📍 InDriver suggestion (desc): '$desc'")
+            val isNotButton = !desc.contains("مسح") && !desc.contains("إغلاق")
+            if (isNotButton) {
+                suggestions.add(Pair(AccessibilityNodeInfo.obtain(node), desc))
+                Log.d(TAG, "📍 InDriver suggestion (desc): '$desc'")
+            }
+        }
+
+        // SPECIAL: Look for suggestion ROW patterns
+        // InDriver suggestion rows are typically ViewGroups containing location names
+        // The ROW is clickable, and children contain the name text
+        if (node.isClickable && (className.contains("ViewGroup") || className.contains("LinearLayout") || className.contains("FrameLayout"))) {
+            // Get combined text from children
+            val childTexts = mutableListOf<String>()
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i) ?: continue
+                val childText = child.text?.toString() ?: ""
+                if (childText.isNotBlank()) {
+                    childTexts.add(childText)
+                }
+                child.recycle()
+            }
+            val combinedText = childTexts.joinToString(" | ")
+
+            // Check if this looks like a suggestion row (has distance like "كم" or location indicators)
+            val hasDistance = combinedText.contains("كم") || combinedText.contains("km")
+            val hasLocation = combinedText.contains("مصر") || combinedText.contains("Egypt") ||
+                              combinedText.contains("محافظة") || combinedText.contains("قسم")
+            val hasName = childTexts.any { it.contains("Coffee") || it.contains("Shop") || it.contains("Mall") ||
+                                          it.contains("كافيه") || it.contains("مطعم") || it.length in 3..50 }
+
+            if ((hasDistance || hasLocation) && combinedText.length > 10 && !combinedText.contains("اختر على الخريطة")) {
+                // Use the first child text as the name (usually the location name)
+                val name = childTexts.firstOrNull { it.length > 3 && !it.contains("كم") && !it.matches(Regex("\\d+[,.]\\d+.*")) } ?: combinedText.take(50)
+                Log.d(TAG, "📍 InDriver suggestion ROW: '$name' (combined: '${combinedText.take(60)}...')")
+                suggestions.add(Pair(AccessibilityNodeInfo.obtain(node), name))
+                return // Don't recurse further - we found the row
+            }
         }
 
         // Recurse
@@ -2814,14 +2878,80 @@ class PriceReaderService : AccessibilityService() {
                 Log.i(TAG, "🗺️   [$index] '$text'")
             }
 
-            // Filter out "اختر على الخريطة" and similar options
-            val realSuggestions = suggestions.filter { (_, text) ->
+            // Filter out "اختر على الخريطة", coordinates, and similar options
+            val coordPattern = Regex("^\\d+\\.\\d+,\\s*\\d+\\.\\d+$")
+            var realSuggestions = suggestions.filter { (_, text) ->
                 !text.contains("اختر على الخريطة") &&
                 !text.contains("Choose on map") &&
                 !text.contains("على الخريطة") &&
                 !text.contains("لا توجد نتائج") &&
                 !text.contains("No results") &&
+                !coordPattern.matches(text.trim()) &&  // Exclude coordinates like "30.123, 31.456"
+                !text.matches(Regex("^\\d+\\.\\d+.*")) &&  // Exclude text starting with decimals
                 text.length > 5  // Skip very short texts
+            }
+
+            // FALLBACK: If no suggestions collected, search for known patterns from visible text
+            if (realSuggestions.isEmpty()) {
+                Log.i(TAG, "🗺️ No suggestions from collectInDriverSuggestions - trying TEXT SEARCH fallback")
+
+                // Look for suggestion names we saw in allText (Coffee Zone, Coffee time, etc.)
+                val potentialSuggestions = allText.filter { text ->
+                    (text.contains("Coffee") || text.contains("Shop") || text.contains("Mall") ||
+                     text.contains("كافيه") || text.contains("مطعم") || text.contains("Restaurant")) &&
+                    !text.contains("اختر") && !text.contains("Choose") &&
+                    text.length > 5 && text.length < 100
+                }
+
+                Log.i(TAG, "🗺️ Potential suggestions from visible text: $potentialSuggestions")
+
+                for (potentialText in potentialSuggestions) {
+                    val nodes = rootNode.findAccessibilityNodeInfosByText(potentialText)
+                    Log.i(TAG, "🗺️ Searching for '$potentialText' - found ${nodes.size} nodes")
+
+                    for (node in nodes) {
+                        val nodeText = node.text?.toString() ?: ""
+                        val nodeClass = node.className?.toString() ?: ""
+                        Log.i(TAG, "🗺️   Node: text='$nodeText', class='$nodeClass', clickable=${node.isClickable}")
+
+                        // Try to find clickable parent if node itself isn't clickable
+                        var clickableNode: AccessibilityNodeInfo? = null
+                        if (node.isClickable) {
+                            clickableNode = AccessibilityNodeInfo.obtain(node)
+                        } else {
+                            // Look for clickable parent
+                            var parent = node.parent
+                            var depth = 0
+                            while (parent != null && depth < 5) {
+                                if (parent.isClickable) {
+                                    clickableNode = AccessibilityNodeInfo.obtain(parent)
+                                    Log.i(TAG, "🗺️   Found clickable parent at depth $depth")
+                                    break
+                                }
+                                val nextParent = parent.parent
+                                parent.recycle()
+                                parent = nextParent
+                                depth++
+                            }
+                            parent?.recycle()
+                        }
+
+                        if (clickableNode != null) {
+                            suggestions.add(Pair(clickableNode, potentialText))
+                            Log.i(TAG, "🗺️ ✓ Added suggestion via TEXT SEARCH: '$potentialText'")
+                        }
+                        node.recycle()
+                    }
+                }
+
+                // Re-filter after adding text-search results
+                realSuggestions = suggestions.filter { (_, text) ->
+                    !text.contains("اختر على الخريطة") &&
+                    !text.contains("Choose on map") &&
+                    !coordPattern.matches(text.trim()) &&
+                    !text.matches(Regex("^\\d+\\.\\d+.*")) &&
+                    text.length > 5
+                }
             }
 
             Log.i(TAG, "🗺️ Found ${realSuggestions.size} REAL suggestions (excluding 'Choose on map'):")
