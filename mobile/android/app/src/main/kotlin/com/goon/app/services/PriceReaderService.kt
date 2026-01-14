@@ -1948,14 +1948,47 @@ class PriceReaderService : AccessibilityService() {
                 textToEnter
             )
             val result = focusedNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
-            focusedNode.recycle()
 
             if (result) {
                 Log.i(TAG, "🤖 ✓ Successfully entered destination: $textToEnter")
+
+                // CRITICAL FOR INDRIVER: After entering destination, press Enter to submit
+                // This should trigger navigation to the price screen
+                if (packageName == INDRIVER_PACKAGE) {
+                    Log.i(TAG, "🤖 [InDriver] Pressing ENTER to submit destination...")
+                    Thread.sleep(300)  // Small delay before pressing Enter
+
+                    // Try multiple methods to submit the form:
+
+                    // Method 1: Click at bottom of screen where submit button might be
+                    val displayMetrics = resources.displayMetrics
+                    val screenWidth = displayMetrics.widthPixels.toFloat()
+                    val screenHeight = displayMetrics.heightPixels.toFloat()
+
+                    // Try clicking at several bottom positions
+                    val bottomY = screenHeight * 0.95f
+                    val centerX = screenWidth / 2
+
+                    Log.i(TAG, "🤖 [InDriver] Trying bottom click at ($centerX, $bottomY)")
+                    if (clickAtPosition(centerX, bottomY)) {
+                        Log.i(TAG, "🤖 [InDriver] ✓ Bottom click succeeded!")
+                    }
+
+                    // Method 2: Try clicking slightly above (85% of screen)
+                    Thread.sleep(200)
+                    val upperY = screenHeight * 0.85f
+                    Log.i(TAG, "🤖 [InDriver] Trying upper bottom click at ($centerX, $upperY)")
+                    if (clickAtPosition(centerX, upperY)) {
+                        Log.i(TAG, "🤖 [InDriver] ✓ Upper bottom click succeeded!")
+                    }
+                }
+
+                focusedNode.recycle()
                 return true
             } else {
                 Log.w(TAG, "🤖 ✗ ACTION_SET_TEXT failed on focused node")
             }
+            focusedNode.recycle()
         } else {
             Log.w(TAG, "🤖 No focused input node found")
         }
@@ -2837,15 +2870,18 @@ class PriceReaderService : AccessibilityService() {
                         Log.w(TAG, "🗺️ Strategy 1 SKIPPED: Invalid bounds (width=${bounds.width()}, height=${bounds.height()})")
                     }
 
-                    // Strategy 2: If gesture failed or bounds invalid, try gentleClick
-                    if (!clicked) {
-                        Log.i(TAG, "🗺️ Strategy 2: Trying gentleClick as fallback...")
+                    // Strategy 2: If gesture failed BUT bounds are valid, try gentleClick
+                    // SKIP gentleClick when bounds are invalid - it won't work reliably!
+                    if (!clicked && boundsValid) {
+                        Log.i(TAG, "🗺️ Strategy 2: Trying gentleClick (bounds valid)...")
                         clicked = gentleClick(node)
+                    } else if (!clicked && !boundsValid) {
+                        Log.w(TAG, "🗺️ Strategy 2 SKIPPED: Bounds invalid, gentleClick won't work!")
                     }
 
-                    // Strategy 3: If gentleClick also failed, use HARDCODED screen position
+                    // Strategy 3: Use HARDCODED screen position when bounds are invalid
                     // The "تم" button is typically at the bottom center of the screen
-                    if (!clicked) {
+                    if (!clicked && !boundsValid) {
                         Log.i(TAG, "🗺️ Strategy 3: Using HARDCODED bottom button position...")
                         val displayMetrics = resources.displayMetrics
                         val screenWidth = displayMetrics.widthPixels.toFloat()
