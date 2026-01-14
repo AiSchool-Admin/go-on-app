@@ -968,10 +968,14 @@ class PriceReaderService : AccessibilityService() {
     private fun clearInDriverPickupField(rootNode: AccessibilityNodeInfo): Boolean {
         Log.i(TAG, "🗑️ Looking for clear button (x) to remove current pickup...")
 
+        // Log all visible elements for debugging
+        Log.i(TAG, "🗑️ === Searching for clear button ===")
+        logAllClearButtonCandidates(rootNode, 0)
+
         // Strategy 1: Find by content description (accessibility label)
         val clearDescriptions = listOf(
             "مسح", "Clear", "حذف", "Delete", "إزالة", "Remove",
-            "clear", "close", "x", "×", "✕", "✖"
+            "clear", "close", "x", "×", "✕", "✖", "إغلاق"
         )
 
         for (desc in clearDescriptions) {
@@ -1004,13 +1008,107 @@ class PriceReaderService : AccessibilityService() {
             }
         }
 
-        // Strategy 2: Find ImageButton or ImageView with clear-like resource ID
+        // Strategy 2: Find by clicking the first small clickable icon (likely the X button)
+        // In InDriver, the X is usually a small ImageView/Icon on the left of the text field
+        Log.i(TAG, "🗑️ Strategy 2: Looking for small clickable icons...")
+        val iconClicked = findAndClickSmallIcon(rootNode)
+        if (iconClicked) {
+            return true
+        }
+
+        // Strategy 3: Find by resource ID patterns
+        Log.i(TAG, "🗑️ Strategy 3: Looking by resource ID patterns...")
         val found = findClearButtonByTraversal(rootNode)
         if (found) {
             return true
         }
 
         Log.w(TAG, "🗑️ Could not find clear button")
+        return false
+    }
+
+    /**
+     * Log all potential clear button candidates for debugging
+     */
+    private fun logAllClearButtonCandidates(node: AccessibilityNodeInfo, depth: Int) {
+        if (depth > 15) return
+
+        val className = node.className?.toString()?.substringAfterLast(".") ?: ""
+        val text = node.text?.toString() ?: ""
+        val desc = node.contentDescription?.toString() ?: ""
+        val viewId = node.viewIdResourceName ?: ""
+        val bounds = android.graphics.Rect()
+        node.getBoundsInScreen(bounds)
+        val size = "${bounds.width()}x${bounds.height()}"
+
+        // Log clickable elements and small elements (potential icons)
+        if (node.isClickable || bounds.width() in 20..100 && bounds.height() in 20..100) {
+            val prefix = "  ".repeat(depth)
+            Log.i(TAG, "🗑️ $prefix[$className] click=${node.isClickable} size=$size text='$text' desc='$desc' id='$viewId'")
+        }
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            logAllClearButtonCandidates(child, depth + 1)
+            child.recycle()
+        }
+    }
+
+    /**
+     * Find and click a small icon button (like X clear button)
+     * These are typically 24x24 to 48x48 pixels
+     */
+    private fun findAndClickSmallIcon(node: AccessibilityNodeInfo): Boolean {
+        val className = node.className?.toString()?.lowercase() ?: ""
+        val bounds = android.graphics.Rect()
+        node.getBoundsInScreen(bounds)
+
+        // Small clickable element (20-80 pixels) - likely an icon button
+        val isSmallClickable = node.isClickable &&
+            bounds.width() in 20..100 && bounds.height() in 20..100
+
+        // Check if it's an Image-like component
+        val isImageLike = className.contains("image") || className.contains("icon") ||
+            className.contains("button") || className.contains("view")
+
+        if (isSmallClickable && isImageLike) {
+            val desc = node.contentDescription?.toString()?.lowercase() ?: ""
+            val viewId = node.viewIdResourceName?.lowercase() ?: ""
+
+            // Skip navigation/back buttons
+            if (desc.contains("back") || desc.contains("رجوع") ||
+                viewId.contains("back") || viewId.contains("navigation")) {
+                // Skip back buttons
+            } else {
+                Log.i(TAG, "🗑️ Found small clickable icon: ${bounds.width()}x${bounds.height()} class=$className")
+
+                // Try gesture click for better reliability
+                val centerX = bounds.centerX().toFloat()
+                val centerY = bounds.centerY().toFloat()
+
+                if (clickAtPosition(centerX, centerY)) {
+                    Log.i(TAG, "🗑️ ✓ Clicked small icon via gesture at ($centerX, $centerY)")
+                    return true
+                }
+
+                // Fallback to ACTION_CLICK
+                if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    Log.i(TAG, "🗑️ ✓ Clicked small icon via ACTION_CLICK")
+                    return true
+                }
+            }
+        }
+
+        // Check children
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (findAndClickSmallIcon(child)) {
+                child.recycle()
+                return true
+            }
+            child.recycle()
+        }
+
         return false
     }
 
