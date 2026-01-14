@@ -224,6 +224,12 @@ class PriceReaderService : AccessibilityService() {
     enum class AutomationState {
         IDLE,
         WAITING_FOR_APP,
+        // InDriver-specific states for entering PICKUP first
+        FINDING_PICKUP_FIELD,
+        ENTERING_PICKUP,
+        WAITING_FOR_PICKUP_SUGGESTIONS,
+        CONFIRMING_PICKUP_ON_MAP,
+        // Common states
         FINDING_DESTINATION_FIELD,
         ENTERING_DESTINATION,
         WAITING_FOR_SUGGESTIONS,
@@ -232,6 +238,9 @@ class PriceReaderService : AccessibilityService() {
         PRICE_CAPTURED,
         FAILED
     }
+
+    // Track if InDriver pickup was successfully entered
+    private var inDriverPickupEntered = false
 
     /**
      * FULLY AUTOMATED PRICE FETCH
@@ -265,9 +274,10 @@ class PriceReaderService : AccessibilityService() {
         isActiveMonitoring = true
         automationStartTime = System.currentTimeMillis()  // Track when automation started
         uberScreenReady = false  // Reset screen ready flag
+        inDriverPickupEntered = false  // Reset InDriver pickup flag
         inDriverDestinationEntered = false  // Reset InDriver destination flag
         inDriverDoneClickedTime = 0L  // Reset InDriver Done click time
-        inDriverDoneClickCount = 0  // Reset Done click counter (2 clicks needed: destination + pickup)
+        inDriverDoneClickCount = 0  // Reset Done click counter (3 clicks needed for InDriver)
         inDriverAutomationComplete = false  // CRITICAL: Block price detection until automation is complete
 
         // Clear any old cached prices for this app
@@ -275,10 +285,14 @@ class PriceReaderService : AccessibilityService() {
 
         // For Uber: deep link includes full coordinates, skip to WAITING_FOR_PRICE
         // For DiDi and others: deep links don't work reliably, go through full flow
+        // For InDriver: start with FINDING_PICKUP_FIELD to enter BOTH pickup and destination
         val hasFullDeepLink = packageName == UBER_PACKAGE
         if (hasFullDeepLink) {
             Log.i(TAG, "🤖 Deep link includes coordinates - skipping to WAITING_FOR_PRICE")
             automationState = AutomationState.WAITING_FOR_PRICE
+        } else if (packageName == INDRIVER_PACKAGE) {
+            Log.i(TAG, "🤖 InDriver: Starting with PICKUP entry first (geo: link doesn't support pickup)")
+            automationState = AutomationState.WAITING_FOR_APP
         } else {
             automationState = AutomationState.WAITING_FOR_APP
         }
@@ -330,10 +344,94 @@ class PriceReaderService : AccessibilityService() {
 
             when (automationState) {
                 AutomationState.WAITING_FOR_APP -> {
-                    Log.i(TAG, "🤖 ✓ App is active, transitioning to FINDING_DESTINATION_FIELD...")
-                    automationState = AutomationState.FINDING_DESTINATION_FIELD
+                    // For InDriver: enter PICKUP first, then destination
+                    if (packageName == INDRIVER_PACKAGE) {
+                        Log.i(TAG, "🤖 ✓ InDriver active, transitioning to FINDING_PICKUP_FIELD...")
+                        automationState = AutomationState.FINDING_PICKUP_FIELD
+                    } else {
+                        Log.i(TAG, "🤖 ✓ App is active, transitioning to FINDING_DESTINATION_FIELD...")
+                        automationState = AutomationState.FINDING_DESTINATION_FIELD
+                    }
                 }
 
+                // ============================================================
+                // InDriver-specific: Enter PICKUP first
+                // ============================================================
+                AutomationState.FINDING_PICKUP_FIELD -> {
+                    Log.i(TAG, "🤖 [InDriver] Searching for PICKUP field ('من')...")
+
+                    val found = findAndClickInDriverPickupField(rootNode)
+                    if (found) {
+                        Log.i(TAG, "🤖 ✓✓✓ Found pickup field! Transitioning to ENTERING_PICKUP...")
+                        automationState = AutomationState.ENTERING_PICKUP
+                        automationRetries = 0
+                    } else {
+                        automationRetries++
+                        Log.w(TAG, "🤖 ✗ Pickup field not found (attempt $automationRetries/$MAX_RETRIES)")
+                        if (automationRetries > MAX_RETRIES) {
+                            Log.e(TAG, "🤖 ✗✗✗ FAILED: Max retries exceeded for finding pickup field")
+                            automationState = AutomationState.FAILED
+                        }
+                    }
+                }
+
+                AutomationState.ENTERING_PICKUP -> {
+                    Log.i(TAG, "🤖 [InDriver] Entering pickup text: '$pickupAddress' (coords: $pickupLat, $pickupLng)")
+
+                    val entered = enterInDriverPickupText(rootNode)
+                    if (entered) {
+                        Log.i(TAG, "🤖 ✓ Entered pickup, transitioning to WAITING_FOR_PICKUP_SUGGESTIONS...")
+                        inDriverPickupEntered = true
+                        latestPrices.remove(packageName)  // Clear any cached price
+                        automationState = AutomationState.WAITING_FOR_PICKUP_SUGGESTIONS
+                        automationRetries = 0
+                        automationStep = 0
+                    } else {
+                        Log.w(TAG, "🤖 ✗ Failed to enter pickup text")
+                        automationRetries++
+                        if (automationRetries > 3) {
+                            Log.e(TAG, "🤖 ✗✗✗ InDriver pickup entry FAILED")
+                            automationState = AutomationState.FAILED
+                        }
+                    }
+                }
+
+                AutomationState.WAITING_FOR_PICKUP_SUGGESTIONS -> {
+                    automationStep++
+                    Log.i(TAG, "🤖 [InDriver] Waiting for pickup suggestions (step $automationStep/5)...")
+
+                    // Handle intermediate screens (No Results → Choose on map → تم)
+                    if (handleInDriverIntermediateScreens(rootNode)) {
+                        Log.i(TAG, "🤖 📋 Handled InDriver intermediate screen for pickup")
+                        // Stay in this state
+                    }
+
+                    // After enough steps, move to finding destination field
+                    if (automationStep > 5) {
+                        Log.i(TAG, "🤖 [InDriver] Pickup handled, now moving to FINDING_DESTINATION_FIELD...")
+                        automationState = AutomationState.FINDING_DESTINATION_FIELD
+                        automationStep = 0
+                        automationRetries = 0
+                    }
+                }
+
+                AutomationState.CONFIRMING_PICKUP_ON_MAP -> {
+                    Log.i(TAG, "🤖 [InDriver] Confirming pickup location on map...")
+                    // This is handled by handleInDriverIntermediateScreens
+                    if (handleInDriverIntermediateScreens(rootNode)) {
+                        Log.i(TAG, "🤖 📋 Handled pickup confirmation")
+                    }
+                    automationStep++
+                    if (automationStep > 3) {
+                        Log.i(TAG, "🤖 [InDriver] Pickup confirmed, moving to destination entry...")
+                        automationState = AutomationState.FINDING_DESTINATION_FIELD
+                        automationStep = 0
+                    }
+                }
+
+                // ============================================================
+                // Common destination entry states
+                // ============================================================
                 AutomationState.FINDING_DESTINATION_FIELD -> {
                     Log.i(TAG, "🤖 Searching for destination field...")
 
@@ -686,6 +784,168 @@ class PriceReaderService : AccessibilityService() {
 
         // Strategy 3: Try to find EditText fields directly
         return findAndClickEditText(rootNode)
+    }
+
+    /**
+     * Find and click InDriver PICKUP field ("من" - From)
+     * InDriver route entry screen has two fields:
+     *   - "من" (From) - for pickup location
+     *   - "إلى" (To) - for destination
+     * We need to click "من" first to enter pickup, then "إلى" for destination
+     */
+    private fun findAndClickInDriverPickupField(rootNode: AccessibilityNodeInfo): Boolean {
+        Log.i(TAG, "🚗 ========== INDRIVER PICKUP FIELD SEARCH ==========")
+        Log.i(TAG, "🚗 Pickup to enter: $pickupAddress (coords: $pickupLat, $pickupLng)")
+
+        // Debug: Log ALL visible text on screen
+        Log.i(TAG, "🚗 === ALL VISIBLE TEXT ON SCREEN ===")
+        logAllVisibleTextDetailed(rootNode, 0)
+        Log.i(TAG, "🚗 === END OF VISIBLE TEXT ===")
+
+        // InDriver pickup field texts - Arabic and English
+        // The pickup field is labeled "من" (From) in Arabic
+        val pickupTexts = listOf(
+            // Primary pickup field texts
+            "من", "From", "من أين", "من اين", "Pickup",
+            // "Enter your route" screen main text
+            "أدخل مسارك", "Enter your route",
+            // Current location text (might be shown as pickup)
+            "الموقع الحالي", "Current location", "موقعك الحالي", "Your location",
+            // Pickup-specific
+            "نقطة الانطلاق", "نقطة الإقلال", "Starting point", "Pick up",
+            // Where from
+            "من أين تريد", "Where from"
+        )
+
+        // Strategy 1: Find by EXACT text match for "من" field
+        Log.i(TAG, "🚗 Strategy 1: Searching for pickup field by exact text...")
+        for (searchText in pickupTexts) {
+            val nodes = rootNode.findAccessibilityNodeInfosByText(searchText)
+            if (nodes.isNotEmpty()) {
+                Log.i(TAG, "🚗 Found ${nodes.size} nodes for '$searchText'")
+            }
+
+            for (node in nodes) {
+                val nodeText = node.text?.toString() ?: ""
+                val nodeClass = node.className?.toString()?.substringAfterLast(".") ?: ""
+                Log.i(TAG, "🚗   → [$nodeClass] text='$nodeText', clickable=${node.isClickable}, focusable=${node.isFocusable}")
+
+                // Try clicking the node itself
+                if (node.isClickable) {
+                    Log.i(TAG, "🚗   Attempting to click pickup field node...")
+                    if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        Log.i(TAG, "🚗 ✓✓✓ SUCCESS: Clicked pickup field '$searchText'")
+                        node.recycle()
+                        return true
+                    }
+                }
+
+                // Try focus + click
+                if (node.isFocusable) {
+                    Log.i(TAG, "🚗   Attempting to focus then click...")
+                    node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+                    Thread.sleep(100)
+                    if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        Log.i(TAG, "🚗 ✓✓✓ SUCCESS: Focus+Click on pickup field '$searchText'")
+                        node.recycle()
+                        return true
+                    }
+                }
+
+                // Try clicking parent (up to 5 levels)
+                var current = node.parent
+                for (level in 1..5) {
+                    if (current == null) break
+                    val parentClass = current.className?.toString()?.substringAfterLast(".") ?: ""
+                    Log.i(TAG, "🚗   Parent L$level: [$parentClass] clickable=${current.isClickable}")
+
+                    if (current.isClickable) {
+                        Log.i(TAG, "🚗   Attempting to click parent L$level...")
+                        if (current.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                            Log.i(TAG, "🚗 ✓✓✓ SUCCESS: Clicked parent L$level of pickup field '$searchText'")
+                            current.recycle()
+                            node.recycle()
+                            return true
+                        }
+                    }
+                    val next = current.parent
+                    current.recycle()
+                    current = next
+                }
+                node.recycle()
+            }
+        }
+
+        // Strategy 2: Look for "أدخل مسارك" (Enter your route) screen and click on address bar
+        Log.i(TAG, "🚗 Strategy 2: Looking for route entry address bar...")
+        val routeEntryTexts = listOf(
+            "أدخل مسارك", "Enter your route", "ما الوجهة", "What's the destination"
+        )
+        for (searchText in routeEntryTexts) {
+            val nodes = rootNode.findAccessibilityNodeInfosByText(searchText)
+            for (node in nodes) {
+                // Click the address bar which is usually a sibling or parent
+                var parent = node.parent
+                for (level in 1..3) {
+                    if (parent == null) break
+                    if (parent.isClickable) {
+                        if (parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                            Log.i(TAG, "🚗 ✓✓✓ Clicked route entry parent for: $searchText")
+                            parent.recycle()
+                            node.recycle()
+                            return true
+                        }
+                    }
+                    val next = parent.parent
+                    parent.recycle()
+                    parent = next
+                }
+                node.recycle()
+            }
+        }
+
+        Log.e(TAG, "🚗 ✗✗✗ FAILED: Could not find pickup field in InDriver")
+        return false
+    }
+
+    /**
+     * Enter PICKUP coordinates/text into InDriver's focused input field
+     */
+    private fun enterInDriverPickupText(rootNode: AccessibilityNodeInfo): Boolean {
+        Log.i(TAG, "🤖 enterInDriverPickupText: Entering pickup coordinates...")
+
+        // Use coordinates format for InDriver
+        val textToEnter = "$pickupLat, $pickupLng"
+        Log.i(TAG, "🤖 Using COORDINATES for pickup: $textToEnter")
+
+        val focusedNode = rootNode.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        if (focusedNode != null) {
+            val focusedClass = focusedNode.className?.toString()?.substringAfterLast(".") ?: ""
+            val focusedText = focusedNode.text?.toString() ?: ""
+            Log.i(TAG, "🤖 Found focused node: [$focusedClass] text='$focusedText'")
+
+            // Clear existing text and set new text
+            val args = android.os.Bundle()
+            args.putCharSequence(
+                AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                textToEnter
+            )
+            val result = focusedNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+            focusedNode.recycle()
+
+            if (result) {
+                Log.i(TAG, "🤖 ✓ Successfully entered pickup: $textToEnter")
+                return true
+            } else {
+                Log.w(TAG, "🤖 ✗ ACTION_SET_TEXT failed on focused node")
+            }
+        } else {
+            Log.w(TAG, "🤖 No focused input node found")
+        }
+
+        // Fallback: find any editable field and enter text
+        Log.i(TAG, "🤖 Fallback: searching for any EditText field...")
+        return enterTextIntoAnyEditText(rootNode, textToEnter)
     }
 
     /**
