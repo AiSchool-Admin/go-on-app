@@ -1916,15 +1916,23 @@ class PriceReaderService : AccessibilityService() {
 
     /**
      * Enter destination text into focused field
-     * For DiDi/InDriver: Uses COORDINATES instead of text address to avoid multiple results
+     * For InDriver: Uses TEXT address so suggestions appear, then click first suggestion
+     * For DiDi: Uses COORDINATES to avoid multiple results
      */
     private fun enterDestinationText(rootNode: AccessibilityNodeInfo, packageName: String): Boolean {
         Log.i(TAG, "🤖 enterDestinationText: Looking for focused input...")
 
-        // Determine what to enter: COORDINATES for DiDi/InDriver, TEXT for others
+        // Determine what to enter:
+        // - InDriver: Use TEXT address so suggestions appear (user clicks first suggestion)
+        // - DiDi: Use COORDINATES to avoid multiple results
         val textToEnter = when (packageName) {
-            DIDI_PACKAGE, INDRIVER_PACKAGE -> {
-                // Use coordinates format that apps recognize
+            INDRIVER_PACKAGE -> {
+                // Use the destination NAME so InDriver shows suggestions
+                Log.i(TAG, "🤖 Using TEXT address for InDriver: $destinationAddress")
+                destinationAddress
+            }
+            DIDI_PACKAGE -> {
+                // Use coordinates format that DiDi recognizes
                 val coordText = "$destLat, $destLng"
                 Log.i(TAG, "🤖 Using COORDINATES for $packageName: $coordText")
                 coordText
@@ -2768,6 +2776,110 @@ class PriceReaderService : AccessibilityService() {
             // This prevents the automation from trying to click non-existent suggestions
             Log.w(TAG, "🗺️ Could not find/click 'Choose on map' option - will retry")
             return true // Return true to stay in handling mode
+        }
+
+        // ============================================================
+        // STEP 1.5: Check for SUGGESTIONS SCREEN after entering destination text
+        // When we enter a text address, InDriver shows suggestions:
+        //   - First item: "اختر على الخريطة" (Choose on map) - SKIP THIS
+        //   - Second item: First actual suggestion - CLICK THIS
+        // Clicking on a suggestion will auto-navigate to the price screen!
+        // ============================================================
+        val hasChooseOnMapOption = allText.any {
+            it.contains("اختر على الخريطة") || it.contains("Choose on map")
+        }
+        val hasDestinationField = allText.any {
+            it.contains("إلى أين") || it.contains("Where to") || it.contains("الى")
+        }
+        // Check if we see suggestions by looking for typical location patterns
+        val hasSuggestionItems = allText.any {
+            (it.contains("Egypt") || it.contains("مصر") || it.contains("KALIOBEYA") ||
+             it.contains("محافظة") || it.contains("القاهرة") || it.contains("العبور") ||
+             it.contains("الحي") || it.contains("Mall") || it.contains("كارفور")) &&
+            !it.contains("اختر على الخريطة") && !it.contains("Choose on map")
+        }
+
+        Log.i(TAG, "🗺️ SUGGESTIONS CHECK: hasChooseOnMap=$hasChooseOnMapOption, hasDestField=$hasDestinationField, hasSuggestions=$hasSuggestionItems")
+
+        // If we see "Choose on map" AND other suggestion items (not "No results"), click the first real suggestion
+        if (hasChooseOnMapOption && hasSuggestionItems && !hasNoResults) {
+            Log.i(TAG, "🗺️ ✓ Detected SUGGESTIONS SCREEN - looking for first real suggestion to click")
+
+            // Collect all suggestions from the screen
+            val suggestions = mutableListOf<Pair<AccessibilityNodeInfo, String>>()
+            collectInDriverSuggestions(rootNode, suggestions)
+
+            Log.i(TAG, "🗺️ Found ${suggestions.size} total suggestions:")
+            suggestions.forEachIndexed { index, (_, text) ->
+                Log.i(TAG, "🗺️   [$index] '$text'")
+            }
+
+            // Filter out "اختر على الخريطة" and similar options
+            val realSuggestions = suggestions.filter { (_, text) ->
+                !text.contains("اختر على الخريطة") &&
+                !text.contains("Choose on map") &&
+                !text.contains("على الخريطة") &&
+                !text.contains("لا توجد نتائج") &&
+                !text.contains("No results") &&
+                text.length > 5  // Skip very short texts
+            }
+
+            Log.i(TAG, "🗺️ Found ${realSuggestions.size} REAL suggestions (excluding 'Choose on map'):")
+            realSuggestions.forEachIndexed { index, (_, text) ->
+                Log.i(TAG, "🗺️   [$index] '$text'")
+            }
+
+            // Click the FIRST real suggestion
+            if (realSuggestions.isNotEmpty()) {
+                val (node, text) = realSuggestions[0]
+                Log.i(TAG, "🗺️ ✓✓✓ CLICKING FIRST SUGGESTION: '$text'")
+
+                // Get bounds for smart click
+                val bounds = android.graphics.Rect()
+                node.getBoundsInScreen(bounds)
+                Log.i(TAG, "🗺️ Suggestion bounds: ${bounds.left},${bounds.top},${bounds.right},${bounds.bottom}")
+
+                var clicked = false
+
+                // Try gesture click first (most reliable)
+                if (bounds.width() > 0 && bounds.height() > 0) {
+                    val centerX = bounds.centerX().toFloat()
+                    val centerY = bounds.centerY().toFloat()
+                    Log.i(TAG, "🗺️ Trying gesture click at ($centerX, $centerY)")
+                    clicked = clickAtPosition(centerX, centerY)
+                }
+
+                // Fallback to ACTION_CLICK
+                if (!clicked) {
+                    Log.i(TAG, "🗺️ Trying ACTION_CLICK...")
+                    clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                }
+
+                // Fallback to gentle click
+                if (!clicked) {
+                    Log.i(TAG, "🗺️ Trying gentleClick...")
+                    clicked = gentleClick(node)
+                }
+
+                // Recycle all nodes
+                suggestions.forEach { (n, _) ->
+                    try { n.recycle() } catch (e: Exception) {}
+                }
+
+                if (clicked) {
+                    Log.i(TAG, "🗺️ ✓✓✓ CLICKED SUGGESTION '$text' - should navigate to price screen!")
+                    lastInDriverClickTime = currentTime
+                    return true
+                } else {
+                    Log.w(TAG, "🗺️ ✗ Could not click suggestion '$text'")
+                }
+            } else {
+                Log.w(TAG, "🗺️ No real suggestions found (all were 'Choose on map' variants)")
+                // Recycle nodes anyway
+                suggestions.forEach { (n, _) ->
+                    try { n.recycle() } catch (e: Exception) {}
+                }
+            }
         }
 
         // ============================================================
