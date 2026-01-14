@@ -380,10 +380,14 @@ class PriceReaderService : AccessibilityService() {
 
                     val entered = enterInDriverPickupText(rootNode)
                     if (entered) {
-                        Log.i(TAG, "🤖 ✓ Entered pickup, transitioning to WAITING_FOR_PICKUP_SUGGESTIONS...")
+                        Log.i(TAG, "🤖 ✓ Entered pickup!")
                         inDriverPickupEntered = true
                         latestPrices.remove(packageName)  // Clear any cached price
-                        automationState = AutomationState.WAITING_FOR_PICKUP_SUGGESTIONS
+
+                        // CRITICAL: Go DIRECTLY to destination field - don't handle suggestions yet!
+                        // We need to enter BOTH pickup and destination BEFORE clicking any suggestions
+                        Log.i(TAG, "🤖 ✓ Now going DIRECTLY to FINDING_DESTINATION_FIELD (skip suggestions)...")
+                        automationState = AutomationState.FINDING_DESTINATION_FIELD
                         automationRetries = 0
                         automationStep = 0
                     } else {
@@ -396,23 +400,13 @@ class PriceReaderService : AccessibilityService() {
                     }
                 }
 
+                // WAITING_FOR_PICKUP_SUGGESTIONS is now SKIPPED for InDriver
+                // We enter both pickup and destination first, then handle all confirmations together
                 AutomationState.WAITING_FOR_PICKUP_SUGGESTIONS -> {
-                    automationStep++
-                    Log.i(TAG, "🤖 [InDriver] Waiting for pickup suggestions (step $automationStep/5)...")
-
-                    // Handle intermediate screens (No Results → Choose on map → تم)
-                    if (handleInDriverIntermediateScreens(rootNode)) {
-                        Log.i(TAG, "🤖 📋 Handled InDriver intermediate screen for pickup")
-                        // Stay in this state
-                    }
-
-                    // After enough steps, move to finding destination field
-                    if (automationStep > 5) {
-                        Log.i(TAG, "🤖 [InDriver] Pickup handled, now moving to FINDING_DESTINATION_FIELD...")
-                        automationState = AutomationState.FINDING_DESTINATION_FIELD
-                        automationStep = 0
-                        automationRetries = 0
-                    }
+                    // This state is kept for compatibility but should not be reached for InDriver
+                    Log.i(TAG, "🤖 [InDriver] WAITING_FOR_PICKUP_SUGGESTIONS (legacy - should not reach here)")
+                    automationState = AutomationState.FINDING_DESTINATION_FIELD
+                    automationStep = 0
                 }
 
                 AutomationState.CONFIRMING_PICKUP_ON_MAP -> {
@@ -1113,6 +1107,59 @@ class PriceReaderService : AccessibilityService() {
     }
 
     /**
+     * Find InDriver destination field by position on screen
+     * The destination field ("إلى") is the second input field, below pickup
+     * It should be in the top portion of the screen, NOT in the suggestions list
+     */
+    private fun findDestinationFieldByPosition(node: AccessibilityNodeInfo): Boolean {
+        val bounds = android.graphics.Rect()
+        node.getBoundsInScreen(bounds)
+        val className = node.className?.toString()?.lowercase() ?: ""
+        val text = node.text?.toString() ?: ""
+
+        // Look for clickable/focusable elements in the top portion of screen (y < 400)
+        // that could be the destination input field
+        val isTopOfScreen = bounds.top in 100..400
+        val isClickableOrFocusable = node.isClickable || node.isFocusable
+        val isInputLike = className.contains("edit") || className.contains("text") ||
+            className.contains("input") || className.contains("view")
+
+        // Check if this looks like the destination field
+        // It should be empty or contain placeholder text like "إلى"
+        val isDestinationField = isTopOfScreen && isClickableOrFocusable && isInputLike &&
+            (text.isEmpty() || text == "إلى" || text == "To" || text.contains("الوجهة"))
+
+        if (isDestinationField) {
+            Log.i(TAG, "🎯 Found potential destination field: y=${bounds.top}, text='$text', class=$className")
+
+            if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                Log.i(TAG, "🎯 ✓ Clicked destination field by position")
+                return true
+            }
+
+            if (node.isFocusable) {
+                node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+                if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    Log.i(TAG, "🎯 ✓ Focus+Click destination field by position")
+                    return true
+                }
+            }
+        }
+
+        // Check children
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (findDestinationFieldByPosition(child)) {
+                child.recycle()
+                return true
+            }
+            child.recycle()
+        }
+
+        return false
+    }
+
+    /**
      * Traverse UI tree to find clear/close button by class and position
      */
     private fun findClearButtonByTraversal(node: AccessibilityNodeInfo): Boolean {
@@ -1148,12 +1195,75 @@ class PriceReaderService : AccessibilityService() {
     }
 
     /**
-     * Special handling for InDriver destination field
-     * InDriver has a unique UI with destination field
+     * Special handling for InDriver destination field ("إلى")
+     * IMPORTANT: This must find the destination INPUT FIELD, not suggestion items!
+     * After entering pickup, the suggestions list appears - we need to click on "إلى" field above it
      */
     private fun findAndClickInDriverDestination(rootNode: AccessibilityNodeInfo): Boolean {
-        Log.i(TAG, "🚗 ========== INDRIVER AUTOMATION START ==========")
+        Log.i(TAG, "🚗 ========== INDRIVER DESTINATION FIELD SEARCH ==========")
         Log.i(TAG, "🚗 Destination to enter: $destinationAddress")
+        Log.i(TAG, "🚗 Pickup already entered: $inDriverPickupEntered")
+
+        // If pickup was already entered, we need to find the "إلى" field specifically
+        // It should be the second input field (below the pickup field)
+        if (inDriverPickupEntered) {
+            Log.i(TAG, "🚗 Looking for 'إلى' field specifically (pickup was already entered)...")
+
+            // Strategy A: Find "إلى" text that is near the top of the screen (input field, not suggestion)
+            val destinationFieldTexts = listOf("إلى", "To", "الوجهة")
+            for (searchText in destinationFieldTexts) {
+                val nodes = rootNode.findAccessibilityNodeInfosByText(searchText)
+                for (node in nodes) {
+                    val bounds = android.graphics.Rect()
+                    node.getBoundsInScreen(bounds)
+                    val nodeText = node.text?.toString() ?: ""
+                    val nodeClass = node.className?.toString()?.substringAfterLast(".") ?: ""
+
+                    Log.i(TAG, "🚗 Found '$searchText': [$nodeClass] y=${bounds.top} text='$nodeText'")
+
+                    // The destination field should be near the top of the screen (y < 400)
+                    // Suggestions are lower on the screen
+                    if (bounds.top < 500 && (node.isClickable || node.isFocusable)) {
+                        Log.i(TAG, "🚗 ✓ This looks like the destination field (y=${bounds.top} < 500)")
+
+                        // Try to click
+                        if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                            Log.i(TAG, "🚗 ✓✓✓ Clicked destination field '$searchText'")
+                            node.recycle()
+                            return true
+                        }
+
+                        // Try parent click
+                        var parent = node.parent
+                        for (level in 1..3) {
+                            if (parent == null) break
+                            if (parent.isClickable) {
+                                if (parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                                    Log.i(TAG, "🚗 ✓✓✓ Clicked destination field parent L$level")
+                                    parent.recycle()
+                                    node.recycle()
+                                    return true
+                                }
+                            }
+                            val next = parent.parent
+                            parent.recycle()
+                            parent = next
+                        }
+                    }
+                    node.recycle()
+                }
+            }
+
+            // Strategy B: Find by orange dot indicator (الوجهة has an orange dot)
+            Log.i(TAG, "🚗 Strategy B: Looking for destination field by position...")
+            val foundByPosition = findDestinationFieldByPosition(rootNode)
+            if (foundByPosition) {
+                return true
+            }
+        }
+
+        // Fall back to original logic for initial destination entry
+        Log.i(TAG, "🚗 Falling back to original destination field search...")
 
         // Debug: Log ALL visible text on screen
         Log.i(TAG, "🚗 === ALL VISIBLE TEXT ON SCREEN ===")
