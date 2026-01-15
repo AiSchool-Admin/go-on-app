@@ -244,7 +244,7 @@ class PriceReaderService : AccessibilityService() {
 
     // Track DiDi destination click retries (to prevent infinite loops)
     private var didiDestinationClickAttempts = 0
-    private const val DIDI_MAX_DESTINATION_ATTEMPTS = 10
+    private val DIDI_MAX_DESTINATION_ATTEMPTS = 10
 
     /**
      * FULLY AUTOMATED PRICE FETCH
