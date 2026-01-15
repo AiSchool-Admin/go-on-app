@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -766,18 +767,14 @@ class FloatingOverlayService : Service() {
             hideFullScreenOverlay()
 
             // Try to open with deep link based on app
-            val intent = when (packageName) {
+            val intent: Intent? = when (packageName) {
                 "com.ubercab" -> {
                     // Uber deep link
-                    Intent(Intent.ACTION_VIEW, android.net.Uri.parse(
-                        "uber://?action=setPickup&pickup=my_location"
-                    ))
+                    Intent(Intent.ACTION_VIEW, Uri.parse("uber://?action=setPickup&pickup=my_location"))
                 }
                 "com.careem.acma" -> {
                     // Careem deep link
-                    Intent(Intent.ACTION_VIEW, android.net.Uri.parse(
-                        "careem://"
-                    ))
+                    Intent(Intent.ACTION_VIEW, Uri.parse("careem://"))
                 }
                 else -> {
                     // Default: just open the app
