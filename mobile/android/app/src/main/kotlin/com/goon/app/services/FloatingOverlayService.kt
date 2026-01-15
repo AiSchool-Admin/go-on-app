@@ -459,21 +459,14 @@ class FloatingOverlayService : Service() {
     }
 
     /**
-     * Create the full-screen overlay view - MODERN UI DESIGN
+     * Create the full-screen overlay view - MATCHES MAIN APP UI
      */
     private fun createFullScreenView(): View {
         val density = resources.displayMetrics.density
 
-        // Root container with modern gradient background
+        // Root container - Light background matching main app
         val root = FrameLayout(this).apply {
-            background = GradientDrawable(
-                GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(
-                    0xFF0F0F23.toInt(),  // Deep dark blue
-                    0xFF1A1A2E.toInt(),  // Dark purple-blue
-                    0xFF16213E.toInt()   // Navy blue
-                )
-            )
+            setBackgroundColor(0xFFF7FAFC.toInt()) // Light gray background
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
@@ -487,20 +480,20 @@ class FloatingOverlayService : Service() {
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
-            setPadding((20 * density).toInt(), (50 * density).toInt(), (20 * density).toInt(), (20 * density).toInt())
+            setPadding((16 * density).toInt(), (48 * density).toInt(), (16 * density).toInt(), (16 * density).toInt())
         }
 
-        // Modern Header with GO-ON branding
+        // Header - matching main app
         val header = createModernHeader(density)
         mainContainer.addView(header)
 
-        // Trip info card (pickup → destination)
+        // Trip info card
         val tripInfo = createModernTripInfo(density)
         mainContainer.addView(tripInfo)
 
-        // Progress indicator with animated text
-        val progressSection = createProgressSection(density)
-        mainContainer.addView(progressSection)
+        // Loading button (like "جلب الأسعار الحقيقية")
+        val loadingButton = createProgressSection(density)
+        mainContainer.addView(loadingButton)
 
         // Scrollable container for price cards
         val scrollView = ScrollView(this).apply {
@@ -521,7 +514,7 @@ class FloatingOverlayService : Service() {
             tag = "cardsContainer"
         }
 
-        // Create modern price cards for each app
+        // Create price cards for each app
         for ((packageName, appPrice) in appPrices) {
             val card = createModernPriceCard(packageName, appPrice, density)
             cardsContainer.addView(card)
@@ -531,7 +524,7 @@ class FloatingOverlayService : Service() {
         scrollView.addView(cardsContainer)
         mainContainer.addView(scrollView)
 
-        // Modern close button at bottom
+        // Close button at bottom
         val closeButton = createModernCloseButton(density)
         mainContainer.addView(closeButton)
 
@@ -540,175 +533,155 @@ class FloatingOverlayService : Service() {
     }
 
     /**
-     * Create modern header with GO-ON branding
+     * Header matching main app
      */
     private fun createModernHeader(density: Float): LinearLayout {
         return LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(0, 0, 0, (24 * density).toInt())
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 0, 0, (16 * density).toInt())
 
-            // Logo and Title Row
-            val titleRow = LinearLayout(this@FloatingOverlayService).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER
-
-                // GO-ON Logo
-                val logo = TextView(this@FloatingOverlayService).apply {
-                    text = "🚀"
-                    textSize = 36f
-                    setPadding(0, 0, (12 * density).toInt(), 0)
-                }
-                addView(logo)
-
-                // Title with gradient effect simulation
-                val title = TextView(this@FloatingOverlayService).apply {
-                    text = "GO-ON"
-                    setTextColor(0xFF00D9FF.toInt()) // Cyan
-                    textSize = 32f
-                    setTypeface(null, Typeface.BOLD)
-                    setShadowLayer(8f, 0f, 0f, 0xFF00D9FF.toInt())
-                }
-                addView(title)
+            // Back arrow
+            val backArrow = TextView(this@FloatingOverlayService).apply {
+                text = "→"
+                setTextColor(0xFF1A365D.toInt()) // Primary blue
+                textSize = 24f
+                setPadding((8 * density).toInt(), 0, (16 * density).toInt(), 0)
             }
-            addView(titleRow)
+            addView(backArrow)
 
-            // Subtitle
-            val subtitle = TextView(this@FloatingOverlayService).apply {
-                text = "مقارنة الأسعار الذكية"
-                setTextColor(0xAAFFFFFF.toInt())
-                textSize = 14f
-                gravity = Gravity.CENTER
-                setPadding(0, (8 * density).toInt(), 0, 0)
+            // Title
+            val title = TextView(this@FloatingOverlayService).apply {
+                text = "مقارنة الأسعار"
+                setTextColor(0xFF1A365D.toInt()) // Primary blue
+                textSize = 20f
+                setTypeface(null, Typeface.BOLD)
             }
-            addView(subtitle)
+            addView(title)
         }
     }
 
     /**
-     * Create modern trip info card
+     * Trip info card matching main app
      */
     private fun createModernTripInfo(density: Float): LinearLayout {
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = createGlassBackground(density)
-            setPadding((20 * density).toInt(), (16 * density).toInt(), (20 * density).toInt(), (16 * density).toInt())
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 12 * density
+                setColor(0xFFFFFFFF.toInt()) // White
+            }
+            setPadding((16 * density).toInt(), (12 * density).toInt(), (16 * density).toInt(), (12 * density).toInt())
+            elevation = 4 * density
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply {
-                setMargins(0, 0, 0, (16 * density).toInt())
+                setMargins(0, 0, 0, (8 * density).toInt())
             }
 
-            // From Row
-            val fromRow = LinearLayout(this@FloatingOverlayService).apply {
+            // Pickup
+            val pickupRow = LinearLayout(this@FloatingOverlayService).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
 
-                val fromDot = TextView(this@FloatingOverlayService).apply {
+                val dot = TextView(this@FloatingOverlayService).apply {
                     text = "●"
-                    setTextColor(0xFF00E676.toInt()) // Green
-                    textSize = 12f
-                    setPadding(0, 0, (12 * density).toInt(), 0)
+                    setTextColor(0xFF38A169.toInt()) // Green
+                    textSize = 10f
+                    setPadding(0, 0, (10 * density).toInt(), 0)
                 }
-                addView(fromDot)
+                addView(dot)
 
-                val fromText = TextView(this@FloatingOverlayService).apply {
+                val text = TextView(this@FloatingOverlayService).apply {
                     text = pickupText.take(45) + if (pickupText.length > 45) "..." else ""
-                    setTextColor(0xFFFFFFFF.toInt())
-                    textSize = 14f
+                    setTextColor(0xFF2D3748.toInt()) // Dark text
+                    textSize = 13f
                     maxLines = 1
                 }
-                addView(fromText)
+                addView(text)
             }
-            addView(fromRow)
+            addView(pickupRow)
 
-            // Dotted line
-            val dottedLine = TextView(this@FloatingOverlayService).apply {
-                text = "┆"
-                setTextColor(0x66FFFFFF.toInt())
-                textSize = 14f
-                setPadding((4 * density).toInt(), 0, 0, 0)
+            // Connector
+            val line = View(this@FloatingOverlayService).apply {
+                layoutParams = LinearLayout.LayoutParams((2 * density).toInt(), (16 * density).toInt()).apply {
+                    setMargins((4 * density).toInt(), (2 * density).toInt(), 0, (2 * density).toInt())
+                }
+                setBackgroundColor(0xFFE2E8F0.toInt())
             }
-            addView(dottedLine)
+            addView(line)
 
-            // To Row
-            val toRow = LinearLayout(this@FloatingOverlayService).apply {
+            // Destination
+            val destRow = LinearLayout(this@FloatingOverlayService).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
 
-                val toDot = TextView(this@FloatingOverlayService).apply {
+                val dot = TextView(this@FloatingOverlayService).apply {
                     text = "●"
-                    setTextColor(0xFFFF5252.toInt()) // Red
-                    textSize = 12f
-                    setPadding(0, 0, (12 * density).toInt(), 0)
+                    setTextColor(0xFFE53E3E.toInt()) // Red
+                    textSize = 10f
+                    setPadding(0, 0, (10 * density).toInt(), 0)
                 }
-                addView(toDot)
+                addView(dot)
 
-                val toText = TextView(this@FloatingOverlayService).apply {
+                val text = TextView(this@FloatingOverlayService).apply {
                     text = destinationText.take(45) + if (destinationText.length > 45) "..." else ""
-                    setTextColor(0xFFFFFFFF.toInt())
-                    textSize = 14f
+                    setTextColor(0xFF2D3748.toInt())
+                    textSize = 13f
                     maxLines = 1
                 }
-                addView(toText)
+                addView(text)
             }
-            addView(toRow)
+            addView(destRow)
         }
     }
 
     /**
-     * Create progress section with animated text
+     * Loading status button
      */
     private fun createProgressSection(density: Float): LinearLayout {
         return LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
+            orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(0, (8 * density).toInt(), 0, (16 * density).toInt())
+            setPadding(0, (8 * density).toInt(), 0, (12 * density).toInt())
 
-            val loadingText = TextView(this@FloatingOverlayService).apply {
-                text = "⚡ جاري البحث عن أفضل الأسعار..."
-                setTextColor(0xFF00D9FF.toInt())
-                textSize = 16f
+            val statusText = TextView(this@FloatingOverlayService).apply {
+                text = "⏳ جاري جلب الأسعار الحقيقية..."
+                setTextColor(0xFFFFFFFF.toInt())
+                textSize = 15f
                 gravity = Gravity.CENTER
+                setPadding((24 * density).toInt(), (14 * density).toInt(), (24 * density).toInt(), (14 * density).toInt())
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = 8 * density
+                    setColor(0xFF1A365D.toInt()) // Primary blue
+                }
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
             }
-            addView(loadingText)
+            addView(statusText)
         }
     }
 
     /**
-     * Create glass-morphism background effect
-     */
-    private fun createGlassBackground(density: Float): GradientDrawable {
-        return GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            cornerRadius = 16 * density
-            setColor(0x33FFFFFF.toInt()) // Semi-transparent white
-            setStroke((1 * density).toInt(), 0x22FFFFFF.toInt())
-        }
-    }
-
-    /**
-     * Create modern close button
+     * Close button
      */
     private fun createModernCloseButton(density: Float): LinearLayout {
         return LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(0, (16 * density).toInt(), 0, 0)
+            setPadding(0, (12 * density).toInt(), 0, 0)
 
             val button = TextView(this@FloatingOverlayService).apply {
                 text = "إغلاق"
-                setTextColor(0xFFFFFFFF.toInt())
-                textSize = 16f
+                setTextColor(0xFF718096.toInt()) // Gray
+                textSize = 14f
                 gravity = Gravity.CENTER
-                setPadding((32 * density).toInt(), (12 * density).toInt(), (32 * density).toInt(), (12 * density).toInt())
-                background = GradientDrawable().apply {
-                    shape = GradientDrawable.RECTANGLE
-                    cornerRadius = 25 * density
-                    setColor(0x44FFFFFF.toInt())
-                    setStroke((1 * density).toInt(), 0x66FFFFFF.toInt())
-                }
+                setPadding((24 * density).toInt(), (10 * density).toInt(), (24 * density).toInt(), (10 * density).toInt())
                 isClickable = true
                 isFocusable = true
                 setOnClickListener {
@@ -720,36 +693,28 @@ class FloatingOverlayService : Service() {
     }
 
     /**
-     * Create modern price card for an app
+     * Price card matching main app style
      */
     private fun createModernPriceCard(packageName: String, appPrice: Companion.AppPrice, density: Float): LinearLayout {
-        val cardColor = when (appPrice.status) {
-            "success" -> 0x22FFFFFF.toInt()
-            "loading" -> 0x1AFFFFFF.toInt()
-            else -> 0x15FFFFFF.toInt()
-        }
-
         return LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+            orientation = LinearLayout.VERTICAL
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
-                cornerRadius = 16 * density
-                setColor(cardColor)
-                setStroke((1 * density).toInt(), 0x22FFFFFF.toInt())
+                cornerRadius = 12 * density
+                setColor(0xFFFFFFFF.toInt()) // White card
             }
-            setPadding((20 * density).toInt(), (18 * density).toInt(), (20 * density).toInt(), (18 * density).toInt())
+            elevation = 4 * density
+            setPadding((16 * density).toInt(), (14 * density).toInt(), (16 * density).toInt(), (14 * density).toInt())
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply {
-                setMargins(0, (10 * density).toInt(), 0, 0)
+                setMargins(0, (8 * density).toInt(), 0, 0)
             }
             tag = "card_$packageName"
             isClickable = true
             isFocusable = true
 
-            // Click to open app
             setOnClickListener {
                 val price = appPrices[packageName]?.price
                 if (price != null && price > 0) {
@@ -757,142 +722,151 @@ class FloatingOverlayService : Service() {
                 }
             }
 
-            // App icon with colored background
-            val iconContainer = FrameLayout(this@FloatingOverlayService).apply {
-                layoutParams = LinearLayout.LayoutParams((48 * density).toInt(), (48 * density).toInt())
-                background = GradientDrawable().apply {
-                    shape = GradientDrawable.OVAL
-                    setColor(getAppColor(packageName))
-                }
+            // Top row: Icon + Name + Price
+            val topRow = LinearLayout(this@FloatingOverlayService).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
 
-                val iconText = TextView(this@FloatingOverlayService).apply {
+                // App icon badge
+                val iconBadge = TextView(this@FloatingOverlayService).apply {
                     text = getAppIcon(packageName)
-                    textSize = 24f
+                    textSize = 28f
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.RECTANGLE
+                        cornerRadius = 8 * density
+                        setColor(getAppColor(packageName))
+                    }
                     gravity = Gravity.CENTER
-                    layoutParams = FrameLayout.LayoutParams(
-                        FrameLayout.LayoutParams.MATCH_PARENT,
-                        FrameLayout.LayoutParams.MATCH_PARENT
-                    )
+                    setPadding((10 * density).toInt(), (8 * density).toInt(), (10 * density).toInt(), (8 * density).toInt())
                 }
-                addView(iconText)
-            }
-            addView(iconContainer)
+                addView(iconBadge)
 
-            // Spacer
-            val spacer = View(this@FloatingOverlayService).apply {
-                layoutParams = LinearLayout.LayoutParams((16 * density).toInt(), 1)
-            }
-            addView(spacer)
+                // Spacer
+                addView(View(this@FloatingOverlayService).apply {
+                    layoutParams = LinearLayout.LayoutParams((12 * density).toInt(), 1)
+                })
 
-            // App name and status
-            val infoContainer = LinearLayout(this@FloatingOverlayService).apply {
-                orientation = LinearLayout.VERTICAL
-                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            }
+                // Name and status
+                val nameContainer = LinearLayout(this@FloatingOverlayService).apply {
+                    orientation = LinearLayout.VERTICAL
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
 
-            val nameText = TextView(this@FloatingOverlayService).apply {
-                text = appPrice.appName
-                setTextColor(0xFFFFFFFF.toInt())
-                textSize = 17f
-                setTypeface(null, Typeface.BOLD)
-                tag = "name_$packageName"
-            }
-            infoContainer.addView(nameText)
+                    val name = TextView(this@FloatingOverlayService).apply {
+                        text = appPrice.appName
+                        setTextColor(0xFF1A202C.toInt())
+                        textSize = 16f
+                        setTypeface(null, Typeface.BOLD)
+                        tag = "name_$packageName"
+                    }
+                    addView(name)
 
-            val statusText = TextView(this@FloatingOverlayService).apply {
-                text = getModernStatusText(appPrice.status)
-                setTextColor(getModernStatusColor(appPrice.status))
-                textSize = 13f
-                tag = "status_$packageName"
-            }
-            infoContainer.addView(statusText)
-
-            addView(infoContainer)
-
-            // Price or loading
-            val priceContainer = LinearLayout(this@FloatingOverlayService).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER or Gravity.END
-                tag = "priceContainer_$packageName"
-            }
-
-            if (appPrice.status == "loading" || appPrice.status == "waiting") {
-                val loadingIndicator = ProgressBar(this@FloatingOverlayService).apply {
-                    layoutParams = LinearLayout.LayoutParams((28 * density).toInt(), (28 * density).toInt())
-                    tag = "loading_$packageName"
+                    val status = TextView(this@FloatingOverlayService).apply {
+                        text = when (appPrice.status) {
+                            "loading" -> "جاري الجلب..."
+                            "success" -> ""
+                            "error" -> "غير متاح"
+                            else -> "في الانتظار..."
+                        }
+                        setTextColor(when (appPrice.status) {
+                            "loading" -> 0xFF3182CE.toInt()
+                            "error" -> 0xFFE53E3E.toInt()
+                            else -> 0xFF718096.toInt()
+                        })
+                        textSize = 12f
+                        tag = "status_$packageName"
+                    }
+                    addView(status)
                 }
-                priceContainer.addView(loadingIndicator)
-            } else if (appPrice.price != null && appPrice.price > 0) {
-                val priceText = TextView(this@FloatingOverlayService).apply {
-                    text = "${appPrice.price.toInt()}"
-                    setTextColor(0xFF00E676.toInt()) // Green
-                    textSize = 24f
-                    setTypeface(null, Typeface.BOLD)
-                    tag = "price_$packageName"
-                }
-                priceContainer.addView(priceText)
+                addView(nameContainer)
 
-                val currencyText = TextView(this@FloatingOverlayService).apply {
-                    text = "ج.م"
-                    setTextColor(0xAAFFFFFF.toInt())
-                    textSize = 12f
+                // Price or loading
+                if (appPrice.status == "loading" || appPrice.status == "waiting") {
+                    val loading = ProgressBar(this@FloatingOverlayService).apply {
+                        layoutParams = LinearLayout.LayoutParams((24 * density).toInt(), (24 * density).toInt())
+                        tag = "loading_$packageName"
+                    }
+                    addView(loading)
+                } else if (appPrice.price != null && appPrice.price > 0) {
+                    val priceText = TextView(this@FloatingOverlayService).apply {
+                        text = "${appPrice.price.toInt()} ج.م"
+                        setTextColor(0xFF1A365D.toInt())
+                        textSize = 18f
+                        setTypeface(null, Typeface.BOLD)
+                        tag = "price_$packageName"
+                    }
+                    addView(priceText)
                 }
-                priceContainer.addView(currencyText)
-            } else if (appPrice.status == "error") {
-                val errorText = TextView(this@FloatingOverlayService).apply {
-                    text = "—"
-                    setTextColor(0xFFFF5252.toInt())
-                    textSize = 24f
-                }
-                priceContainer.addView(errorText)
             }
+            addView(topRow)
 
-            addView(priceContainer)
+            // Book button (only show if price available)
+            if (appPrice.price != null && appPrice.price > 0) {
+                val bookBtn = TextView(this@FloatingOverlayService).apply {
+                    text = "اختر ${appPrice.appName}"
+                    setTextColor(0xFFFFFFFF.toInt())
+                    textSize = 14f
+                    gravity = Gravity.CENTER
+                    setPadding(0, (12 * density).toInt(), 0, (12 * density).toInt())
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.RECTANGLE
+                        cornerRadius = 6 * density
+                        setColor(getAppColor(packageName))
+                    }
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).apply {
+                        setMargins(0, (12 * density).toInt(), 0, 0)
+                    }
+                }
+                addView(bookBtn)
+            }
         }
     }
 
-    /**
-     * Get app brand color
-     */
+    // Keep getAppColor for button colors
     private fun getAppColor(packageName: String): Int {
         return when (packageName) {
             "com.ubercab" -> 0xFF000000.toInt()
             "com.careem.acma" -> 0xFF4CAF50.toInt()
-            "sinet.startup.inDriver" -> 0xFF2ECC71.toInt()
-            "com.didiglobal.passenger" -> 0xFFFF6B00.toInt()
+            "sinet.startup.inDriver" -> 0xFF8BC34A.toInt()
+            "com.didiglobal.passenger" -> 0xFFFF9800.toInt()
             "ee.mtakso.client" -> 0xFF34D186.toInt()
             else -> 0xFF607D8B.toInt()
         }
     }
 
-    /**
-     * Get modern status text
-     */
+    // Keep these for compatibility
     private fun getModernStatusText(status: String): String {
         return when (status) {
-            "loading" -> "⏳ جاري الجلب..."
-            "success" -> "✓ جاهز للحجز"
-            "error" -> "✗ غير متاح"
-            "waiting" -> "◌ في الانتظار"
+            "loading" -> "جاري الجلب..."
+            "success" -> "اضغط للحجز"
+            "error" -> "غير متاح"
+            "waiting" -> "في الانتظار..."
             else -> status
         }
     }
 
-    /**
-     * Get modern status color
-     */
     private fun getModernStatusColor(status: String): Int {
         return when (status) {
-            "loading" -> 0xFF00D9FF.toInt() // Cyan
-            "success" -> 0xFF00E676.toInt() // Green
-            "error" -> 0xFFFF5252.toInt()   // Red
-            "waiting" -> 0x88FFFFFF.toInt() // Gray
-            else -> 0xFFFFFFFF.toInt()
+            "loading" -> 0xFF3182CE.toInt()
+            "success" -> 0xFF38A169.toInt()
+            "error" -> 0xFFE53E3E.toInt()
+            else -> 0xFF718096.toInt()
+        }
+    }
+
+    // createGlassBackground kept for compatibility
+    private fun createGlassBackground(density: Float): GradientDrawable {
+        return GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = 12 * density
+            setColor(0xFFFFFFFF.toInt())
         }
     }
 
     /**
-     * Create header with GO-ON branding
+     * Create header with GO-ON branding (legacy - kept for compatibility)
      */
     private fun createHeader(density: Float): LinearLayout {
         return LinearLayout(this).apply {

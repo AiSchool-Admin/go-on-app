@@ -686,7 +686,7 @@ class PriceReaderService : AccessibilityService() {
 
                     // Still no valid prices, check timeout
                     automationStep++
-                    if (elapsedTime > 10000) { // OPTIMIZED: 10s total timeout per app
+                    if (elapsedTime > 12000) { // 12s timeout - DiDi needs more time
                         // Accept whatever we have if any
                         if (cachedPrice != null && cachedPrice.price > 0) {
                             Log.i(TAG, "🤖 ⏱️ Timeout - accepting available price: ${cachedPrice.price} EGP")
@@ -2521,10 +2521,10 @@ class PriceReaderService : AccessibilityService() {
         if (hasSelectAddressScreen) {
             Log.i(TAG, "📍 Detected DiDi 'Select Address' screen")
 
-            // Check cooldown to prevent clicking too fast (OPTIMIZED: reduced from 3s to 1.5s)
+            // Check cooldown to prevent clicking too fast (2s for DiDi stability)
             val currentTime = System.currentTimeMillis()
-            if (currentTime - lastDiDiSelectAddressClickTime < 1500) {
-                Log.i(TAG, "📍 Waiting for cooldown (${1500 - (currentTime - lastDiDiSelectAddressClickTime)}ms remaining)")
+            if (currentTime - lastDiDiSelectAddressClickTime < 2000) {
+                Log.i(TAG, "📍 Waiting for cooldown (${2000 - (currentTime - lastDiDiSelectAddressClickTime)}ms remaining)")
                 return false // Don't handle - let automation continue waiting
             }
 

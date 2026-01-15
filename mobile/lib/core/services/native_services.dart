@@ -459,14 +459,14 @@ class NativeServicesManager {
 
   /// Wait for automation to complete and get full price info with vehicle types
   Future<AppPrice?> waitForAutomationAndGetPriceInfo(String packageName) async {
-    // OPTIMIZED: Poll faster (250ms interval) with 10s timeout
-    for (int i = 0; i < 40; i++) {
+    // Poll with 250ms interval, 12s timeout (48 iterations)
+    for (int i = 0; i < 48; i++) {
       await Future.delayed(const Duration(milliseconds: 250));
 
       // Log progress every 4 polls (~1 second)
       if (i % 4 == 0) {
         final state = await getAutomationState();
-        print('⏳ Waiting... ($i/40) State: $state');
+        print('⏳ Waiting... ($i/48) State: $state');
       }
 
       final complete = await isAutomationComplete();
