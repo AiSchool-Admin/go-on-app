@@ -2823,18 +2823,54 @@ class PriceReaderService : AccessibilityService() {
                 val cardText = getNodeText(addressCard)
                 Log.i(TAG, "📍 Found address card: '${cardText.take(50)}...'")
 
-                // Use smart click (shell tap + gesture)
-                if (smartClick(addressCard)) {
-                    Log.i(TAG, "📍 ✓ Successfully clicked address card")
-                    addressCard.recycle()
+                // Try multiple click strategies (DiDi doesn't respond to gesture tap reliably)
+                var clicked = false
 
+                // Strategy 1: Try ACTION_CLICK on the node itself
+                if (addressCard.isClickable) {
+                    clicked = addressCard.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    if (clicked) {
+                        Log.i(TAG, "📍 ✓ ACTION_CLICK on address card succeeded")
+                    }
+                }
+
+                // Strategy 2: Try ACTION_CLICK on ancestors (even if not marked clickable)
+                if (!clicked) {
+                    var current: AccessibilityNodeInfo? = addressCard.parent
+                    for (level in 1..5) {
+                        if (current == null) break
+
+                        Log.i(TAG, "📍 Trying ACTION_CLICK on ancestor level $level...")
+                        if (current.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                            Log.i(TAG, "📍 ✓ ACTION_CLICK on ancestor level $level succeeded!")
+                            clicked = true
+                            current.recycle()
+                            break
+                        }
+
+                        val next = current.parent
+                        current.recycle()
+                        current = next
+                    }
+                }
+
+                // Strategy 3: Fallback to gesture tap
+                if (!clicked) {
+                    Log.i(TAG, "📍 Trying gesture tap as fallback...")
+                    clicked = smartClick(addressCard)
+                    if (clicked) {
+                        Log.i(TAG, "📍 ✓ Gesture tap succeeded (maybe)")
+                    }
+                }
+
+                addressCard.recycle()
+
+                if (clicked) {
+                    Log.i(TAG, "📍 ✓ Successfully clicked address card")
                     // Record click time for cooldown
                     lastDiDiSelectAddressClickTime = currentTime
-
-                    // Don't change state - let caller decide
                     return true
                 }
-                addressCard.recycle()
             } else {
                 Log.w(TAG, "📍 No address card found on Select Address screen")
             }
