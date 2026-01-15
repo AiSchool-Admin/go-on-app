@@ -850,11 +850,22 @@ class PriceReaderService : AccessibilityService() {
      */
     private fun findAndClickDiDiDestinationField(rootNode: AccessibilityNodeInfo): Boolean {
         Log.i(TAG, "🚕 ========== DIDI DESTINATION FIELD SEARCH ==========")
+        Log.i(TAG, "🚕 Attempt: $didiDestinationClickAttempts/$DIDI_MAX_DESTINATION_ATTEMPTS")
 
-        // Debug: Log ALL visible text on screen
-        Log.i(TAG, "🚕 === ALL VISIBLE TEXT ON SCREEN ===")
-        logAllVisibleTextDetailed(rootNode, 0)
-        Log.i(TAG, "🚕 === END OF VISIBLE TEXT ===")
+        // Vary strategy based on attempt number
+        val attemptStrategy = when {
+            didiDestinationClickAttempts <= 2 -> "gesture"      // First 2: gesture tap
+            didiDestinationClickAttempts <= 5 -> "ancestors"    // Next 3: ACTION_CLICK on ancestors
+            else -> "container"                                  // Last: click on container by ID
+        }
+        Log.i(TAG, "🚕 Using strategy: $attemptStrategy")
+
+        // Debug: Log ALL visible text on screen (only on first attempt)
+        if (didiDestinationClickAttempts <= 1) {
+            Log.i(TAG, "🚕 === ALL VISIBLE TEXT ON SCREEN ===")
+            logAllVisibleTextDetailed(rootNode, 0)
+            Log.i(TAG, "🚕 === END OF VISIBLE TEXT ===")
+        }
 
         // DiDi destination field texts - English, Arabic, Chinese
         val searchTexts = listOf(
@@ -874,101 +885,67 @@ class PriceReaderService : AccessibilityService() {
             "Tap to enter your destination"
         )
 
-        // Strategy 1: Find by text and use smartClick with gesture fallback
-        Log.i(TAG, "🚕 Strategy 1: Searching by text with smartClick...")
+        // Find the "Where to?" node first
+        var targetNode: AccessibilityNodeInfo? = null
+        var targetRect = android.graphics.Rect()
         for (searchText in searchTexts) {
             val nodes = rootNode.findAccessibilityNodeInfosByText(searchText)
             if (nodes.isNotEmpty()) {
-                Log.i(TAG, "🚕 Found ${nodes.size} nodes for '$searchText'")
-            }
-
-            for (node in nodes) {
-                val nodeText = node.text?.toString() ?: ""
-                val nodeContentDesc = node.contentDescription?.toString() ?: ""
-                val nodeClass = node.className?.toString()?.substringAfterLast(".") ?: ""
-                val rect = android.graphics.Rect()
-                node.getBoundsInScreen(rect)
-
-                Log.i(TAG, "🚕   → [$nodeClass] text='$nodeText', contentDesc='$nodeContentDesc', clickable=${node.isClickable}, bounds=$rect")
-
-                // Use smartClick which tries multiple click strategies including gesture
-                if (smartClick(node)) {
-                    Log.i(TAG, "🚕 ✓✓✓ SUCCESS: SmartClick on '$searchText'")
-                    node.recycle()
-                    return true
+                targetNode = nodes[0]
+                targetNode.getBoundsInScreen(targetRect)
+                Log.i(TAG, "🚕 Found node for '$searchText' at $targetRect")
+                // Recycle other nodes
+                for (i in 1 until nodes.size) {
+                    nodes[i].recycle()
                 }
-
-                // Try clicking ancestors up to 5 levels - TRY ALL, not just clickable ones
-                var current = node.parent
-                for (level in 1..5) {
-                    if (current == null) break
-
-                    val ancestorClass = current.className?.toString()?.substringAfterLast(".") ?: ""
-                    val ancestorRect = android.graphics.Rect()
-                    current.getBoundsInScreen(ancestorRect)
-
-                    Log.i(TAG, "🚕     Level $level ancestor: [$ancestorClass] clickable=${current.isClickable}, bounds=$ancestorRect")
-
-                    // Try ACTION_CLICK even if not marked clickable - some DiDi views respond anyway
-                    Log.i(TAG, "🚕     Trying ACTION_CLICK on ancestor level $level...")
-                    if (current.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                        Log.i(TAG, "🚕 ✓✓✓ SUCCESS: ACTION_CLICK on ancestor level $level of '$searchText'")
-                        Thread.sleep(500) // Wait for UI to update
-                        current.recycle()
-                        node.recycle()
-                        return true
-                    }
-
-                    // Also try smartClick (gesture) if marked clickable
-                    if (current.isClickable) {
-                        if (smartClick(current)) {
-                            Log.i(TAG, "🚕 ✓✓✓ SUCCESS: SmartClick on ancestor level $level of '$searchText'")
-                            current.recycle()
-                            node.recycle()
-                            return true
-                        }
-                    }
-
-                    val parent = current.parent
-                    current.recycle()
-                    current = parent
-                }
-
-                node.recycle()
+                break
             }
         }
 
-        // Strategy 2: Find by content description (Button descriptions)
-        Log.i(TAG, "🚕 Strategy 2: Searching by content description...")
-        val buttonDescriptions = listOf(
-            "Tap to enter your destination",
-            "Enter destination",
-            "Where to",
-            "Search for destination"
-        )
-
-        for (desc in buttonDescriptions) {
-            val nodes = rootNode.findAccessibilityNodeInfosByText(desc)
-            for (node in nodes) {
-                Log.i(TAG, "🚕   Found button with desc containing '$desc'")
-                if (smartClick(node)) {
-                    Log.i(TAG, "🚕 ✓✓✓ SUCCESS: SmartClick on button with desc '$desc'")
-                    node.recycle()
-                    return true
-                }
-                node.recycle()
-            }
+        if (targetNode == null) {
+            Log.w(TAG, "🚕 No 'Where to?' node found!")
+            return false
         }
 
-        // Strategy 3: Deep traversal looking for any clickable search-like element
-        Log.i(TAG, "🚕 Strategy 3: Deep traversal for clickable search elements...")
-        val found = findDiDiClickableSearchElement(rootNode)
-        if (found) {
+        // STRATEGY: GESTURE TAP (attempts 1-2)
+        if (attemptStrategy == "gesture") {
+            Log.i(TAG, "🚕 Strategy: Gesture tap at center (${targetRect.centerX()}, ${targetRect.centerY()})")
+            clickAtPosition(targetRect.centerX().toFloat(), targetRect.centerY().toFloat())
+            Thread.sleep(300)
+            targetNode.recycle()
             return true
         }
 
-        // Strategy 4: Try clicking DiDi's entrance view container by resource ID
-        Log.i(TAG, "🚕 Strategy 4: Looking for DiDi entrance view by resource ID...")
+        // STRATEGY: ACTION_CLICK ON ANCESTORS (attempts 3-5)
+        if (attemptStrategy == "ancestors") {
+            Log.i(TAG, "🚕 Strategy: ACTION_CLICK on ancestors")
+            var current = targetNode.parent
+            for (level in 1..5) {
+                if (current == null) break
+
+                val ancestorClass = current.className?.toString()?.substringAfterLast(".") ?: ""
+                Log.i(TAG, "🚕   Trying ACTION_CLICK on level $level ancestor [$ancestorClass]...")
+
+                if (current.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    Log.i(TAG, "🚕 ✓ ACTION_CLICK succeeded on level $level!")
+                    Thread.sleep(500)
+                    current.recycle()
+                    targetNode.recycle()
+                    return true
+                }
+
+                val parent = current.parent
+                current.recycle()
+                current = parent
+            }
+            targetNode.recycle()
+            return true // Return true to let ENTERING_DESTINATION check if it worked
+        }
+
+        // STRATEGY: CLICK ON CONTAINER BY RESOURCE ID (attempts 6+)
+        Log.i(TAG, "🚕 Strategy: Click on container by resource ID")
+        targetNode.recycle()
+
         val didiContainerIds = listOf(
             "home_entrance_view_above",
             "home_entrance_view_new",
@@ -979,28 +956,25 @@ class PriceReaderService : AccessibilityService() {
             val fullId = "com.didiglobal.passenger:id/$containerId"
             val containers = rootNode.findAccessibilityNodeInfosByViewId(fullId)
             if (containers.isNotEmpty()) {
-                Log.i(TAG, "🚕   Found container: $containerId (${containers.size} nodes)")
-                for (container in containers) {
-                    // Try gesture tap at center of container
-                    val rect = android.graphics.Rect()
-                    container.getBoundsInScreen(rect)
-                    if (rect.width() > 100 && rect.height() > 50) {
-                        Log.i(TAG, "🚕   Trying gesture tap on $containerId at center (${rect.centerX()}, ${rect.centerY()})")
-                        if (clickAtPosition(rect.centerX().toFloat(), rect.centerY().toFloat())) {
-                            Log.i(TAG, "🚕 ✓✓✓ SUCCESS: Gesture tap on container $containerId")
-                            Thread.sleep(500)
-                            container.recycle()
-                            return true
-                        }
-                    }
-                    container.recycle()
-                }
+                val container = containers[0]
+                val rect = android.graphics.Rect()
+                container.getBoundsInScreen(rect)
+
+                Log.i(TAG, "🚕   Found container: $containerId at $rect")
+
+                // Click at the "Where to?" position within this container
+                val clickX = targetRect.centerX().toFloat()
+                val clickY = targetRect.centerY().toFloat()
+                Log.i(TAG, "🚕   Clicking at ($clickX, $clickY)")
+                clickAtPosition(clickX, clickY)
+                Thread.sleep(500)
+
+                for (c in containers) c.recycle()
+                return true
             }
         }
 
-        // Strategy 5: Look for EditText with search hints
-        Log.i(TAG, "🚕 Strategy 5: Looking for EditText with search hints...")
-        return findAndClickEditText(rootNode)
+        return true
     }
 
     /**
