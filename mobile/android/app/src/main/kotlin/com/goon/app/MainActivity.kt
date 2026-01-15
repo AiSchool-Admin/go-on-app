@@ -224,6 +224,35 @@ class MainActivity : FlutterActivity() {
                     result.success(true)
                 }
 
+                // ============ Full-Screen Price Fetching Overlay ============
+
+                "showPriceFetchingOverlay" -> {
+                    val pickup = call.argument<String>("pickup") ?: ""
+                    val destination = call.argument<String>("destination") ?: ""
+                    val apps = call.argument<List<String>>("apps") ?: emptyList()
+
+                    Log.i(TAG, "🖼️ Showing price fetching overlay: $pickup → $destination (${apps.size} apps)")
+                    FloatingOverlayService.showPriceFetchingOverlay(this, pickup, destination, apps)
+                    result.success(true)
+                }
+
+                "updateOverlayPrice" -> {
+                    val packageName = call.argument<String>("packageName") ?: ""
+                    val price = call.argument<Double>("price")
+                    val status = call.argument<String>("status") ?: "loading"
+                    val eta = call.argument<String>("eta")
+
+                    Log.i(TAG, "🖼️ Updating overlay price: $packageName = $price ($status)")
+                    FloatingOverlayService.updateAppPrice(packageName, price, status, eta)
+                    result.success(true)
+                }
+
+                "hidePriceFetchingOverlay" -> {
+                    Log.i(TAG, "🖼️ Hiding price fetching overlay")
+                    FloatingOverlayService.hidePriceFetchingOverlay()
+                    result.success(true)
+                }
+
                 // ============ App Management Methods ============
 
                 "isAppInstalled" -> {

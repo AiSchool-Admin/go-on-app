@@ -284,6 +284,9 @@ class PriceReaderService : AccessibilityService() {
         // Clear any old cached prices for this app
         latestPrices.remove(packageName)
 
+        // Update overlay to show loading status for this app
+        FloatingOverlayService.updateAppPrice(packageName, null, "loading", null)
+
         // For Uber: deep link includes full coordinates, skip to WAITING_FOR_PRICE
         // For DiDi and others: deep links don't work reliably, go through full flow
         // For InDriver: start with FINDING_PICKUP_FIELD to enter BOTH pickup and destination
@@ -4695,6 +4698,14 @@ class PriceReaderService : AccessibilityService() {
             putExtra(EXTRA_PRICE_DATA, priceInfoToJson(priceInfo))
         }
         sendBroadcast(intent)
+
+        // Update floating overlay if visible
+        FloatingOverlayService.updateAppPrice(
+            priceInfo.packageName,
+            priceInfo.price,
+            if (priceInfo.price > 0) "success" else "error",
+            if (priceInfo.eta > 0) "${priceInfo.eta} دقيقة" else null
+        )
 
         Log.i(TAG, "✓ Price updated: ${priceInfo.appName} = ${priceInfo.price} EGP")
     }
