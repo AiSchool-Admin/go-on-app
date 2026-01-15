@@ -854,7 +854,8 @@ class FloatingOverlayService : Service() {
             if (price != null && price > 0) {
                 if (hintView == null) {
                     // Find the info container and add hint
-                    val infoContainer = (card.getChildAt(1) as? LinearLayout)
+                    val cardLayout = card as? LinearLayout
+                    val infoContainer = cardLayout?.getChildAt(1) as? LinearLayout
                     infoContainer?.addView(TextView(this).apply {
                         text = "اضغط للحجز ←"
                         setTextColor(0xFF90CAF9.toInt())
