@@ -666,6 +666,16 @@ class FloatingOverlayService : Service() {
                 setMargins(0, (8 * density).toInt(), 0, 0)
             }
             tag = "card_$packageName"
+            isClickable = true
+            isFocusable = true
+
+            // Click to open app and start ride
+            setOnClickListener {
+                val price = appPrices[packageName]?.price
+                if (price != null && price > 0) {
+                    openAppForRide(packageName)
+                }
+            }
 
             // App icon
             val iconText = TextView(this@FloatingOverlayService).apply {
@@ -697,6 +707,16 @@ class FloatingOverlayService : Service() {
                 tag = "status_$packageName"
             }
             infoContainer.addView(statusText)
+
+            // Add "اضغط للحجز" hint when price is available
+            if (appPrice.price != null && appPrice.price > 0) {
+                val hintText = TextView(this@FloatingOverlayService).apply {
+                    text = "اضغط للحجز ←"
+                    setTextColor(0xFF90CAF9.toInt()) // Light blue
+                    textSize = 11f
+                }
+                infoContainer.addView(hintText)
+            }
 
             addView(infoContainer)
 
@@ -732,6 +752,57 @@ class FloatingOverlayService : Service() {
             }
 
             addView(priceContainer)
+        }
+    }
+
+    /**
+     * Open app to book the ride
+     */
+    private fun openAppForRide(packageName: String) {
+        try {
+            Log.i(TAG, "Opening $packageName for ride booking")
+
+            // Hide the overlay first
+            hideFullScreenOverlay()
+
+            // Try to open with deep link based on app
+            val intent = when (packageName) {
+                "com.ubercab" -> {
+                    // Uber deep link
+                    Intent(Intent.ACTION_VIEW, android.net.Uri.parse(
+                        "uber://?action=setPickup&pickup=my_location"
+                    ))
+                }
+                "com.careem.acma" -> {
+                    // Careem deep link
+                    Intent(Intent.ACTION_VIEW, android.net.Uri.parse(
+                        "careem://"
+                    ))
+                }
+                else -> {
+                    // Default: just open the app
+                    packageManager.getLaunchIntentForPackage(packageName)
+                }
+            }
+
+            intent?.let {
+                it.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                startActivity(it)
+                Log.i(TAG, "✓ Opened $packageName successfully")
+            } ?: run {
+                Log.e(TAG, "✗ Could not create intent for $packageName")
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error opening app $packageName: ${e.message}")
+            // Fallback: try to open app normally
+            try {
+                val fallbackIntent = packageManager.getLaunchIntentForPackage(packageName)
+                fallbackIntent?.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                fallbackIntent?.let { startActivity(it) }
+            } catch (e2: Exception) {
+                Log.e(TAG, "Fallback also failed: ${e2.message}")
+            }
         }
     }
 
@@ -780,6 +851,23 @@ class FloatingOverlayService : Service() {
             val statusView = card.findViewWithTag<TextView>("status_$packageName")
             statusView?.text = getStatusText(status)
             statusView?.setTextColor(getStatusColor(status))
+
+            // Add or update "اضغط للحجز" hint
+            val hintView = card.findViewWithTag<TextView>("hint_$packageName")
+            if (price != null && price > 0) {
+                if (hintView == null) {
+                    // Find the info container and add hint
+                    val infoContainer = (card.getChildAt(1) as? LinearLayout)
+                    infoContainer?.addView(TextView(this).apply {
+                        text = "اضغط للحجز ←"
+                        setTextColor(0xFF90CAF9.toInt())
+                        textSize = 11f
+                        tag = "hint_$packageName"
+                    })
+                }
+            } else {
+                hintView?.visibility = View.GONE
+            }
 
             // Update price container
             val priceContainer = card.findViewWithTag<LinearLayout>("priceContainer_$packageName")
