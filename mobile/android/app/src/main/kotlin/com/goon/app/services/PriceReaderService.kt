@@ -2838,15 +2838,15 @@ class PriceReaderService : AccessibilityService() {
             Log.i(TAG, "🗺️ All text (first 30): ${allText.take(30)}")
         }
 
-        // IMPORTANT: If we see "تم" button, we're NOT on the final price screen yet!
-        // We need to click through "تم" first before accepting prices
-        if (hasTamButtonOnScreen) {
-            Log.i(TAG, "🗺️ 'تم' button detected - NOT on final price screen, need to click through")
-            // Don't return false here - let the code below handle clicking "تم"
-        } else if (hasPriceScreen || (hasPriceIndicator && hasVehicleTypes)) {
-            // Only accept as price screen if NO "تم" button is present
+        // FIXED: Check for FINAL PRICE SCREEN first, REGARDLESS of whether "تم" is visible!
+        // The price screen has "البحث عن عروض" button OR (prices + vehicle types)
+        // Even if there's a "تم" somewhere on screen, if we see the price screen indicators, we're done!
+        val isFinalPriceScreen = hasPriceScreen || (hasPriceIndicator && hasVehicleTypes)
+
+        if (isFinalPriceScreen) {
             Log.i(TAG, "🗺️ ✓✓✓ DETECTED PRICE SCREEN! (البحث عن عروض / الأجر المقترح)")
             Log.i(TAG, "🗺️ hasPriceScreen=$hasPriceScreen, hasPriceIndicator=$hasPriceIndicator, hasVehicleTypes=$hasVehicleTypes")
+            Log.i(TAG, "🗺️ Note: hasTam=$hasTamButtonOnScreen (ignored - we're on final screen)")
 
             // Enable price detection NOW - we're on the real price screen!
             if (!inDriverAutomationComplete) {
@@ -2856,6 +2856,12 @@ class PriceReaderService : AccessibilityService() {
 
             // NOT an intermediate screen - return false to allow price extraction
             return false
+        }
+
+        // Only treat as intermediate "تم" screen if NOT on price screen
+        if (hasTamButtonOnScreen) {
+            Log.i(TAG, "🗺️ 'تم' button detected on non-price screen - need to click through")
+            // Don't return false here - let the code below handle clicking "تم"
         }
 
         // ============================================================
