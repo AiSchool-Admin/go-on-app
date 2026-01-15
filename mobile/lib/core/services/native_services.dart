@@ -427,14 +427,14 @@ class NativeServicesManager {
 
   /// Wait for automation to complete and get the price
   Future<double?> waitForAutomationAndGetPrice(String packageName) async {
-    // Poll for completion (max 30 seconds for slower apps like Uber)
-    for (int i = 0; i < 60; i++) {
-      await Future.delayed(const Duration(milliseconds: 500));
+    // OPTIMIZED: Poll faster (300ms interval) with shorter timeout (15s max)
+    for (int i = 0; i < 50; i++) {
+      await Future.delayed(const Duration(milliseconds: 300));
 
-      // Log progress every 5 seconds
-      if (i % 10 == 0) {
+      // Log progress every 5 polls (~1.5 seconds)
+      if (i % 5 == 0) {
         final state = await getAutomationState();
-        print('⏳ Waiting for automation... ($i/60) State: $state');
+        print('⏳ Waiting for automation... ($i/50) State: $state');
       }
 
       final complete = await isAutomationComplete();
@@ -453,20 +453,20 @@ class NativeServicesManager {
       }
     }
 
-    print('⏱️ Automation timeout after 30 seconds');
+    print('⏱️ Automation timeout after 15 seconds');
     return null;
   }
 
   /// Wait for automation to complete and get full price info with vehicle types
   Future<AppPrice?> waitForAutomationAndGetPriceInfo(String packageName) async {
-    // Poll for completion (max 30 seconds for slower apps like Uber)
-    for (int i = 0; i < 60; i++) {
-      await Future.delayed(const Duration(milliseconds: 500));
+    // OPTIMIZED: Poll faster (300ms interval) with shorter timeout (15s max)
+    for (int i = 0; i < 50; i++) {
+      await Future.delayed(const Duration(milliseconds: 300));
 
-      // Log progress every 5 seconds
-      if (i % 10 == 0) {
+      // Log progress every 5 polls (~1.5 seconds)
+      if (i % 5 == 0) {
         final state = await getAutomationState();
-        print('⏳ Waiting for automation... ($i/60) State: $state');
+        print('⏳ Waiting for automation... ($i/50) State: $state');
       }
 
       final complete = await isAutomationComplete();
@@ -485,7 +485,7 @@ class NativeServicesManager {
       }
     }
 
-    print('⏱️ Automation timeout after 30 seconds');
+    print('⏱️ Automation timeout after 15 seconds');
     return null;
   }
 

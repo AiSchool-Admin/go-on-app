@@ -277,13 +277,13 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
           );
         }
 
-        // Reset for next app
+        // Reset for next app (OPTIMIZED: reduced from 500ms to 200ms)
         await nativeServices.resetAutomation();
-        await Future.delayed(const Duration(milliseconds: 500));
+        await Future.delayed(const Duration(milliseconds: 200));
       }
 
-      // Wait a moment for user to see final prices
-      await Future.delayed(const Duration(seconds: 2));
+      // Wait a moment for user to see final prices (OPTIMIZED: reduced from 2s to 1s)
+      await Future.delayed(const Duration(seconds: 1));
 
       // Hide the overlay
       await nativeServices.hidePriceFetchingOverlay();

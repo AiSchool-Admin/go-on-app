@@ -198,7 +198,7 @@ class PriceReaderService : AccessibilityService() {
     private val MAX_RETRIES = 10  // Increased for better reliability
     private var automationStartTime = 0L  // Timestamp when automation started
     private var uberScreenReady = false  // Flag to indicate Uber ride selection screen is loaded
-    private val UBER_MIN_WAIT_MS = 8000L  // Wait at least 8 seconds for Uber to load prices
+    private val UBER_MIN_WAIT_MS = 4000L  // OPTIMIZED: Reduced from 8000ms to 4000ms for faster price detection
     private val UBER_MIN_PRICE = 50.0  // Minimum valid price for Uber
 
     // Track if InDriver destination was successfully entered (to avoid accepting default price)
@@ -314,13 +314,13 @@ class PriceReaderService : AccessibilityService() {
                     if (automationState != AutomationState.PRICE_CAPTURED &&
                         automationState != AutomationState.FAILED &&
                         automationState != AutomationState.IDLE) {
-                        scanHandler?.postDelayed(this, 1200) // Check every 1.2 seconds - more time for UI to update
+                        scanHandler?.postDelayed(this, 700) // OPTIMIZED: Reduced from 1200ms to 700ms for faster automation
                     }
                 }
             }
         }
         // Initial delay to let the app load
-        scanHandler?.postDelayed(scanRunnable!!, 2000) // Wait 2 seconds before starting
+        scanHandler?.postDelayed(scanRunnable!!, 1000) // OPTIMIZED: Reduced from 2000ms to 1000ms
     }
 
     private fun performAutomationStep(packageName: String) {
@@ -686,7 +686,7 @@ class PriceReaderService : AccessibilityService() {
 
                     // Still no valid prices, check timeout
                     automationStep++
-                    if (elapsedTime > 30000) { // 30 seconds total timeout
+                    if (elapsedTime > 15000) { // OPTIMIZED: Reduced from 30s to 15s total timeout
                         // Accept whatever we have if any
                         if (cachedPrice != null && cachedPrice.price > 0) {
                             Log.i(TAG, "🤖 ⏱️ Timeout - accepting available price: ${cachedPrice.price} EGP")
@@ -2521,10 +2521,10 @@ class PriceReaderService : AccessibilityService() {
         if (hasSelectAddressScreen) {
             Log.i(TAG, "📍 Detected DiDi 'Select Address' screen")
 
-            // Check cooldown to prevent clicking too fast (wait 3 seconds between clicks)
+            // Check cooldown to prevent clicking too fast (OPTIMIZED: reduced from 3s to 1.5s)
             val currentTime = System.currentTimeMillis()
-            if (currentTime - lastDiDiSelectAddressClickTime < 3000) {
-                Log.i(TAG, "📍 Waiting for cooldown (${3000 - (currentTime - lastDiDiSelectAddressClickTime)}ms remaining)")
+            if (currentTime - lastDiDiSelectAddressClickTime < 1500) {
+                Log.i(TAG, "📍 Waiting for cooldown (${1500 - (currentTime - lastDiDiSelectAddressClickTime)}ms remaining)")
                 return false // Don't handle - let automation continue waiting
             }
 
@@ -4348,13 +4348,14 @@ class PriceReaderService : AccessibilityService() {
             }
         }
 
-        // Vehicle type keywords
+        // Vehicle type keywords - Scooter/Moto are 2-wheelers (excluded from car prices)
         val vehicleTypes = listOf(
             "UberX Saver" to listOf("uberx saver", "saver"),
             "Wait & Save" to listOf("wait & save", "wait and save"),
-            "UberX" to listOf("uberx"),
+            "UberX" to listOf("uberx", "uber x"),
             "Comfort" to listOf("comfort"),
-            "Uber Moto" to listOf("moto"),
+            "Scooter" to listOf("scooter", "سكوتر"),
+            "Uber Moto" to listOf("moto", "موتو"),
             "UberXL" to listOf("uberxl", "xl"),
             "Black" to listOf("black")
         )
@@ -4414,15 +4415,17 @@ class PriceReaderService : AccessibilityService() {
         if (prices.isNotEmpty()) {
             val uniquePrices = prices.distinct().sorted()
 
-            // Best price for cars only (exclude Moto which is typically the lowest)
-            // Moto prices are usually < 40 EGP, car prices are usually >= 50 EGP
-            val carPrices = vehiclePrices.filterKeys {
-                !it.lowercase().contains("moto")
-            }.values.filter { it >= 40.0 }.toList()
+            // Best price for CARS only (exclude Scooter/Moto which are 2-wheelers)
+            // 2-wheeler prices are usually < 50 EGP, car prices are usually >= 50 EGP
+            val twoWheelerKeywords = listOf("moto", "scooter", "سكوتر", "موتو")
+            val carPrices = vehiclePrices.filterKeys { key ->
+                val keyLower = key.lowercase()
+                twoWheelerKeywords.none { keyLower.contains(it) }
+            }.values.filter { it >= 45.0 }.toList()
 
-            // Also filter out Moto-like prices from the general list
-            // Moto is typically much cheaper than cars (< 40 EGP)
-            val carOnlyPrices = uniquePrices.filter { it >= 40.0 }
+            // Also filter out 2-wheeler-like prices from the general list
+            // Scooter/Moto are typically much cheaper than cars (< 50 EGP)
+            val carOnlyPrices = uniquePrices.filter { it >= 45.0 }
 
             val bestPrice = when {
                 carPrices.isNotEmpty() -> {
