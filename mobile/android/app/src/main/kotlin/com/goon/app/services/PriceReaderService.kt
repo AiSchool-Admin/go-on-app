@@ -3549,12 +3549,8 @@ class PriceReaderService : AccessibilityService() {
 
             // For API 30+, try IME action
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-                val args = android.os.Bundle()
-                args.putInt(
-                    "android.view.accessibility.action.ARGUMENT_IME_ACTION_ID_INT",
-                    android.view.inputmethod.EditorInfo.IME_ACTION_DONE
-                )
-                if (focusedNode.performAction(AccessibilityNodeInfo.ACTION_IME_ENTER)) {
+                val imeEnterAction = AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER
+                if (focusedNode.performAction(imeEnterAction.id)) {
                     Log.i(TAG, "⌨️ ✓ ACTION_IME_ENTER succeeded!")
                     focusedNode.recycle()
                     rootNode.recycle()
