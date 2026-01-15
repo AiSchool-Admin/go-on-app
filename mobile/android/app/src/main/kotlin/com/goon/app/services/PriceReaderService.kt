@@ -600,6 +600,36 @@ class PriceReaderService : AccessibilityService() {
                             Log.i(TAG, "🤖 📋 Handled DiDi intermediate screen during SELECTING_SUGGESTION")
                             return
                         }
+
+                        // CRITICAL FIX: Even if handleDiDiIntermediateScreens returns false (cooldown),
+                        // we should NOT call selectFirstSuggestion if we're still on "Select Address" screen.
+                        // Wait for DiDi to transition after our click.
+                        val allText = getAllTextFromNode(rootNode)
+                        val stillOnSelectAddress = allText.any {
+                            it.lowercase().contains("select address") ||
+                            it.lowercase().contains("اختر العنوان") ||
+                            it.lowercase().contains("pin your location")
+                        }
+                        if (stillOnSelectAddress) {
+                            Log.i(TAG, "🤖 📋 DiDi still on 'Select Address' screen - waiting for transition...")
+                            return
+                        }
+
+                        // Check if DiDi went BACK to home screen (indicates failed automation)
+                        val backOnHomeScreen = allText.any {
+                            val lower = it.lowercase()
+                            lower.contains("tap to enter your destination") ||
+                            (lower.contains("where to") && lower.contains("button"))
+                        }
+                        if (backOnHomeScreen) {
+                            Log.w(TAG, "🚕 DiDi went back to home screen during SELECTING_SUGGESTION!")
+                            Log.w(TAG, "🚕 Restarting automation from FINDING_DESTINATION_FIELD...")
+                            automationState = AutomationState.FINDING_DESTINATION_FIELD
+                            automationRetries = 0
+                            automationStep = 0
+                            didiDestinationClickAttempts = 0
+                            return
+                        }
                     }
 
                     val selected = selectFirstSuggestion(rootNode, packageName)
@@ -634,6 +664,34 @@ class PriceReaderService : AccessibilityService() {
                     if (packageName == DIDI_PACKAGE) {
                         if (handleDiDiIntermediateScreens(rootNode)) {
                             Log.i(TAG, "🤖 📋 Handled DiDi intermediate screen during WAITING_FOR_PRICE")
+                            return
+                        }
+
+                        // Check if still on "Select Address" (even after cooldown)
+                        val allText = getAllTextFromNode(rootNode)
+                        val stillOnSelectAddress = allText.any {
+                            it.lowercase().contains("select address") ||
+                            it.lowercase().contains("اختر العنوان") ||
+                            it.lowercase().contains("pin your location")
+                        }
+                        if (stillOnSelectAddress) {
+                            Log.i(TAG, "🤖 📋 DiDi still on 'Select Address' - waiting...")
+                            onIntermediateScreen = true
+                        }
+
+                        // Check if DiDi went BACK to home screen (indicates failed automation)
+                        val backOnHomeScreen = allText.any {
+                            val lower = it.lowercase()
+                            lower.contains("tap to enter your destination") ||
+                            (lower.contains("where to") && lower.contains("button"))
+                        }
+                        if (backOnHomeScreen && !stillOnSelectAddress) {
+                            Log.w(TAG, "🚕 DiDi went back to home screen during WAITING_FOR_PRICE!")
+                            Log.w(TAG, "🚕 Restarting automation from FINDING_DESTINATION_FIELD...")
+                            automationState = AutomationState.FINDING_DESTINATION_FIELD
+                            automationRetries = 0
+                            automationStep = 0
+                            didiDestinationClickAttempts = 0
                             return
                         }
                     }
