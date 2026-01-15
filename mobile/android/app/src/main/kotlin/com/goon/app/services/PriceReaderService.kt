@@ -629,6 +629,26 @@ class PriceReaderService : AccessibilityService() {
                             didiDestinationClickAttempts = 0
                             return
                         }
+
+                        // CRITICAL FIX: Check if we're already on the PRICE SCREEN
+                        // If prices are visible, skip suggestion selection and go to WAITING_FOR_PRICE
+                        val hasPriceIndicators = allText.any {
+                            val lower = it.lowercase()
+                            lower.contains("egp") ||
+                            lower.contains("ج.م") ||
+                            lower.contains("flex") ||
+                            lower.contains("wasalny") ||
+                            lower.contains("comfort") ||
+                            lower.contains("dropoff") ||
+                            lower.contains("choose your driver")
+                        }
+                        if (hasPriceIndicators) {
+                            Log.i(TAG, "🤖 📋 DiDi already on price screen - skipping SELECTING_SUGGESTION")
+                            automationState = AutomationState.WAITING_FOR_PRICE
+                            automationRetries = 0
+                            automationStep = 0
+                            return
+                        }
                     }
 
                     val selected = selectFirstSuggestion(rootNode, packageName)
