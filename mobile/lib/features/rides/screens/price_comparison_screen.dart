@@ -156,7 +156,7 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
   }
 
   /// Fetch real prices from working apps only (Uber + DiDi)
-  /// Bolt is ready to be added when tested
+  /// Shows full-screen overlay so user doesn't see apps switching in background
   Future<void> _fetchRealPricesFromWorkingApps() async {
     final nativeServices = ref.read(nativeServicesProvider);
 
@@ -164,6 +164,13 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
     final isEnabled = await nativeServices.isAccessibilityEnabled();
     if (!isEnabled) {
       _showAccessibilityRequiredDialog();
+      return;
+    }
+
+    // Check overlay permission
+    final canOverlay = await nativeServices.canDrawOverlay();
+    if (!canOverlay) {
+      _showOverlayPermissionDialog();
       return;
     }
 
@@ -176,24 +183,49 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
       // {'package': NativeServicesManager.boltPackage, 'name': 'Bolt'},
     ];
 
+    // Filter to only installed apps
+    final installedApps = <Map<String, String>>[];
+    for (final app in workingApps) {
+      final installed = await nativeServices.isAppInstalled(app['package']!);
+      if (installed) {
+        installedApps.add(app);
+      }
+    }
+
+    if (installedApps.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('لا توجد تطبيقات نقل مثبتة'),
+          backgroundColor: AppColors.warning,
+        ),
+      );
+      return;
+    }
+
     setState(() {
       _isFetchingRealPrices = true;
       _fetchStatus = 'جاري البدء...';
     });
 
+    // Show full-screen overlay with all apps
+    await nativeServices.showPriceFetchingOverlay(
+      pickup: widget.originAddress,
+      destination: widget.destinationAddress,
+      apps: installedApps.map((a) => a['package']!).toList(),
+    );
+
     final fetchedPrices = <String, double>{};
 
     try {
-      for (final app in workingApps) {
+      for (final app in installedApps) {
         final packageName = app['package']!;
         final appName = app['name']!;
 
-        // Check if app is installed
-        final installed = await nativeServices.isAppInstalled(packageName);
-        if (!installed) {
-          print('$appName not installed, skipping');
-          continue;
-        }
+        // Update overlay - mark this app as loading
+        await nativeServices.updateOverlayPrice(
+          packageName: packageName,
+          status: 'loading',
+        );
 
         setState(() {
           _fetchStatus = 'جاري جلب سعر $appName...';
@@ -215,6 +247,11 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
 
         if (!started) {
           print('Failed to start automation for $appName');
+          // Update overlay - mark as error
+          await nativeServices.updateOverlayPrice(
+            packageName: packageName,
+            status: 'error',
+          );
           continue;
         }
 
@@ -224,14 +261,32 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
         if (priceInfo != null && priceInfo.price > 0) {
           fetchedPrices[packageName] = priceInfo.price;
           print('✓ Got $appName price: ${priceInfo.price} EGP');
+
+          // Update overlay - show success with price
+          await nativeServices.updateOverlayPrice(
+            packageName: packageName,
+            price: priceInfo.price,
+            status: 'success',
+          );
         } else {
           print('✗ No price from $appName');
+          // Update overlay - mark as error
+          await nativeServices.updateOverlayPrice(
+            packageName: packageName,
+            status: 'error',
+          );
         }
 
         // Reset for next app
         await nativeServices.resetAutomation();
         await Future.delayed(const Duration(milliseconds: 500));
       }
+
+      // Wait a moment for user to see final prices
+      await Future.delayed(const Duration(seconds: 2));
+
+      // Hide the overlay
+      await nativeServices.hidePriceFetchingOverlay();
 
       // Update UI with fetched prices
       if (mounted && _priceOptions != null && fetchedPrices.isNotEmpty) {
@@ -282,6 +337,9 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
         }
       }
     } catch (e) {
+      // Hide overlay on error
+      await nativeServices.hidePriceFetchingOverlay();
+
       if (mounted) {
         setState(() {
           _isFetchingRealPrices = false;
@@ -295,6 +353,33 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
         );
       }
     }
+  }
+
+  /// Show dialog requesting overlay permission
+  void _showOverlayPermissionDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('صلاحية العرض فوق التطبيقات'),
+        content: const Text(
+          'لإظهار شاشة GO-ON أثناء جلب الأسعار، يرجى تفعيل صلاحية "العرض فوق التطبيقات الأخرى".',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('إلغاء'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              final nativeServices = ref.read(nativeServicesProvider);
+              await nativeServices.openOverlaySettings();
+            },
+            child: const Text('فتح الإعدادات'),
+          ),
+        ],
+      ),
+    );
   }
 
   /// Test fetching price from a SINGLE app (for debugging)

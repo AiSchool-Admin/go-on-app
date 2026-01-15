@@ -557,6 +557,54 @@ class NativeServicesManager {
     }
   }
 
+  // ============ Full-Screen Price Fetching Overlay ============
+
+  /// Show full-screen overlay during price fetching
+  /// This covers the entire screen so user doesn't see apps switching in background
+  Future<void> showPriceFetchingOverlay({
+    required String pickup,
+    required String destination,
+    required List<String> apps,
+  }) async {
+    try {
+      await _channel.invokeMethod('showPriceFetchingOverlay', {
+        'pickup': pickup,
+        'destination': destination,
+        'apps': apps,
+      });
+    } on PlatformException catch (e) {
+      print('Error showing price fetching overlay: ${e.message}');
+    }
+  }
+
+  /// Update price for a specific app in the overlay
+  Future<void> updateOverlayPrice({
+    required String packageName,
+    double? price,
+    required String status, // "loading", "success", "error", "waiting"
+    String? eta,
+  }) async {
+    try {
+      await _channel.invokeMethod('updateOverlayPrice', {
+        'packageName': packageName,
+        'price': price,
+        'status': status,
+        'eta': eta,
+      });
+    } on PlatformException catch (e) {
+      print('Error updating overlay price: ${e.message}');
+    }
+  }
+
+  /// Hide the full-screen price fetching overlay
+  Future<void> hidePriceFetchingOverlay() async {
+    try {
+      await _channel.invokeMethod('hidePriceFetchingOverlay');
+    } on PlatformException catch (e) {
+      print('Error hiding price fetching overlay: ${e.message}');
+    }
+  }
+
   // ============ App Management Methods ============
 
   /// Check if an app is installed
