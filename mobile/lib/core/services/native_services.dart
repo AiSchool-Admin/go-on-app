@@ -459,14 +459,18 @@ class NativeServicesManager {
 
   /// Wait for automation to complete and get full price info with vehicle types
   Future<AppPrice?> waitForAutomationAndGetPriceInfo(String packageName) async {
-    // Poll with 250ms interval, 12s timeout (48 iterations)
-    for (int i = 0; i < 48; i++) {
+    // DiDi needs more time (20s = 80 polls), others use 12s (48 polls)
+    final isDiDi = packageName == 'com.didiglobal.passenger';
+    final maxPolls = isDiDi ? 80 : 48;
+    final timeoutSec = isDiDi ? 20 : 12;
+
+    for (int i = 0; i < maxPolls; i++) {
       await Future.delayed(const Duration(milliseconds: 250));
 
       // Log progress every 4 polls (~1 second)
       if (i % 4 == 0) {
         final state = await getAutomationState();
-        print('⏳ Waiting... ($i/48) State: $state');
+        print('⏳ Waiting... ($i/$maxPolls) State: $state');
       }
 
       final complete = await isAutomationComplete();
@@ -485,7 +489,7 @@ class NativeServicesManager {
       }
     }
 
-    print('⏱️ Automation timeout after 10 seconds');
+    print('⏱️ Automation timeout after $timeoutSec seconds');
     return null;
   }
 

@@ -685,8 +685,10 @@ class PriceReaderService : AccessibilityService() {
                     }
 
                     // Still no valid prices, check timeout
+                    // DiDi needs more time (20s), others can use 12s
                     automationStep++
-                    if (elapsedTime > 12000) { // 12s timeout - DiDi needs more time
+                    val timeoutMs = if (packageName == DIDI_PACKAGE) 20000L else 12000L
+                    if (elapsedTime > timeoutMs) { // App-specific timeout
                         // Accept whatever we have if any
                         if (cachedPrice != null && cachedPrice.price > 0) {
                             Log.i(TAG, "🤖 ⏱️ Timeout - accepting available price: ${cachedPrice.price} EGP")
