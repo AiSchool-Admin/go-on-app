@@ -501,12 +501,11 @@ class PriceReaderService : AccessibilityService() {
                         }
                         if (isOnHomeScreen) {
                             Log.w(TAG, "🚕 DiDi still on home screen - 'Where to?' click didn't work!")
-                            automationRetries++
-                            if (automationRetries > 5) {
-                                Log.e(TAG, "🚕 ✗✗✗ DiDi: Max retries exceeded - going back to FINDING_DESTINATION_FIELD")
-                                automationState = AutomationState.FINDING_DESTINATION_FIELD
-                                automationRetries = 0
-                            }
+                            // IMMEDIATELY go back to try a different click strategy
+                            // Don't waste time with retries - the click strategy needs to change
+                            Log.i(TAG, "🚕 Going back to FINDING_DESTINATION_FIELD to try different strategy (attempt $didiDestinationClickAttempts)...")
+                            automationState = AutomationState.FINDING_DESTINATION_FIELD
+                            automationRetries = 0
                             return
                         }
                     }
@@ -910,11 +909,21 @@ class PriceReaderService : AccessibilityService() {
         Log.i(TAG, "🚕 ========== DIDI DESTINATION FIELD SEARCH ==========")
         Log.i(TAG, "🚕 Attempt: $didiDestinationClickAttempts/$DIDI_MAX_DESTINATION_ATTEMPTS")
 
-        // Vary strategy based on attempt number
+        // Vary strategy based on attempt number - cycle through quickly
+        // Since gesture tap doesn't work on DiDi, try each strategy just once
         val attemptStrategy = when {
-            didiDestinationClickAttempts <= 2 -> "gesture"      // First 2: gesture tap
-            didiDestinationClickAttempts <= 5 -> "ancestors"    // Next 3: ACTION_CLICK on ancestors
-            else -> "container"                                  // Last: click on container by ID
+            didiDestinationClickAttempts == 1 -> "gesture"      // First attempt: gesture tap
+            didiDestinationClickAttempts == 2 -> "ancestors"    // Second: ACTION_CLICK on ancestors
+            didiDestinationClickAttempts == 3 -> "container"    // Third: click on container by ID
+            else -> {
+                // Cycle through strategies: 4->gesture, 5->ancestors, 6->container, etc.
+                val cycle = (didiDestinationClickAttempts - 1) % 3
+                when (cycle) {
+                    0 -> "gesture"
+                    1 -> "ancestors"
+                    else -> "container"
+                }
+            }
         }
         Log.i(TAG, "🚕 Using strategy: $attemptStrategy")
 
