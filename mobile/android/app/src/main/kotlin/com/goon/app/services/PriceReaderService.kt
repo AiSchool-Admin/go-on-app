@@ -242,6 +242,10 @@ class PriceReaderService : AccessibilityService() {
     // Track if InDriver pickup was successfully entered
     private var inDriverPickupEntered = false
 
+    // Track DiDi destination click retries (to prevent infinite loops)
+    private var didiDestinationClickAttempts = 0
+    private const val DIDI_MAX_DESTINATION_ATTEMPTS = 10
+
     /**
      * FULLY AUTOMATED PRICE FETCH
      * Opens app, enters destination, captures price, returns to GO-ON
@@ -275,6 +279,7 @@ class PriceReaderService : AccessibilityService() {
         automationStartTime = System.currentTimeMillis()  // Track when automation started
         uberScreenReady = false  // Reset screen ready flag
         inDriverPickupEntered = false  // Reset InDriver pickup flag
+        didiDestinationClickAttempts = 0  // Reset DiDi destination click attempts
         inDriverDestinationEntered = false  // Reset InDriver destination flag
         inDriverDoneClickedTime = 0L  // Reset InDriver Done click time
         inDriverDoneClickCount = 0  // Reset Done click counter (3 clicks needed for InDriver)
@@ -444,6 +449,17 @@ class PriceReaderService : AccessibilityService() {
                         }
                     }
 
+                    // For DiDi: Track overall destination click attempts
+                    if (packageName == DIDI_PACKAGE) {
+                        didiDestinationClickAttempts++
+                        Log.i(TAG, "🚕 DiDi destination click attempt: $didiDestinationClickAttempts/$DIDI_MAX_DESTINATION_ATTEMPTS")
+                        if (didiDestinationClickAttempts > DIDI_MAX_DESTINATION_ATTEMPTS) {
+                            Log.e(TAG, "🚕 ✗✗✗ DiDi FAILED: Max destination click attempts exceeded")
+                            automationState = AutomationState.FAILED
+                            return
+                        }
+                    }
+
                     val found = findAndClickDestinationField(rootNode, packageName)
                     if (found) {
                         Log.i(TAG, "🤖 ✓✓✓ Found destination field! Transitioning to ENTERING_DESTINATION...")
@@ -474,6 +490,27 @@ class PriceReaderService : AccessibilityService() {
                         }
                     }
 
+                    // CRITICAL: For DiDi, check if we're still on home screen (Where to? button visible)
+                    // This means the click didn't work and we need to retry
+                    if (packageName == DIDI_PACKAGE) {
+                        val allText = getAllTextFromNode(rootNode)
+                        val isOnHomeScreen = allText.any { text ->
+                            val lower = text.lowercase()
+                            lower.contains("tap to enter your destination") ||
+                            (lower.contains("where to") && lower.contains("button"))
+                        }
+                        if (isOnHomeScreen) {
+                            Log.w(TAG, "🚕 DiDi still on home screen - 'Where to?' click didn't work!")
+                            automationRetries++
+                            if (automationRetries > 5) {
+                                Log.e(TAG, "🚕 ✗✗✗ DiDi: Max retries exceeded - going back to FINDING_DESTINATION_FIELD")
+                                automationState = AutomationState.FINDING_DESTINATION_FIELD
+                                automationRetries = 0
+                            }
+                            return
+                        }
+                    }
+
                     val entered = enterDestinationText(rootNode, packageName)
                     if (entered) {
                         Log.i(TAG, "🤖 ✓ Entered destination, transitioning to WAITING_FOR_SUGGESTIONS...")
@@ -494,6 +531,10 @@ class PriceReaderService : AccessibilityService() {
                                 // For InDriver: Don't skip - mark as FAILED since we can't trust default prices
                                 Log.e(TAG, "🤖 ✗✗✗ InDriver destination entry FAILED - cannot trust default price")
                                 automationState = AutomationState.FAILED
+                            } else if (packageName == DIDI_PACKAGE) {
+                                // For DiDi: Go back to FINDING_DESTINATION_FIELD and retry clicking "Where to?"
+                                Log.w(TAG, "🚕 DiDi: Failed to enter destination - retrying from FINDING_DESTINATION_FIELD")
+                                automationState = AutomationState.FINDING_DESTINATION_FIELD
                             } else {
                                 // For other apps: Skip to suggestion selection anyway
                                 Log.w(TAG, "🤖 Skipping to WAITING_FOR_SUGGESTIONS despite enter failure")
@@ -724,6 +765,11 @@ class PriceReaderService : AccessibilityService() {
             return findAndClickInDriverDestination(rootNode)
         }
 
+        // Special handling for DiDi - needs more aggressive clicking
+        if (packageName == DIDI_PACKAGE) {
+            return findAndClickDiDiDestinationField(rootNode)
+        }
+
         // App-specific field identifiers - EXPANDED for DiDi
         val searchTexts = when (packageName) {
             UBER_PACKAGE -> listOf("Where to?", "إلى أين؟", "Search", "بحث", "Enter destination", "Where to")
@@ -795,6 +841,162 @@ class PriceReaderService : AccessibilityService() {
 
         // Strategy 3: Try to find EditText fields directly
         return findAndClickEditText(rootNode)
+    }
+
+    /**
+     * Find and click DiDi's destination field on home screen
+     * DiDi's "Where to?" button requires more aggressive clicking strategies
+     * The button may not be directly clickable - need to use gesture tap as fallback
+     */
+    private fun findAndClickDiDiDestinationField(rootNode: AccessibilityNodeInfo): Boolean {
+        Log.i(TAG, "🚕 ========== DIDI DESTINATION FIELD SEARCH ==========")
+
+        // Debug: Log ALL visible text on screen
+        Log.i(TAG, "🚕 === ALL VISIBLE TEXT ON SCREEN ===")
+        logAllVisibleTextDetailed(rootNode, 0)
+        Log.i(TAG, "🚕 === END OF VISIBLE TEXT ===")
+
+        // DiDi destination field texts - English, Arabic, Chinese
+        val searchTexts = listOf(
+            // Primary - exact match first
+            "Where to?",
+            "Where to",
+            // Arabic
+            "إلى أين",
+            "إلى أين؟",
+            "الوجهة",
+            // Chinese
+            "去哪儿",
+            "输入目的地",
+            // Generic
+            "Destination",
+            "Search",
+            "Tap to enter your destination"
+        )
+
+        // Strategy 1: Find by text and use smartClick with gesture fallback
+        Log.i(TAG, "🚕 Strategy 1: Searching by text with smartClick...")
+        for (searchText in searchTexts) {
+            val nodes = rootNode.findAccessibilityNodeInfosByText(searchText)
+            if (nodes.isNotEmpty()) {
+                Log.i(TAG, "🚕 Found ${nodes.size} nodes for '$searchText'")
+            }
+
+            for (node in nodes) {
+                val nodeText = node.text?.toString() ?: ""
+                val nodeContentDesc = node.contentDescription?.toString() ?: ""
+                val nodeClass = node.className?.toString()?.substringAfterLast(".") ?: ""
+                val rect = android.graphics.Rect()
+                node.getBoundsInScreen(rect)
+
+                Log.i(TAG, "🚕   → [$nodeClass] text='$nodeText', contentDesc='$nodeContentDesc', clickable=${node.isClickable}, bounds=$rect")
+
+                // Use smartClick which tries multiple click strategies including gesture
+                if (smartClick(node)) {
+                    Log.i(TAG, "🚕 ✓✓✓ SUCCESS: SmartClick on '$searchText'")
+                    node.recycle()
+                    return true
+                }
+
+                // Try clicking ancestors up to 5 levels
+                var current = node.parent
+                for (level in 1..5) {
+                    if (current == null) break
+
+                    val ancestorClass = current.className?.toString()?.substringAfterLast(".") ?: ""
+                    val ancestorRect = android.graphics.Rect()
+                    current.getBoundsInScreen(ancestorRect)
+
+                    Log.i(TAG, "🚕     Level $level ancestor: [$ancestorClass] clickable=${current.isClickable}, bounds=$ancestorRect")
+
+                    if (current.isClickable) {
+                        if (smartClick(current)) {
+                            Log.i(TAG, "🚕 ✓✓✓ SUCCESS: SmartClick on ancestor level $level of '$searchText'")
+                            current.recycle()
+                            node.recycle()
+                            return true
+                        }
+                    }
+
+                    val parent = current.parent
+                    current.recycle()
+                    current = parent
+                }
+
+                node.recycle()
+            }
+        }
+
+        // Strategy 2: Find by content description (Button descriptions)
+        Log.i(TAG, "🚕 Strategy 2: Searching by content description...")
+        val buttonDescriptions = listOf(
+            "Tap to enter your destination",
+            "Enter destination",
+            "Where to",
+            "Search for destination"
+        )
+
+        for (desc in buttonDescriptions) {
+            val nodes = rootNode.findAccessibilityNodeInfosByText(desc)
+            for (node in nodes) {
+                Log.i(TAG, "🚕   Found button with desc containing '$desc'")
+                if (smartClick(node)) {
+                    Log.i(TAG, "🚕 ✓✓✓ SUCCESS: SmartClick on button with desc '$desc'")
+                    node.recycle()
+                    return true
+                }
+                node.recycle()
+            }
+        }
+
+        // Strategy 3: Deep traversal looking for any clickable search-like element
+        Log.i(TAG, "🚕 Strategy 3: Deep traversal for clickable search elements...")
+        val found = findDiDiClickableSearchElement(rootNode)
+        if (found) {
+            return true
+        }
+
+        // Strategy 4: Look for EditText with search hints
+        Log.i(TAG, "🚕 Strategy 4: Looking for EditText with search hints...")
+        return findAndClickEditText(rootNode)
+    }
+
+    /**
+     * Deep traversal to find DiDi clickable search/destination elements
+     */
+    private fun findDiDiClickableSearchElement(node: AccessibilityNodeInfo): Boolean {
+        val text = node.text?.toString()?.lowercase() ?: ""
+        val contentDesc = node.contentDescription?.toString()?.lowercase() ?: ""
+        val className = node.className?.toString()?.lowercase() ?: ""
+
+        // Check if this looks like a search/destination element
+        val isSearchLike = text.contains("where") || text.contains("destination") ||
+                           text.contains("search") || text.contains("إلى أين") ||
+                           contentDesc.contains("where") || contentDesc.contains("destination") ||
+                           contentDesc.contains("tap to enter") ||
+                           className.contains("button") || className.contains("searchview")
+
+        if (isSearchLike) {
+            Log.i(TAG, "🚕   Found search-like element: text='${text.take(30)}', clickable=${node.isClickable}")
+
+            // Use smartClick for better reliability
+            if (smartClick(node)) {
+                Log.i(TAG, "🚕 ✓✓✓ SUCCESS: SmartClick on search-like element")
+                return true
+            }
+        }
+
+        // Recursively check children
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (findDiDiClickableSearchElement(child)) {
+                child.recycle()
+                return true
+            }
+            child.recycle()
+        }
+
+        return false
     }
 
     /**
