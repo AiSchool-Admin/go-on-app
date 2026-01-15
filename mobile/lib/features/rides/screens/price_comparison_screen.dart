@@ -812,9 +812,17 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
                                 Expanded(
                                   child: _buildTestButton('DiDi', NativeServicesManager.didiPackage, const Color(0xFFFF6600)),
                                 ),
-                                const SizedBox(width: 4),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            Row(
+                              children: [
                                 Expanded(
                                   child: _buildTestButton('InDriver', NativeServicesManager.indriverPackage, const Color(0xFF2196F3)),
+                                ),
+                                const SizedBox(width: 4),
+                                Expanded(
+                                  child: _buildTestButton('Careem', NativeServicesManager.careemPackage, const Color(0xFF4CAF50)),
                                 ),
                               ],
                             ),
