@@ -206,17 +206,16 @@ class PriceReaderService : AccessibilityService() {
 
     // Track when InDriver "Done" button was clicked - need to wait for real price
     private var inDriverDoneClickedTime = 0L
-    private val INDRIVER_MIN_WAIT_AFTER_DONE_MS = 5000L  // Wait at least 5 seconds after Done click
+    private val INDRIVER_MIN_WAIT_AFTER_DONE_MS = 1500L  // OPTIMIZED: Reduced from 5000ms to 1500ms
 
-    // Track InDriver confirmation clicks (5 clicks needed!)
+    // Track InDriver confirmation clicks (3 clicks usually enough!)
     // InDriver flow after entering coordinates:
     //   1. Map confirm destination → "تم"
     //   2. Map confirm pickup → "تم"
-    //   3. Additional confirm screens → "تم" or "تطبيق"
-    //   4. Final confirm → "تطبيق" or "تأكيد"
-    //   5. THEN "البحث عن عروض" prices screen appears
+    //   3. THEN "البحث عن عروض" prices screen appears
+    // Note: If price screen is detected early, we skip remaining clicks
     private var inDriverDoneClickCount = 0
-    private val INDRIVER_MAX_DONE_CLICKS = 5  // Allow 5 clicks to handle all confirmation screens
+    private val INDRIVER_MAX_DONE_CLICKS = 3  // OPTIMIZED: Reduced from 5 to 3 (usually 2 clicks needed)
 
     // CRITICAL: Block ALL InDriver price detection until automation is complete
     // This prevents the 95 EGP default price from being cached during automation
@@ -607,10 +606,25 @@ class PriceReaderService : AccessibilityService() {
 
                     // CRITICAL: For InDriver, handle price detection specially
                     // Price detection is BLOCKED until automation is complete
-                    // InDriver requires TWO "تم" clicks: destination + pickup
+                    // InDriver: Check if automation is already complete (price screen detected early)
                     if (isInDriver) {
+                        // OPTIMIZATION: If price screen was already detected, skip all waiting!
+                        if (inDriverAutomationComplete) {
+                            Log.i(TAG, "🤖 ✓ InDriver automation already complete - scanning for price NOW!")
+                            val priceInfo = performAggressiveScan(packageName)
+                            if (priceInfo != null && priceInfo.price > 0) {
+                                Log.i(TAG, "🤖 ✓✓✓ InDriver REAL PRICE FOUND: ${priceInfo.price} EGP")
+                                automationState = AutomationState.PRICE_CAPTURED
+                                notifyPriceCaptured(priceInfo)
+                                autoReturnToGoOn()
+                                return
+                            }
+                            // Price not found yet, continue scanning
+                            return
+                        }
+
                         if (onIntermediateScreen) {
-                            Log.d(TAG, "🤖 InDriver on intermediate screen - skipping price acceptance, will retry")
+                            Log.d(TAG, "🤖 InDriver on intermediate screen - will click through")
                             return
                         }
 
@@ -620,20 +634,18 @@ class PriceReaderService : AccessibilityService() {
 
                         if (!doneWaitSatisfied) {
                             if (!bothClicksMade) {
-                                Log.i(TAG, "🤖 ⏳ InDriver waiting for 'تم' clicks ($inDriverDoneClickCount/$INDRIVER_MAX_DONE_CLICKS done)")
+                                Log.i(TAG, "🤖 ⏳ InDriver clicks: $inDriverDoneClickCount/$INDRIVER_MAX_DONE_CLICKS")
                             } else {
-                                Log.i(TAG, "🤖 ⏳ InDriver waiting after PICKUP click (${timeSinceDoneClick}ms < ${INDRIVER_MIN_WAIT_AFTER_DONE_MS}ms)")
+                                Log.i(TAG, "🤖 ⏳ InDriver wait: ${timeSinceDoneClick}ms/${INDRIVER_MIN_WAIT_AFTER_DONE_MS}ms")
                             }
                             return
                         }
 
                         // Both clicks made and wait time satisfied - NOW enable price detection
-                        if (!inDriverAutomationComplete) {
-                            Log.i(TAG, "🤖 ✓ InDriver BOTH clicks done + wait time satisfied - ENABLING price detection!")
-                            inDriverAutomationComplete = true
-                        }
+                        Log.i(TAG, "🤖 ✓ InDriver clicks + wait done - ENABLING price detection!")
+                        inDriverAutomationComplete = true
 
-                        // Now actively scan for price (cache was blocked, so do a fresh scan)
+                        // Now actively scan for price
                         val priceInfo = performAggressiveScan(packageName)
                         if (priceInfo != null && priceInfo.price > 0) {
                             Log.i(TAG, "🤖 ✓✓✓ InDriver REAL PRICE FOUND: ${priceInfo.price} EGP")
@@ -642,8 +654,7 @@ class PriceReaderService : AccessibilityService() {
                             autoReturnToGoOn()
                             return
                         } else {
-                            Log.i(TAG, "🤖 InDriver scanning for price... (automation complete, waiting for detection)")
-                            // Continue waiting for price to appear
+                            Log.i(TAG, "🤖 InDriver scanning for price...")
                             return
                         }
                     }
