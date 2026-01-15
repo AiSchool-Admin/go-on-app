@@ -177,10 +177,9 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
     // Apps that are working (Uber uses deep link, others use full automation)
     final workingApps = [
       {'package': NativeServicesManager.uberPackage, 'name': 'Uber'},
+      {'package': NativeServicesManager.didiPackage, 'name': 'DiDi'},
       {'package': NativeServicesManager.careemPackage, 'name': 'Careem'},
       {'package': NativeServicesManager.indriverPackage, 'name': 'InDriver'},
-      // DiDi disabled temporarily - needs fixing
-      // {'package': NativeServicesManager.didiPackage, 'name': 'DiDi'},
       // Bolt: add when tested
       // {'package': NativeServicesManager.boltPackage, 'name': 'Bolt'},
     ];

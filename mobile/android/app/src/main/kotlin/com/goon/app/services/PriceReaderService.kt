@@ -4350,10 +4350,10 @@ class PriceReaderService : AccessibilityService() {
 
         // Vehicle type keywords - Scooter/Moto are 2-wheelers (excluded from car prices)
         val vehicleTypes = listOf(
-            "UberX Saver" to listOf("uberx saver", "saver"),
-            "Wait & Save" to listOf("wait & save", "wait and save"),
+            "Wait & Save" to listOf("wait & save", "wait and save", "wait&save", "wait save", "انتظر ووفر"),
+            "UberX Saver" to listOf("uberx saver", "saver", "موفر"),
             "UberX" to listOf("uberx", "uber x"),
-            "Comfort" to listOf("comfort"),
+            "Comfort" to listOf("comfort", "كمفورت"),
             "Scooter" to listOf("scooter", "سكوتر"),
             "Uber Moto" to listOf("moto", "موتو"),
             "UberXL" to listOf("uberxl", "xl"),
