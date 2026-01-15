@@ -898,7 +898,7 @@ class PriceReaderService : AccessibilityService() {
                     return true
                 }
 
-                // Try clicking ancestors up to 5 levels
+                // Try clicking ancestors up to 5 levels - TRY ALL, not just clickable ones
                 var current = node.parent
                 for (level in 1..5) {
                     if (current == null) break
@@ -909,6 +909,17 @@ class PriceReaderService : AccessibilityService() {
 
                     Log.i(TAG, "🚕     Level $level ancestor: [$ancestorClass] clickable=${current.isClickable}, bounds=$ancestorRect")
 
+                    // Try ACTION_CLICK even if not marked clickable - some DiDi views respond anyway
+                    Log.i(TAG, "🚕     Trying ACTION_CLICK on ancestor level $level...")
+                    if (current.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        Log.i(TAG, "🚕 ✓✓✓ SUCCESS: ACTION_CLICK on ancestor level $level of '$searchText'")
+                        Thread.sleep(500) // Wait for UI to update
+                        current.recycle()
+                        node.recycle()
+                        return true
+                    }
+
+                    // Also try smartClick (gesture) if marked clickable
                     if (current.isClickable) {
                         if (smartClick(current)) {
                             Log.i(TAG, "🚕 ✓✓✓ SUCCESS: SmartClick on ancestor level $level of '$searchText'")
@@ -956,8 +967,39 @@ class PriceReaderService : AccessibilityService() {
             return true
         }
 
-        // Strategy 4: Look for EditText with search hints
-        Log.i(TAG, "🚕 Strategy 4: Looking for EditText with search hints...")
+        // Strategy 4: Try clicking DiDi's entrance view container by resource ID
+        Log.i(TAG, "🚕 Strategy 4: Looking for DiDi entrance view by resource ID...")
+        val didiContainerIds = listOf(
+            "home_entrance_view_above",
+            "home_entrance_view_new",
+            "xp_cell_container",
+            "xp_scroll_view"
+        )
+        for (containerId in didiContainerIds) {
+            val fullId = "com.didiglobal.passenger:id/$containerId"
+            val containers = rootNode.findAccessibilityNodeInfosByViewId(fullId)
+            if (containers.isNotEmpty()) {
+                Log.i(TAG, "🚕   Found container: $containerId (${containers.size} nodes)")
+                for (container in containers) {
+                    // Try gesture tap at center of container
+                    val rect = android.graphics.Rect()
+                    container.getBoundsInScreen(rect)
+                    if (rect.width() > 100 && rect.height() > 50) {
+                        Log.i(TAG, "🚕   Trying gesture tap on $containerId at center (${rect.centerX()}, ${rect.centerY()})")
+                        if (clickAtPosition(rect.centerX().toFloat(), rect.centerY().toFloat())) {
+                            Log.i(TAG, "🚕 ✓✓✓ SUCCESS: Gesture tap on container $containerId")
+                            Thread.sleep(500)
+                            container.recycle()
+                            return true
+                        }
+                    }
+                    container.recycle()
+                }
+            }
+        }
+
+        // Strategy 5: Look for EditText with search hints
+        Log.i(TAG, "🚕 Strategy 5: Looking for EditText with search hints...")
         return findAndClickEditText(rootNode)
     }
 
