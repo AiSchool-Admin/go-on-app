@@ -444,8 +444,9 @@ class FloatingOverlayService : Service() {
                 layoutType,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                PixelFormat.TRANSLUCENT
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                    WindowManager.LayoutParams.FLAG_FULLSCREEN,
+                PixelFormat.OPAQUE  // OPAQUE for solid black background
             )
 
             windowManager?.addView(fullScreenOverlay, params)
@@ -463,9 +464,9 @@ class FloatingOverlayService : Service() {
     private fun createFullScreenView(): View {
         val density = resources.displayMetrics.density
 
-        // Root container - full screen with dark background
+        // Root container - full screen with SOLID BLACK background (100% opaque)
         val root = FrameLayout(this).apply {
-            setBackgroundColor(0xF5121212.toInt()) // Dark background with slight transparency
+            setBackgroundColor(0xFF000000.toInt()) // SOLID BLACK - completely opaque
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT

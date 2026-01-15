@@ -3234,7 +3234,7 @@ class PriceReaderService : AccessibilityService() {
             // We need to allow both clicks but prevent rapid double-clicking
 
             val timeSinceDoneClick = if (inDriverDoneClickedTime > 0) System.currentTimeMillis() - inDriverDoneClickedTime else Long.MAX_VALUE
-            val minTimeBetweenClicks = 2000L  // Wait at least 2 seconds between clicks
+            val minTimeBetweenClicks = 800L  // OPTIMIZED: Reduced from 2000ms to 800ms for faster navigation
 
             // Check for pickup screen markers (indicates we need second click)
             val isPickupScreen = allText.any {
@@ -4415,18 +4415,32 @@ class PriceReaderService : AccessibilityService() {
             val uniquePrices = prices.distinct().sorted()
 
             // Best price for cars only (exclude Moto which is typically the lowest)
+            // Moto prices are usually < 40 EGP, car prices are usually >= 50 EGP
             val carPrices = vehiclePrices.filterKeys {
                 !it.lowercase().contains("moto")
-            }.values.toList()
+            }.values.filter { it >= 40.0 }.toList()
 
-            val bestPrice = if (carPrices.isNotEmpty()) {
-                carPrices.minOrNull() ?: findBestPrice(prices)
-            } else {
-                findBestPrice(prices)
+            // Also filter out Moto-like prices from the general list
+            // Moto is typically much cheaper than cars (< 40 EGP)
+            val carOnlyPrices = uniquePrices.filter { it >= 40.0 }
+
+            val bestPrice = when {
+                carPrices.isNotEmpty() -> {
+                    // Use identified car prices
+                    carPrices.minOrNull() ?: findBestPrice(carOnlyPrices)
+                }
+                carOnlyPrices.isNotEmpty() -> {
+                    // Use car-range prices (>= 40 EGP)
+                    carOnlyPrices.minOrNull() ?: findBestPrice(prices)
+                }
+                else -> {
+                    // Fallback to all prices
+                    findBestPrice(prices)
+                }
             }
 
             // Log all found prices
-            Log.i(TAG, "🚗 Uber ALL prices found: $uniquePrices, best car price: $bestPrice")
+            Log.i(TAG, "🚗 Uber prices: all=$uniquePrices, cars=$carPrices, carRange=$carOnlyPrices, BEST=$bestPrice")
 
             val priceInfo = PriceInfo(
                 appName = "Uber",
