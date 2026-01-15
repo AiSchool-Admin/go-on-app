@@ -198,7 +198,7 @@ class PriceReaderService : AccessibilityService() {
     private val MAX_RETRIES = 10  // Increased for better reliability
     private var automationStartTime = 0L  // Timestamp when automation started
     private var uberScreenReady = false  // Flag to indicate Uber ride selection screen is loaded
-    private val UBER_MIN_WAIT_MS = 4000L  // OPTIMIZED: Reduced from 8000ms to 4000ms for faster price detection
+    private val UBER_MIN_WAIT_MS = 3000L  // OPTIMIZED: Reduced to 3s for faster detection
     private val UBER_MIN_PRICE = 50.0  // Minimum valid price for Uber
 
     // Track if InDriver destination was successfully entered (to avoid accepting default price)
@@ -206,7 +206,7 @@ class PriceReaderService : AccessibilityService() {
 
     // Track when InDriver "Done" button was clicked - need to wait for real price
     private var inDriverDoneClickedTime = 0L
-    private val INDRIVER_MIN_WAIT_AFTER_DONE_MS = 1500L  // OPTIMIZED: Reduced from 5000ms to 1500ms
+    private val INDRIVER_MIN_WAIT_AFTER_DONE_MS = 1000L  // OPTIMIZED: Reduced to 1s
 
     // Track InDriver confirmation clicks (3 clicks usually enough!)
     // InDriver flow after entering coordinates:
@@ -314,13 +314,13 @@ class PriceReaderService : AccessibilityService() {
                     if (automationState != AutomationState.PRICE_CAPTURED &&
                         automationState != AutomationState.FAILED &&
                         automationState != AutomationState.IDLE) {
-                        scanHandler?.postDelayed(this, 700) // OPTIMIZED: Reduced from 1200ms to 700ms for faster automation
+                        scanHandler?.postDelayed(this, 500) // OPTIMIZED: 500ms for faster automation
                     }
                 }
             }
         }
         // Initial delay to let the app load
-        scanHandler?.postDelayed(scanRunnable!!, 1000) // OPTIMIZED: Reduced from 2000ms to 1000ms
+        scanHandler?.postDelayed(scanRunnable!!, 500) // OPTIMIZED: 500ms initial delay
     }
 
     private fun performAutomationStep(packageName: String) {
@@ -686,7 +686,7 @@ class PriceReaderService : AccessibilityService() {
 
                     // Still no valid prices, check timeout
                     automationStep++
-                    if (elapsedTime > 15000) { // OPTIMIZED: Reduced from 30s to 15s total timeout
+                    if (elapsedTime > 10000) { // OPTIMIZED: 10s total timeout per app
                         // Accept whatever we have if any
                         if (cachedPrice != null && cachedPrice.price > 0) {
                             Log.i(TAG, "🤖 ⏱️ Timeout - accepting available price: ${cachedPrice.price} EGP")
