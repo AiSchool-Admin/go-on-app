@@ -4236,6 +4236,13 @@ class PriceReaderService : AccessibilityService() {
                     continue
                 }
 
+                // CRITICAL: Skip discount values (negative prices like "-EGP 30.00")
+                val trimmedText = text.trim()
+                if (trimmedText.startsWith("-") || trimmedText.startsWith("−")) {
+                    Log.d(TAG, "⏭️ Skipping discount/negative value: '$text'")
+                    continue
+                }
+
                 val price = extractPrice(text)
                 if (price != null && price in 10.0..5000.0) {
                     allPrices.add(price)
@@ -4541,6 +4548,12 @@ class PriceReaderService : AccessibilityService() {
             // Find all prices
             val prices = mutableListOf<Double>()
             for (text in allText) {
+                // Skip discount values (negative prices like "-EGP 30.00")
+                val trimmedText = text.trim()
+                if (trimmedText.startsWith("-") || trimmedText.startsWith("−")) {
+                    continue
+                }
+
                 val price = extractPrice(text)
                 if (price != null && price in 15.0..2000.0) {
                     prices.add(price)
@@ -4897,6 +4910,12 @@ class PriceReaderService : AccessibilityService() {
         val prices = mutableListOf<Double>()
 
         for (text in allText) {
+            // Skip discount values (negative prices like "-EGP 30.00")
+            val trimmedText = text.trim()
+            if (trimmedText.startsWith("-") || trimmedText.startsWith("−")) {
+                continue
+            }
+
             val price = extractPrice(text)
             if (price != null && price in 15.0..2000.0) {
                 prices.add(price)
