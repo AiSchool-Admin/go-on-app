@@ -875,7 +875,8 @@ class FloatingOverlayService : Service() {
             "com.ubercab" -> "Uber"
             "com.careem.acma" -> "Careem"
             "sinet.startup.inDriver" -> "InDriver"
-            "ai.didi.passenger" -> "DiDi"
+            "com.didiglobal.passenger" -> "DiDi"
+            "ee.mtakso.client" -> "Bolt"
             "com.yango.taxi" -> "Yango"
             else -> packageName.split(".").lastOrNull() ?: packageName
         }
@@ -889,7 +890,8 @@ class FloatingOverlayService : Service() {
             "com.ubercab" -> "🚗"
             "com.careem.acma" -> "🚕"
             "sinet.startup.inDriver" -> "🚙"
-            "ai.didi.passenger" -> "🚖"
+            "com.didiglobal.passenger" -> "🚖"
+            "ee.mtakso.client" -> "🚐"
             "com.yango.taxi" -> "🚐"
             else -> "🚗"
         }
