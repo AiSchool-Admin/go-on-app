@@ -361,6 +361,8 @@ class PriceReaderService : AccessibilityService() {
         didiDestinationClickAttempts = 0  // Reset DiDi destination click attempts
         didiSuggestionRetryCount = 0  // Reset DiDi suggestion retry counter
         careemCarButtonClicked = false  // Reset Careem car button flag
+        careemSearchBarClicked = false  // Reset Careem search bar click flag
+        careemSearchBarClickAttempts = 0  // Reset search bar click attempts
         careemPickupFieldClicked = false  // Reset Careem pickup field click flag
         careemPickupEntered = false  // Reset Careem pickup flag
         careemPickupSuggestionClicked = false  // Reset pickup suggestion flag
@@ -1404,6 +1406,8 @@ class PriceReaderService : AccessibilityService() {
 
     // Track Careem state - need to click "سيارة" first before destination
     private var careemCarButtonClicked = false
+    private var careemSearchBarClicked = false   // Track if we clicked the search bar on map view
+    private var careemSearchBarClickAttempts = 0 // Track search bar click attempts for different positions
     private var careemPickupFieldClicked = false  // Track if we clicked the pickup field to open edit mode
     private var careemPickupEntered = false       // Track if we typed the pickup address
     private var careemPickupSuggestionClicked = false  // Track if we clicked a pickup suggestion
@@ -1644,6 +1648,54 @@ class PriceReaderService : AccessibilityService() {
         Log.i(TAG, "🚖 Strategy 4: Deep search for destination-like elements...")
         if (findCareemClickableDestinationElement(rootNode)) {
             return true
+        }
+
+        // Strategy 5: Detect minimal map view and tap on search bar area
+        // This handles the case where Careem shows just the map with a search bar at top
+        val isMinimalMapView = allText.size <= 6 &&
+            allText.any { it.lowercase().contains("careem") || it.lowercase().contains("pay") } &&
+            !allText.any { it.contains("سيارة") || it.contains("Where") || it.contains("إلى أين") }
+
+        if (isMinimalMapView && careemSearchBarClickAttempts < 3) {
+            Log.i(TAG, "🚖 Strategy 5: Detected minimal map view - tapping search bar area (attempt ${careemSearchBarClickAttempts + 1}/3)...")
+            try {
+                val displayMetrics = resources.displayMetrics
+                val screenWidth = displayMetrics.widthPixels
+                val screenHeight = displayMetrics.heightPixels
+
+                // Try different Y positions for the search bar
+                // Attempt 0: 16% from top (typical search bar position)
+                // Attempt 1: 12% from top (higher position for some devices)
+                // Attempt 2: 20% from top (lower position, card-style search)
+                val yPositions = listOf(0.16f, 0.12f, 0.20f)
+                val targetX = (screenWidth * 0.5f).toInt()
+                val targetY = (screenHeight * yPositions[careemSearchBarClickAttempts]).toInt()
+
+                Log.i(TAG, "🚖 Attempting gesture click at ($targetX, $targetY) for search bar")
+
+                val path = android.graphics.Path()
+                path.moveTo(targetX.toFloat(), targetY.toFloat())
+
+                val gesture = android.accessibilityservice.GestureDescription.Builder()
+                    .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 100))
+                    .build()
+
+                dispatchGesture(gesture, object : AccessibilityService.GestureResultCallback() {
+                    override fun onCompleted(gestureDescription: android.accessibilityservice.GestureDescription?) {
+                        Log.i(TAG, "🚖 ✓ Gesture click completed on search bar position")
+                    }
+                    override fun onCancelled(gestureDescription: android.accessibilityservice.GestureDescription?) {
+                        Log.w(TAG, "🚖 Gesture click on search bar cancelled")
+                    }
+                }, null)
+
+                careemSearchBarClickAttempts++
+                careemSearchBarClicked = true
+                Thread.sleep(TimingConfig.animationWait)
+                return true
+            } catch (e: Exception) {
+                Log.e(TAG, "🚖 Strategy 5 gesture click failed: ${e.message}")
+            }
         }
 
         Log.w(TAG, "🚖 ✗ Could not find Careem destination field")
