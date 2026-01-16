@@ -1688,34 +1688,58 @@ class PriceReaderService : AccessibilityService() {
         // STEP 2: We've clicked the field, now try to enter text
         Log.i(TAG, "🚖 STEP 2: Entering pickup address text...")
 
-        // Find focused EditText or input field
-        val focusedInput = findFocusedEditText(rootNode)
-        if (focusedInput != null) {
-            Log.i(TAG, "🚖 Found focused input field")
+        // Find ALL EditText fields
+        val editTexts = mutableListOf<AccessibilityNodeInfo>()
+        findAllEditTexts(rootNode, editTexts)
+
+        Log.i(TAG, "🚖 Found ${editTexts.size} EditText fields")
+
+        // Sort by Y position - pickup field is usually at the TOP
+        val sortedEditTexts = editTexts.sortedBy {
+            val rect = android.graphics.Rect()
+            it.getBoundsInScreen(rect)
+            rect.top
+        }
+
+        // Log all EditTexts with their positions
+        sortedEditTexts.forEachIndexed { index, et ->
+            val rect = android.graphics.Rect()
+            et.getBoundsInScreen(rect)
+            val text = et.text?.toString() ?: ""
+            val hint = et.hintText?.toString() ?: ""
+            Log.i(TAG, "🚖 EditText[$index]: y=${rect.top}, text='$text', hint='$hint'")
+        }
+
+        // Use the FIRST (topmost) EditText - this is the pickup field
+        // Skip if it already has destination text
+        for (editText in sortedEditTexts) {
+            val currentText = editText.text?.toString() ?: ""
+            val rect = android.graphics.Rect()
+            editText.getBoundsInScreen(rect)
+
+            // Skip if this field contains destination-related text
+            val destKeywords = destinationAddress.split(" ").filter { it.length > 3 }
+            val hasDestination = destKeywords.any { currentText.contains(it) }
+
+            if (hasDestination) {
+                Log.i(TAG, "🚖 Skipping field with destination text: '$currentText'")
+                continue
+            }
+
+            Log.i(TAG, "🚖 Using EditText at y=${rect.top} for pickup")
+
+            // Clear existing text first
+            val clearArgs = android.os.Bundle()
+            clearArgs.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "")
+            editText.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, clearArgs)
+            Thread.sleep(100)
 
             // Enter the pickup address
             val arguments = android.os.Bundle()
             arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, pickupAddress)
 
-            if (focusedInput.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)) {
-                Log.i(TAG, "🚖 ✓ Entered pickup address: $pickupAddress")
-                focusedInput.recycle()
-                Thread.sleep(TimingConfig.textInputDelay)
-                return 2 // Text entered successfully
-            }
-            focusedInput.recycle()
-        }
-
-        // Try finding any EditText and enter text
-        val editTexts = mutableListOf<AccessibilityNodeInfo>()
-        findAllEditTexts(rootNode, editTexts)
-
-        for (editText in editTexts) {
-            val arguments = android.os.Bundle()
-            arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, pickupAddress)
-
             if (editText.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)) {
-                Log.i(TAG, "🚖 ✓ Entered pickup via EditText")
+                Log.i(TAG, "🚖 ✓ Entered pickup address: $pickupAddress")
                 editTexts.forEach { try { it.recycle() } catch (e: Exception) {} }
                 Thread.sleep(TimingConfig.textInputDelay)
                 return 2 // Text entered successfully
@@ -1723,6 +1747,24 @@ class PriceReaderService : AccessibilityService() {
         }
 
         editTexts.forEach { try { it.recycle() } catch (e: Exception) {} }
+
+        // Fallback: try focused input
+        val focusedInput = findFocusedEditText(rootNode)
+        if (focusedInput != null) {
+            Log.i(TAG, "🚖 Fallback: Using focused input field")
+
+            val arguments = android.os.Bundle()
+            arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, pickupAddress)
+
+            if (focusedInput.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)) {
+                Log.i(TAG, "🚖 ✓ Entered pickup address via focused field: $pickupAddress")
+                focusedInput.recycle()
+                Thread.sleep(TimingConfig.textInputDelay)
+                return 2 // Text entered successfully
+            }
+            focusedInput.recycle()
+        }
+
         Log.w(TAG, "🚖 ✗ Could not enter pickup address")
         return 0 // Failed
     }
