@@ -1539,14 +1539,9 @@ class PriceReaderService : AccessibilityService() {
                     .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 100))
                     .build()
 
-                dispatchGesture(gesture, object : AccessibilityService.GestureResultCallback() {
-                    override fun onCompleted(gestureDescription: android.accessibilityservice.GestureDescription?) {
-                        Log.i(TAG, "🚖 ✓ Gesture click completed on Car button position")
-                    }
-                    override fun onCancelled(gestureDescription: android.accessibilityservice.GestureDescription?) {
-                        Log.w(TAG, "🚖 Gesture click cancelled")
-                    }
-                }, null)
+                // Use null callback to avoid anonymous class compilation issues
+                dispatchGesture(gesture, null, null)
+                Log.i(TAG, "🚖 ✓ Gesture click dispatched on Car button position")
 
                 careemCarButtonClicked = true
                 Thread.sleep(TimingConfig.animationWait)
@@ -1680,14 +1675,9 @@ class PriceReaderService : AccessibilityService() {
                     .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 100))
                     .build()
 
-                dispatchGesture(gesture, object : AccessibilityService.GestureResultCallback() {
-                    override fun onCompleted(gestureDescription: android.accessibilityservice.GestureDescription?) {
-                        Log.i(TAG, "🚖 ✓ Gesture click completed on search bar position")
-                    }
-                    override fun onCancelled(gestureDescription: android.accessibilityservice.GestureDescription?) {
-                        Log.w(TAG, "🚖 Gesture click on search bar cancelled")
-                    }
-                }, null)
+                // Use null callback to avoid anonymous class compilation issues
+                dispatchGesture(gesture, null, null)
+                Log.i(TAG, "🚖 ✓ Gesture click dispatched on search bar position")
 
                 careemSearchBarClickAttempts++
                 careemSearchBarClicked = true
@@ -2200,14 +2190,9 @@ class PriceReaderService : AccessibilityService() {
             .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 350))
             .build()
 
-        val result = dispatchGesture(gesture, object : AccessibilityService.GestureResultCallback() {
-            override fun onCompleted(gestureDescription: android.accessibilityservice.GestureDescription?) {
-                Log.i(TAG, "🚖 Long gesture completed successfully")
-            }
-            override fun onCancelled(gestureDescription: android.accessibilityservice.GestureDescription?) {
-                Log.w(TAG, "🚖 Long gesture was cancelled")
-            }
-        }, null)
+        // Use null callback to avoid anonymous class compilation issues
+        val result = dispatchGesture(gesture, null, null)
+        Log.i(TAG, "🚖 Long gesture click dispatched, result=$result")
 
         Thread.sleep(1200) // Wait longer for Careem to respond
         return result
@@ -5366,15 +5351,8 @@ class PriceReaderService : AccessibilityService() {
                 )
             )
 
-            val result = dispatchGesture(gestureBuilder.build(), object : AccessibilityService.GestureResultCallback() {
-                override fun onCompleted(gestureDescription: android.accessibilityservice.GestureDescription?) {
-                    Log.i(TAG, "🎯 Gesture completed at ($x, $y) duration=${durationMs}ms")
-                }
-                override fun onCancelled(gestureDescription: android.accessibilityservice.GestureDescription?) {
-                    Log.w(TAG, "🎯 Gesture cancelled at ($x, $y)")
-                }
-            }, null)
-
+            // Use null callback to avoid anonymous class compilation issues
+            val result = dispatchGesture(gestureBuilder.build(), null, null)
             Log.i(TAG, "🎯 dispatchGesture at ($x, $y) duration=${durationMs}ms result: $result")
             return result
         }
@@ -5485,16 +5463,9 @@ class PriceReaderService : AccessibilityService() {
                 .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 150))
                 .build()
 
-            var gestureCompleted = false
-            dispatchGesture(gesture, object : AccessibilityService.GestureResultCallback() {
-                override fun onCompleted(gestureDescription: android.accessibilityservice.GestureDescription?) {
-                    Log.i(TAG, "🚖 ✓ Careem gesture tap COMPLETED at ($centerX, $centerY)")
-                    gestureCompleted = true
-                }
-                override fun onCancelled(gestureDescription: android.accessibilityservice.GestureDescription?) {
-                    Log.w(TAG, "🚖 Careem gesture tap CANCELLED")
-                }
-            }, null)
+            // Use null callback to avoid anonymous class compilation issues
+            dispatchGesture(gesture, null, null)
+            Log.i(TAG, "🚖 Careem gesture tap dispatched at ($centerX, $centerY)")
 
             // Wait longer for Careem to process the tap
             Thread.sleep(800)
