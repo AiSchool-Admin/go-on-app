@@ -120,6 +120,8 @@ class PriceReaderService : AccessibilityService() {
         // App-specific timeouts (less affected by device speed)
         const val UBER_MIN_WAIT_MS = 3000L
         const val DIDI_TIMEOUT_MS = 20000L
+        const val CAREEM_TIMEOUT_MS = 25000L  // Careem needs more time for loading
+        const val CAREEM_LOADER_EXTENSION_MS = 10000L  // Extra time when loader is visible
         const val DEFAULT_TIMEOUT_MS = 12000L
         const val INDRIVER_MIN_WAIT_AFTER_DONE_MS = 1000L  // OPTIMIZED: Reduced for faster detection
 
@@ -359,6 +361,7 @@ class PriceReaderService : AccessibilityService() {
         careemCarButtonClicked = false  // Reset Careem car button flag
         careemPickupFieldClicked = false  // Reset Careem pickup field click flag
         careemPickupEntered = false  // Reset Careem pickup flag
+        careemLoaderFirstSeenTime = 0L  // Reset Careem loader time
         inDriverDestinationEntered = false  // Reset InDriver destination flag
         inDriverDoneClickedTime = 0L  // Reset InDriver Done click time
         inDriverDoneClickCount = 0  // Reset Done click counter (3 clicks needed for InDriver)
@@ -989,9 +992,39 @@ class PriceReaderService : AccessibilityService() {
                     }
 
                     // Still no valid prices, check timeout
-                    // DiDi needs more time, others use default timeout
+                    // DiDi and Careem need more time, others use default timeout
                     automationStep++
-                    val timeoutMs = if (packageName == DIDI_PACKAGE) TimingConfig.DIDI_TIMEOUT_MS else TimingConfig.DEFAULT_TIMEOUT_MS
+
+                    // Determine base timeout
+                    var timeoutMs = when (packageName) {
+                        DIDI_PACKAGE -> TimingConfig.DIDI_TIMEOUT_MS
+                        CAREEM_PACKAGE -> TimingConfig.CAREEM_TIMEOUT_MS
+                        else -> TimingConfig.DEFAULT_TIMEOUT_MS
+                    }
+
+                    // For Careem: Check if loader is visible and extend timeout
+                    if (packageName == CAREEM_PACKAGE) {
+                        val allText = getAllTextFromNode(rootNode)
+                        val hasLoader = allText.any { it.lowercase() == "loader" || it.lowercase().contains("loading") }
+
+                        if (hasLoader) {
+                            // Track when we first see the loader
+                            if (careemLoaderFirstSeenTime == 0L) {
+                                careemLoaderFirstSeenTime = System.currentTimeMillis()
+                                Log.i(TAG, "🚖 Loader detected for the first time - extending timeout")
+                            }
+
+                            val loaderElapsed = System.currentTimeMillis() - careemLoaderFirstSeenTime
+                            // Extend timeout if loader is still visible within reasonable time
+                            if (loaderElapsed < TimingConfig.CAREEM_LOADER_EXTENSION_MS) {
+                                timeoutMs = TimingConfig.CAREEM_TIMEOUT_MS + TimingConfig.CAREEM_LOADER_EXTENSION_MS
+                                Log.i(TAG, "🚖 Loader visible (${loaderElapsed}ms) - timeout extended to ${timeoutMs}ms")
+                            } else {
+                                Log.w(TAG, "🚖 Loader has been visible too long (${loaderElapsed}ms) - proceeding with normal timeout")
+                            }
+                        }
+                    }
+
                     if (elapsedTime > timeoutMs) { // App-specific timeout
                         // Accept whatever we have if any
                         if (cachedPrice != null && cachedPrice.price > 0) {
@@ -1297,6 +1330,7 @@ class PriceReaderService : AccessibilityService() {
     private var careemCarButtonClicked = false
     private var careemPickupFieldClicked = false  // Track if we clicked the pickup field to open edit mode
     private var careemPickupEntered = false       // Track if we typed the pickup address
+    private var careemLoaderFirstSeenTime = 0L   // Track when we first see the loader
 
     /**
      * Find and click Careem destination field
@@ -1966,7 +2000,9 @@ class PriceReaderService : AccessibilityService() {
                 lower.contains("more") || lower.contains("location") ||
                 lower.contains("hospital") || lower.contains("bank") ||
                 lower.contains("shops") || lower.contains("forknife") ||
-                text == "eg" || text == "البيت") continue
+                text == "eg" || text == "البيت" ||
+                text.contains("استخدم موقعي الحالي") || // Skip "Use my current location"
+                text.contains("موقعي الحالي")) continue // Skip current location variations
 
             // Skip distance indicators
             if (text.matches(Regex("^[\\d.,>]+\\s*كم$"))) continue
@@ -2027,6 +2063,7 @@ class PriceReaderService : AccessibilityService() {
 
         // Common confirm button texts in Careem (Arabic and English)
         val confirmTexts = listOf(
+            "تأكيد الانطلاق", // "Confirm pickup" - most important
             "بحث", "Search", "تأكيد", "Confirm", "Done", "تم",
             "بحث عن أفضل سعر", "Find best price", "احجز", "Book",
             "التالي", "Next", "متابعة", "Continue"
