@@ -1797,6 +1797,41 @@ class PriceReaderService : AccessibilityService() {
     }
 
     /**
+     * Find a focused EditText node in the accessibility tree
+     */
+    private fun findFocusedEditText(rootNode: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        // Method 1: Use system focus finder
+        val focusedNode = rootNode.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        if (focusedNode != null) {
+            val className = focusedNode.className?.toString() ?: ""
+            if (className.contains("EditText") || focusedNode.isEditable) {
+                return focusedNode
+            }
+            focusedNode.recycle()
+        }
+
+        // Method 2: Search recursively for focused or editable node
+        fun searchFocused(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+            val className = node.className?.toString() ?: ""
+            if ((className.contains("EditText") || node.isEditable) && node.isFocused) {
+                return AccessibilityNodeInfo.obtain(node)
+            }
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i) ?: continue
+                val found = searchFocused(child)
+                if (found != null) {
+                    child.recycle()
+                    return found
+                }
+                child.recycle()
+            }
+            return null
+        }
+
+        return searchFocused(rootNode)
+    }
+
+    /**
      * Select first pickup suggestion in Careem
      */
     private fun selectCareemPickupSuggestion(rootNode: AccessibilityNodeInfo): Boolean {
@@ -6018,6 +6053,26 @@ class PriceReaderService : AccessibilityService() {
      * Update price and broadcast to app
      */
     private fun updatePrice(priceInfo: PriceInfo) {
+        // CRITICAL: Block price updates for Careem during address selection screens
+        // This prevents reading address numbers (like "389" from "بناء ٣٨٩") as prices
+        if (priceInfo.packageName == CAREEM_PACKAGE) {
+            val blockedStates = listOf(
+                AutomationState.FINDING_DESTINATION_FIELD,
+                AutomationState.ENTERING_DESTINATION,
+                AutomationState.WAITING_FOR_SUGGESTIONS,
+                AutomationState.SELECTING_SUGGESTION
+            )
+            if (automationState in blockedStates) {
+                Log.d(TAG, "🚖 Blocked price update for Careem during ${automationState.name} (price=${priceInfo.price})")
+                return
+            }
+            // Also block if pickup hasn't been entered yet
+            if (!careemPickupEntered) {
+                Log.d(TAG, "🚖 Blocked price update for Careem - pickup not entered yet (price=${priceInfo.price})")
+                return
+            }
+        }
+
         // Store latest price
         latestPrices[priceInfo.packageName] = priceInfo
 
