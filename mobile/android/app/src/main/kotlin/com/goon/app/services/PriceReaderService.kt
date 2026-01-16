@@ -1855,20 +1855,29 @@ class PriceReaderService : AccessibilityService() {
         Log.i(TAG, "🚖 Selecting first pickup suggestion...")
 
         // Strategy 1: Find the first suggestion text element and click it
-        // Look for text elements that look like addresses (contain place names, streets, etc.)
         val firstSuggestion = findFirstCareemSuggestionElement(rootNode)
         if (firstSuggestion != null) {
             val rect = android.graphics.Rect()
             firstSuggestion.getBoundsInScreen(rect)
             Log.i(TAG, "🚖 Found first suggestion element, bounds=${rect}")
 
-            // Click using gesture on this specific element
-            val clicked = careemGestureClick(firstSuggestion)
+            // Try ACTION_CLICK on clickable parent first
+            Log.i(TAG, "🚖 Trying ACTION_CLICK on node or parent...")
+            if (clickNodeOrParent(firstSuggestion)) {
+                Log.i(TAG, "🚖 ✓ ACTION_CLICK succeeded!")
+                firstSuggestion.recycle()
+                Thread.sleep(800)
+                return true
+            }
+
+            // Try gesture click with longer duration
+            Log.i(TAG, "🚖 ACTION_CLICK failed, trying long gesture click...")
+            val clicked = careemGestureClickLong(firstSuggestion)
             firstSuggestion.recycle()
 
             if (clicked) {
-                Log.i(TAG, "🚖 ✓ Clicked first pickup suggestion element")
-                Thread.sleep(TimingConfig.animationWait)
+                Log.i(TAG, "🚖 ✓ Long gesture click succeeded!")
+                Thread.sleep(800)
                 return true
             }
         }
@@ -1881,21 +1890,61 @@ class PriceReaderService : AccessibilityService() {
             collectSuggestions(rootNode, suggestions)
         }
 
-        Log.i(TAG, "🚖 Found ${suggestions.size} pickup suggestions")
+        Log.i(TAG, "🚖 Found ${suggestions.size} pickup suggestions (fallback)")
 
         if (suggestions.isNotEmpty()) {
-            // Click first suggestion using gesture
-            val clicked = careemGestureClick(suggestions[0].first)
+            // Try ACTION_CLICK first
+            if (clickNodeOrParent(suggestions[0].first)) {
+                Log.i(TAG, "🚖 ✓ ACTION_CLICK on fallback suggestion succeeded!")
+                suggestions.forEach { (node, _) -> try { node.recycle() } catch (e: Exception) {} }
+                Thread.sleep(800)
+                return true
+            }
+
+            // Click using gesture with longer duration
+            val clicked = careemGestureClickLong(suggestions[0].first)
             suggestions.forEach { (node, _) -> try { node.recycle() } catch (e: Exception) {} }
 
             if (clicked) {
-                Log.i(TAG, "🚖 ✓ Clicked pickup suggestion")
-                Thread.sleep(TimingConfig.animationWait)
+                Log.i(TAG, "🚖 ✓ Long gesture click on fallback suggestion succeeded!")
+                Thread.sleep(800)
             }
             return clicked
         }
 
         return false
+    }
+
+    /**
+     * Careem gesture click with LONGER duration for better tap recognition
+     */
+    private fun careemGestureClickLong(node: AccessibilityNodeInfo): Boolean {
+        val rect = android.graphics.Rect()
+        node.getBoundsInScreen(rect)
+        val centerX = rect.centerX()
+        val centerY = rect.centerY()
+
+        Log.i(TAG, "🚖 Long gesture click at ($centerX, $centerY)")
+
+        val path = android.graphics.Path()
+        path.moveTo(centerX.toFloat(), centerY.toFloat())
+
+        // Use LONGER duration (350ms) for better tap recognition
+        val gesture = android.accessibilityservice.GestureDescription.Builder()
+            .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 350))
+            .build()
+
+        val result = dispatchGesture(gesture, object : GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) {
+                Log.i(TAG, "🚖 Long gesture completed successfully")
+            }
+            override fun onCancelled(gestureDescription: GestureDescription?) {
+                Log.w(TAG, "🚖 Long gesture was cancelled")
+            }
+        }, null)
+
+        Thread.sleep(1200) // Wait longer for Careem to respond
+        return result
     }
 
     /**
