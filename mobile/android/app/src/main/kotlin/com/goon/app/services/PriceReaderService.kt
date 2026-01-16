@@ -4778,37 +4778,45 @@ class PriceReaderService : AccessibilityService() {
         if (prices.isNotEmpty()) {
             val uniquePrices = prices.distinct().sorted()
 
-            // Best price for CARS only (exclude Scooter/Moto which are 2-wheelers)
-            // 2-wheeler prices are usually < 50 EGP, car prices are usually >= 50 EGP
-            val twoWheelerKeywords = listOf("moto", "scooter", "سكوتر", "موتو")
-            val carPrices = vehiclePrices.filterKeys { key ->
-                val keyLower = key.lowercase()
-                twoWheelerKeywords.none { keyLower.contains(it) }
-            }.values.filter { it >= 45.0 }.toList()
+            // Keywords that identify MOTORCYCLE/SCOOTER options (to be excluded)
+            val motorcycleKeywords = listOf("moto", "scooter", "سكوتر", "موتو")
 
-            // Also filter out 2-wheeler-like prices from the general list
-            // Scooter/Moto are typically much cheaper than cars (< 50 EGP)
-            val carOnlyPrices = uniquePrices.filter { it >= 45.0 }
+            // Filter vehiclePrices to get CAR-ONLY prices (exclude motorcycles BY NAME)
+            val carPrices = vehiclePrices.filterKeys { typeName ->
+                val typeNameLower = typeName.lowercase()
+                motorcycleKeywords.none { keyword -> typeNameLower.contains(keyword) }
+            }
 
+            // Log what we're filtering
+            val motorcyclePrices = vehiclePrices.filterKeys { typeName ->
+                val typeNameLower = typeName.lowercase()
+                motorcycleKeywords.any { keyword -> typeNameLower.contains(keyword) }
+            }
+            if (motorcyclePrices.isNotEmpty()) {
+                Log.i(TAG, "🏍️ Excluded motorcycle prices: $motorcyclePrices")
+            }
+            Log.i(TAG, "🚗 Car prices (after excluding motorcycles): $carPrices")
+
+            // Select best price from CAR options only
             val bestPrice = when {
                 carPrices.isNotEmpty() -> {
-                    // Use the MINIMUM of both identified car prices AND all car-range prices
-                    // This ensures we don't miss options like "UberX Saver" or "Wait & Save"
-                    val allCarPrices = (carPrices + carOnlyPrices).distinct()
-                    allCarPrices.minOrNull() ?: findBestPrice(carOnlyPrices)
+                    // Use the minimum car price
+                    carPrices.values.minOrNull() ?: uniquePrices.minOrNull() ?: 0.0
                 }
-                carOnlyPrices.isNotEmpty() -> {
-                    // Use car-range prices (>= 45 EGP)
-                    carOnlyPrices.minOrNull() ?: findBestPrice(prices)
+                vehiclePrices.isEmpty() -> {
+                    // No vehicle types detected - use all prices (likely no motorcycles on screen)
+                    Log.w(TAG, "⚠️ No vehicle types detected, using all prices")
+                    uniquePrices.minOrNull() ?: 0.0
                 }
                 else -> {
-                    // Fallback to all prices
-                    findBestPrice(prices)
+                    // All detected vehicles are motorcycles? Fallback to all prices
+                    Log.w(TAG, "⚠️ All detected vehicles are motorcycles, using all prices")
+                    uniquePrices.minOrNull() ?: 0.0
                 }
             }
 
             // Log all found prices
-            Log.i(TAG, "🚗 Uber prices: all=$uniquePrices, cars=$carPrices, carRange=$carOnlyPrices, BEST=$bestPrice")
+            Log.i(TAG, "🚗 Uber prices: all=$uniquePrices, carTypes=$carPrices, BEST=$bestPrice")
 
             val priceInfo = PriceInfo(
                 appName = "Uber",
