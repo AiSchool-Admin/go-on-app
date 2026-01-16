@@ -356,6 +356,7 @@ class PriceReaderService : AccessibilityService() {
         inDriverPickupEntered = false  // Reset InDriver pickup flag
         didiDestinationClickAttempts = 0  // Reset DiDi destination click attempts
         didiSuggestionRetryCount = 0  // Reset DiDi suggestion retry counter
+        careemCarButtonClicked = false  // Reset Careem car button flag
         inDriverDestinationEntered = false  // Reset InDriver destination flag
         inDriverDoneClickedTime = 0L  // Reset InDriver Done click time
         inDriverDoneClickCount = 0  // Reset Done click counter (3 clicks needed for InDriver)
@@ -950,6 +951,11 @@ class PriceReaderService : AccessibilityService() {
             return findAndClickDiDiDestinationField(rootNode)
         }
 
+        // Special handling for Careem
+        if (packageName == CAREEM_PACKAGE) {
+            return findAndClickCareemDestinationField(rootNode)
+        }
+
         // App-specific field identifiers - EXPANDED for DiDi
         val searchTexts = when (packageName) {
             UBER_PACKAGE -> listOf("Where to?", "إلى أين؟", "Search", "بحث", "Enter destination", "Where to")
@@ -1196,6 +1202,251 @@ class PriceReaderService : AccessibilityService() {
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
             if (findDiDiClickableSearchElement(child)) {
+                child.recycle()
+                return true
+            }
+            child.recycle()
+        }
+
+        return false
+    }
+
+    // Track Careem state - need to click "سيارة" first before destination
+    private var careemCarButtonClicked = false
+
+    /**
+     * Find and click Careem destination field
+     * Careem's UI flow:
+     * 1. Home screen shows service buttons: "سيارة" (Car), "حول محليا", "طلب المال"
+     * 2. Must click "سيارة" first to get to ride booking screen
+     * 3. Then the destination field appears
+     */
+    private fun findAndClickCareemDestinationField(rootNode: AccessibilityNodeInfo): Boolean {
+        Log.i(TAG, "🚖 ========== CAREEM DESTINATION FIELD SEARCH ==========")
+
+        // Debug: Log ALL visible text on screen
+        Log.i(TAG, "🚖 === ALL VISIBLE TEXT ON CAREEM SCREEN ===")
+        val allText = getAllTextFromNode(rootNode)
+        allText.forEachIndexed { index, text ->
+            Log.i(TAG, "🚖 [$index] '$text'")
+        }
+        Log.i(TAG, "🚖 === END OF VISIBLE TEXT (${allText.size} items) ===")
+
+        // STEP 1: Check if we're on Careem HOME screen (need to click "سيارة" first)
+        val isOnHomeScreen = allText.any {
+            it.contains("Get more with Careem") ||
+            it.contains("أدخل كود الخصم") ||
+            it.contains("استمتع بعروض") ||
+            (it.contains("سيارة") && allText.any { t -> t.contains("حول محليا") || t.contains("طلب المال") })
+        }
+
+        if (isOnHomeScreen && !careemCarButtonClicked) {
+            Log.i(TAG, "🚖 Detected Careem HOME screen - need to click 'سيارة' (Car) button first")
+
+            // Look for "سيارة" button
+            val carButtonTexts = listOf("سيارة", "Car", "Ride", "سياره")
+            for (buttonText in carButtonTexts) {
+                val nodes = rootNode.findAccessibilityNodeInfosByText(buttonText)
+                for (node in nodes) {
+                    Log.i(TAG, "🚖 Found '$buttonText' button, attempting click...")
+
+                    // Try clicking the node or its ancestors
+                    if (smartClick(node)) {
+                        Log.i(TAG, "🚖 ✓ Clicked on '$buttonText' button!")
+                        careemCarButtonClicked = true
+                        node.recycle()
+                        Thread.sleep(TimingConfig.animationWait)
+                        return true // Will retry and find destination field
+                    }
+
+                    // Try ancestors
+                    var current = node.parent
+                    for (level in 1..4) {
+                        if (current == null) break
+                        if (smartClick(current)) {
+                            Log.i(TAG, "🚖 ✓ Clicked on ancestor level $level of '$buttonText'!")
+                            careemCarButtonClicked = true
+                            current.recycle()
+                            node.recycle()
+                            Thread.sleep(TimingConfig.animationWait)
+                            return true
+                        }
+                        val parent = current.parent
+                        current.recycle()
+                        current = parent
+                    }
+                    node.recycle()
+                }
+            }
+
+            Log.w(TAG, "🚖 Could not find 'سيارة' button on home screen")
+            return false
+        }
+
+        // Strategy 1: Look for common Careem destination field texts
+        val careemSearchTexts = listOf(
+            // English
+            "Where to?", "Where to", "Search", "Enter destination",
+            "Search for a place", "Where would you like to go", "Search destination",
+            "Destination", "Drop-off",
+            // Arabic
+            "إلى أين؟", "إلى أين", "وجهتك", "أين تريد الذهاب", "بحث",
+            "ابحث عن مكان", "الوجهة", "نقطة الوصول", "إلى",
+            // Common UI element identifiers
+            "search_destination", "destination_input", "pickup_destination"
+        )
+
+        for (searchText in careemSearchTexts) {
+            val nodes = rootNode.findAccessibilityNodeInfosByText(searchText)
+            if (nodes.isNotEmpty()) {
+                Log.i(TAG, "🚖 Found ${nodes.size} nodes for: '$searchText'")
+                for (node in nodes) {
+                    val nodeText = node.text?.toString() ?: ""
+                    val nodeDesc = node.contentDescription?.toString() ?: ""
+                    val nodeClass = node.className?.toString()?.substringAfterLast(".") ?: ""
+                    Log.i(TAG, "🚖   Node: class=$nodeClass, clickable=${node.isClickable}, text='$nodeText', desc='$nodeDesc'")
+
+                    // Try clicking the node or its ancestors
+                    if (smartClick(node)) {
+                        Log.i(TAG, "🚖 ✓✓✓ SUCCESS: Clicked on '$searchText'")
+                        node.recycle()
+                        return true
+                    }
+
+                    // Try ancestors up to 3 levels
+                    var current = node.parent
+                    for (level in 1..3) {
+                        if (current == null) break
+                        if (current.isClickable) {
+                            if (current.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                                Log.i(TAG, "🚖 ✓✓✓ SUCCESS: Clicked on ancestor level $level of '$searchText'")
+                                current.recycle()
+                                node.recycle()
+                                return true
+                            }
+                        }
+                        val parent = current.parent
+                        current.recycle()
+                        current = parent
+                    }
+                    node.recycle()
+                }
+            }
+        }
+
+        // Strategy 2: Look for EditText or input fields
+        Log.i(TAG, "🚖 Strategy 2: Looking for EditText/input fields...")
+        if (findAndClickCareemInputField(rootNode)) {
+            return true
+        }
+
+        // Strategy 3: Look by resource ID patterns
+        Log.i(TAG, "🚖 Strategy 3: Looking by resource IDs...")
+        val careemResourceIds = listOf(
+            "com.careem.acma:id/search_destination",
+            "com.careem.acma:id/destination_input",
+            "com.careem.acma:id/where_to",
+            "com.careem.acma:id/pickup_destination_view",
+            "com.careem.acma:id/destination_text",
+            "com.careem.acma:id/search_box",
+            "com.careem.acma:id/destination",
+            "com.careem.acma:id/et_destination",
+            "com.careem.acma:id/tv_destination"
+        )
+
+        for (resourceId in careemResourceIds) {
+            val nodes = rootNode.findAccessibilityNodeInfosByViewId(resourceId)
+            if (nodes.isNotEmpty()) {
+                Log.i(TAG, "🚖 Found node by ID: $resourceId")
+                val node = nodes[0]
+                if (smartClick(node)) {
+                    Log.i(TAG, "🚖 ✓✓✓ SUCCESS: Clicked on resource ID '$resourceId'")
+                    nodes.forEach { it.recycle() }
+                    return true
+                }
+                nodes.forEach { it.recycle() }
+            }
+        }
+
+        // Strategy 4: Click on any view that looks like destination entry
+        Log.i(TAG, "🚖 Strategy 4: Deep search for destination-like elements...")
+        if (findCareemClickableDestinationElement(rootNode)) {
+            return true
+        }
+
+        Log.w(TAG, "🚖 ✗ Could not find Careem destination field")
+        return false
+    }
+
+    /**
+     * Find and click EditText or input fields in Careem
+     */
+    private fun findAndClickCareemInputField(node: AccessibilityNodeInfo): Boolean {
+        val className = node.className?.toString()?.lowercase() ?: ""
+        val text = node.text?.toString()?.lowercase() ?: ""
+        val hint = node.hintText?.toString()?.lowercase() ?: ""
+        val desc = node.contentDescription?.toString()?.lowercase() ?: ""
+
+        // Check if this is an input field related to destination
+        val isInputField = className.contains("edittext") || className.contains("textinputedittext")
+        val isDestinationRelated = text.contains("where") || text.contains("destination") ||
+                                    text.contains("إلى") || text.contains("وجهة") ||
+                                    hint.contains("where") || hint.contains("destination") ||
+                                    hint.contains("search") || hint.contains("بحث") ||
+                                    desc.contains("where") || desc.contains("destination")
+
+        if (isInputField || isDestinationRelated) {
+            Log.i(TAG, "🚖   Found input field: class=$className, text='${text.take(30)}'")
+            if (smartClick(node)) {
+                Log.i(TAG, "🚖 ✓✓✓ SUCCESS: Clicked on input field")
+                return true
+            }
+        }
+
+        // Check children
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (findAndClickCareemInputField(child)) {
+                child.recycle()
+                return true
+            }
+            child.recycle()
+        }
+
+        return false
+    }
+
+    /**
+     * Deep search for Careem destination-like clickable elements
+     */
+    private fun findCareemClickableDestinationElement(node: AccessibilityNodeInfo): Boolean {
+        val text = node.text?.toString()?.lowercase() ?: ""
+        val desc = node.contentDescription?.toString()?.lowercase() ?: ""
+        val className = node.className?.toString()?.lowercase() ?: ""
+
+        // Keywords that indicate destination/search elements
+        val destinationKeywords = listOf(
+            "where", "destination", "search", "drop", "going",
+            "إلى", "وجهة", "بحث", "أين"
+        )
+
+        val matchesKeyword = destinationKeywords.any { keyword ->
+            text.contains(keyword) || desc.contains(keyword)
+        }
+
+        // Check if clickable and matches keywords
+        if (matchesKeyword && (node.isClickable || className.contains("button") || className.contains("view"))) {
+            Log.i(TAG, "🚖   Found destination-like element: text='${text.take(30)}', clickable=${node.isClickable}")
+            if (smartClick(node)) {
+                Log.i(TAG, "🚖 ✓✓✓ SUCCESS: Clicked on destination-like element")
+                return true
+            }
+        }
+
+        // Check children
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (findCareemClickableDestinationElement(child)) {
                 child.recycle()
                 return true
             }
