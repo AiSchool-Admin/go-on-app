@@ -890,20 +890,28 @@ class PriceReaderService : AccessibilityService() {
                                     }
                                 }
                             } else {
-                                // Pickup was entered but we're still on suggestion screen
-                                // This means the suggestion click didn't work or there's a confirm button
-                                Log.i(TAG, "🚖 Pickup entered but still on suggestion screen - trying to click suggestion or confirm")
+                                // Pickup was entered but we're still on pickup-related screen
+                                Log.i(TAG, "🚖 Pickup entered - checking for confirm button or suggestions")
 
-                                // Try clicking the first pickup suggestion
-                                if (selectCareemPickupSuggestion(rootNode)) {
-                                    Log.i(TAG, "🚖 ✓ Re-clicked pickup suggestion")
-                                    return
+                                // PRIORITY 1: Check if we're on map confirmation screen (has تأكيد الانطلاق)
+                                // This should be clicked FIRST before trying suggestions
+                                val hasConfirmButton = allText.any { it.contains("تأكيد الانطلاق") || it.contains("تأكيد") }
+                                if (hasConfirmButton) {
+                                    Log.i(TAG, "🚖 Confirm button visible - clicking it first!")
+                                    if (clickCareemConfirmButton(rootNode)) {
+                                        Log.i(TAG, "🚖 ✓ Clicked confirm button")
+                                        return
+                                    }
                                 }
 
-                                // Try clicking confirm/search button
-                                if (clickCareemConfirmButton(rootNode)) {
-                                    Log.i(TAG, "🚖 ✓ Clicked confirm/search button")
-                                    return
+                                // PRIORITY 2: Only try selecting suggestions if NO confirm button visible
+                                // and we're on a suggestion screen (has distance indicators)
+                                if (hasSuggestionDistances) {
+                                    Log.i(TAG, "🚖 On suggestion screen - trying to select suggestion")
+                                    if (selectCareemPickupSuggestion(rootNode)) {
+                                        Log.i(TAG, "🚖 ✓ Selected pickup suggestion")
+                                        return
+                                    }
                                 }
                             }
 
