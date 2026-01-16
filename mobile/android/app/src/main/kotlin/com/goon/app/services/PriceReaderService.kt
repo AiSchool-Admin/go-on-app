@@ -2921,12 +2921,16 @@ class PriceReaderService : AccessibilityService() {
             }
         }
 
-        // If we found a match with score > 0, click it using SMART CLICK
+        // If we found a match with score > 0, click it
         if (bestMatch != null && bestScore > 0) {
             Log.i(TAG, "✓✓ SELECTED: '$bestText' (score: $bestScore)")
 
-            // Use smart click (gesture-based) for reliability
-            val clicked = smartClick(bestMatch)
+            // For Careem: use gesture-only click with longer delay (ACTION_CLICK doesn't work)
+            val clicked = if (packageName == CAREEM_PACKAGE) {
+                careemGestureClick(bestMatch)
+            } else {
+                smartClick(bestMatch)
+            }
 
             // Recycle all nodes
             suggestions.forEach { (node, _) ->
@@ -2940,8 +2944,12 @@ class PriceReaderService : AccessibilityService() {
         if (suggestions.isNotEmpty()) {
             Log.i(TAG, "⚠️ Fallback: selecting '${suggestions[0].second}'")
 
-            // Use smart click (gesture-based) for reliability
-            val clicked = smartClick(suggestions[0].first)
+            // For Careem: use gesture-only click
+            val clicked = if (packageName == CAREEM_PACKAGE) {
+                careemGestureClick(suggestions[0].first)
+            } else {
+                smartClick(suggestions[0].first)
+            }
 
             suggestions.forEach { (node, _) ->
                 try { node.recycle() } catch (e: Exception) {}
@@ -4585,6 +4593,54 @@ class PriceReaderService : AccessibilityService() {
         // Return true optimistically - we tried everything
         Log.i(TAG, "🎯 Attempted all click strategies")
         return true
+    }
+
+    /**
+     * Special click for Careem suggestions - uses ONLY gesture tap
+     * ACTION_CLICK doesn't work on Careem suggestion rows
+     */
+    private fun careemGestureClick(node: AccessibilityNodeInfo): Boolean {
+        val rect = android.graphics.Rect()
+        node.getBoundsInScreen(rect)
+        val centerX = rect.centerX()
+        val centerY = rect.centerY()
+
+        Log.i(TAG, "🚖 Careem gesture click at ($centerX, $centerY), bounds=$rect")
+
+        // Validate coordinates
+        if (centerX <= 0 || centerY <= 0 || rect.width() < 50 || rect.height() < 20) {
+            Log.w(TAG, "🚖 Invalid bounds for Careem click")
+            return false
+        }
+
+        // Use gesture tap directly (ACTION_CLICK doesn't work on Careem)
+        try {
+            val path = android.graphics.Path()
+            path.moveTo(centerX.toFloat(), centerY.toFloat())
+
+            val gesture = android.accessibilityservice.GestureDescription.Builder()
+                .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 150))
+                .build()
+
+            var gestureCompleted = false
+            dispatchGesture(gesture, object : AccessibilityService.GestureResultCallback() {
+                override fun onCompleted(gestureDescription: android.accessibilityservice.GestureDescription?) {
+                    Log.i(TAG, "🚖 ✓ Careem gesture tap COMPLETED at ($centerX, $centerY)")
+                    gestureCompleted = true
+                }
+                override fun onCancelled(gestureDescription: android.accessibilityservice.GestureDescription?) {
+                    Log.w(TAG, "🚖 Careem gesture tap CANCELLED")
+                }
+            }, null)
+
+            // Wait longer for Careem to process the tap
+            Thread.sleep(800)
+            Log.i(TAG, "🚖 Careem click attempted, waiting for screen change...")
+            return true
+        } catch (e: Exception) {
+            Log.e(TAG, "🚖 Careem gesture click failed: ${e.message}")
+            return false
+        }
     }
 
     /**
