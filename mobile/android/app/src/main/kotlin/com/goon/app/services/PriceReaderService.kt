@@ -2876,6 +2876,11 @@ class PriceReaderService : AccessibilityService() {
             collectDiDiSuggestions(rootNode, suggestions)
         }
 
+        // Also try Careem-specific suggestion collection
+        if (suggestions.isEmpty() && packageName == CAREEM_PACKAGE) {
+            collectCareemSuggestions(rootNode, suggestions)
+        }
+
         Log.i(TAG, "📋 Found ${suggestions.size} suggestions:")
         suggestions.forEachIndexed { index, (_, text) ->
             Log.i(TAG, "   [$index] '$text'")
@@ -3174,6 +3179,89 @@ class PriceReaderService : AccessibilityService() {
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
             collectSuggestions(child, suggestions)
+            child.recycle()
+        }
+    }
+
+    /**
+     * Collect suggestions specifically for Careem's destination search results
+     * Careem shows suggestions with: location name, address, and distance (e.g., "3.1 كم")
+     */
+    private fun collectCareemSuggestions(node: AccessibilityNodeInfo, suggestions: MutableList<Pair<AccessibilityNodeInfo, String>>) {
+        val className = node.className?.toString() ?: ""
+        val text = node.text?.toString() ?: ""
+        val desc = node.contentDescription?.toString() ?: ""
+
+        // Skip UI elements that are not suggestions
+        val isUIElement = text.lowercase().let {
+            it == "pay" || it == "careem" || it.contains("navigation") ||
+            it.contains("menu") || it.contains("البيت") || it.contains("home") ||
+            it.contains("morevertical") || it.contains("location") ||
+            it.contains("pickUp") || it.contains("dropoff")
+        }
+
+        // Skip very short text or UI elements
+        if (text.isNotBlank() && text.length > 3 && !isUIElement) {
+            // Look for clickable items with location-like text
+            // Careem suggestions typically have: address text with street names or place names
+            val isLocationText = text.contains("شارع") || // Street
+                                text.contains("Street") ||
+                                text.contains("مصر") || // Egypt
+                                text.contains("القاهرة") || // Cairo
+                                text.contains("الجيزة") || // Giza
+                                text.contains("محافظة") || // Governorate
+                                text.contains("مدينة") || // City
+                                text.contains("-") || // Address separator
+                                text.contains(",") || // Address separator
+                                text.matches(Regex(".*\\d+.*")) // Contains numbers (street/building)
+
+            // Also detect distance indicators (كم = km)
+            val isDistanceIndicator = text.matches(Regex(".*\\d+\\.?\\d*\\s*كم.*"))
+
+            // If it's a location text and the node or parent is clickable
+            if (isLocationText && !isDistanceIndicator) {
+                // Try to find a clickable parent (suggestions are usually in clickable rows)
+                var clickableNode: AccessibilityNodeInfo? = null
+                var current: AccessibilityNodeInfo? = node
+
+                // Check if current node is clickable
+                if (node.isClickable) {
+                    clickableNode = node
+                } else {
+                    // Search up to 4 levels for a clickable parent
+                    for (level in 1..4) {
+                        val parent = current?.parent
+                        if (parent != null) {
+                            if (parent.isClickable) {
+                                clickableNode = parent
+                                break
+                            }
+                            current = parent
+                        } else {
+                            break
+                        }
+                    }
+                }
+
+                if (clickableNode != null) {
+                    // Get all text from the clickable node to form the full suggestion
+                    val fullText = getNodeText(clickableNode)
+                    if (fullText.isNotBlank() && fullText.length > 5) {
+                        // Avoid duplicates
+                        val alreadyAdded = suggestions.any { it.second == fullText }
+                        if (!alreadyAdded) {
+                            suggestions.add(Pair(AccessibilityNodeInfo.obtain(clickableNode), fullText))
+                            Log.i(TAG, "🚖 Careem suggestion: '$fullText'")
+                        }
+                    }
+                }
+            }
+        }
+
+        // Recurse into children
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            collectCareemSuggestions(child, suggestions)
             child.recycle()
         }
     }
