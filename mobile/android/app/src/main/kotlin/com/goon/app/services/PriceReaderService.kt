@@ -2518,7 +2518,14 @@ class PriceReaderService : AccessibilityService() {
             try { node.recycle() } catch (e: Exception) {}
         }
 
-        // Fallback: find any clickable item
+        // CRITICAL FIX: For DiDi, DON'T use clickFirstMatchingSuggestion fallback
+        // It clicks random elements and causes DiDi to go back to home screen
+        if (packageName == DIDI_PACKAGE) {
+            Log.w(TAG, "⚠️ DiDi: No suggestions found, NOT clicking random elements")
+            return false
+        }
+
+        // Fallback: find any clickable item (only for non-DiDi apps)
         return clickFirstMatchingSuggestion(rootNode)
     }
 
