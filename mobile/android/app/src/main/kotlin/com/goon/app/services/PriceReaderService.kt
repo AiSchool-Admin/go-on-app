@@ -1968,35 +1968,89 @@ class PriceReaderService : AccessibilityService() {
             }
         }
 
-        // Strategy 2: Fallback to collecting suggestions
-        val suggestions = mutableListOf<Pair<AccessibilityNodeInfo, String>>()
-        collectCareemSuggestions(rootNode, suggestions)
+        // Strategy 2: Fallback to collecting suggestions WITH FILTERING
+        val allSuggestions = mutableListOf<Pair<AccessibilityNodeInfo, String>>()
+        collectCareemSuggestions(rootNode, allSuggestions)
 
-        if (suggestions.isEmpty()) {
-            collectSuggestions(rootNode, suggestions)
+        if (allSuggestions.isEmpty()) {
+            collectSuggestions(rootNode, allSuggestions)
         }
 
-        Log.i(TAG, "🚖 Found ${suggestions.size} pickup suggestions (fallback)")
+        Log.i(TAG, "🚖 Found ${allSuggestions.size} total suggestions (fallback)")
 
-        if (suggestions.isNotEmpty()) {
+        // CRITICAL: Filter using UNIQUE keywords to avoid conflicts with shared words
+        val pickupKeywords = pickupAddress.split(" ").filter { it.length > 2 }
+        val destKeywords = destinationAddress.split(" ").filter { it.length > 2 }
+
+        // Find keywords UNIQUE to destination (not shared with pickup)
+        val destOnlyKeywords = destKeywords.filter { destKw ->
+            !pickupKeywords.any { pickKw ->
+                destKw.contains(pickKw) || pickKw.contains(destKw) || destKw == pickKw
+            }
+        }
+        // Find keywords UNIQUE to pickup (not shared with destination)
+        val pickupOnlyKeywords = pickupKeywords.filter { pickKw ->
+            !destKeywords.any { destKw ->
+                destKw.contains(pickKw) || pickKw.contains(destKw) || destKw == pickKw
+            }
+        }
+
+        Log.i(TAG, "🚖 Filtering - pickup unique: $pickupOnlyKeywords, dest unique: $destOnlyKeywords")
+
+        val filteredSuggestions = allSuggestions.filter { (_, text) ->
+            // SKIP if contains destination-UNIQUE keyword
+            val hasDestOnlyKeyword = destOnlyKeywords.any { text.contains(it) }
+            if (hasDestOnlyKeyword) {
+                Log.i(TAG, "🚖 Skipping (has dest keyword): '$text'")
+                return@filter false
+            }
+
+            // INCLUDE if matches any pickup keyword
+            val hasAnyPickupKeyword = pickupKeywords.isEmpty() || pickupKeywords.any { text.contains(it) }
+            if (!hasAnyPickupKeyword) {
+                Log.i(TAG, "🚖 Skipping (no pickup keyword): '$text'")
+                return@filter false
+            }
+
+            // Prefer suggestions with pickup-UNIQUE keywords
+            val hasPickupOnlyKeyword = pickupOnlyKeywords.any { text.contains(it) }
+            if (hasPickupOnlyKeyword) {
+                Log.i(TAG, "🚖 Including (has pickup-unique keyword): '$text'")
+            }
+
+            true
+        }.sortedByDescending { (_, text) ->
+            // Sort by pickup-unique keyword matches (best matches first)
+            pickupOnlyKeywords.count { text.contains(it) }
+        }
+
+        Log.i(TAG, "🚖 After filtering: ${filteredSuggestions.size} valid pickup suggestions")
+
+        if (filteredSuggestions.isNotEmpty()) {
+            val (bestNode, bestText) = filteredSuggestions[0]
+            Log.i(TAG, "🚖 Selected pickup suggestion: '$bestText'")
+
             // Try ACTION_CLICK first
-            if (clickNodeOrParent(suggestions[0].first)) {
-                Log.i(TAG, "🚖 ✓ ACTION_CLICK on fallback suggestion succeeded!")
-                suggestions.forEach { (node, _) -> try { node.recycle() } catch (e: Exception) {} }
+            if (clickNodeOrParent(bestNode)) {
+                Log.i(TAG, "🚖 ✓ ACTION_CLICK on pickup suggestion succeeded!")
+                allSuggestions.forEach { (node, _) -> try { node.recycle() } catch (e: Exception) {} }
                 Thread.sleep(800)
                 return true
             }
 
             // Click using gesture with longer duration
-            val clicked = careemGestureClickLong(suggestions[0].first)
-            suggestions.forEach { (node, _) -> try { node.recycle() } catch (e: Exception) {} }
+            val clicked = careemGestureClickLong(bestNode)
+            allSuggestions.forEach { (node, _) -> try { node.recycle() } catch (e: Exception) {} }
 
             if (clicked) {
-                Log.i(TAG, "🚖 ✓ Long gesture click on fallback suggestion succeeded!")
+                Log.i(TAG, "🚖 ✓ Long gesture click on pickup suggestion succeeded!")
                 Thread.sleep(800)
             }
             return clicked
         }
+
+        // If no filtered suggestions, recycle all and return false
+        allSuggestions.forEach { (node, _) -> try { node.recycle() } catch (e: Exception) {} }
 
         return false
     }
@@ -2069,20 +2123,35 @@ class PriceReaderService : AccessibilityService() {
             // Skip plus codes
             if (text.matches(Regex("^[A-Z0-9]+\\+[A-Z0-9]+.*"))) continue
 
-            // CRITICAL: Skip if this suggestion matches DESTINATION keywords
-            // This prevents clicking on destination suggestions when we're looking for pickup
-            val matchesDestination = destKeywords.any { keyword ->
-                text.contains(keyword) && !pickupKeywords.any { text.contains(it) }
+            // CRITICAL: Check if this matches destination-UNIQUE keywords
+            // Find keywords that are ONLY in destination, not in pickup
+            val destOnlyKeywords = destKeywords.filter { destKw ->
+                !pickupKeywords.any { pickKw ->
+                    destKw.contains(pickKw) || pickKw.contains(destKw) || destKw == pickKw
+                }
             }
-            if (matchesDestination) {
-                Log.i(TAG, "🚖 Skipping destination suggestion: '$text'")
+            val pickupOnlyKeywords = pickupKeywords.filter { pickKw ->
+                !destKeywords.any { destKw ->
+                    destKw.contains(pickKw) || pickKw.contains(destKw) || destKw == pickKw
+                }
+            }
+
+            Log.d(TAG, "🚖 Unique keywords - pickup: $pickupOnlyKeywords, dest: $destOnlyKeywords")
+
+            // Skip if text contains destination-UNIQUE keywords
+            val hasDestOnlyKeyword = destOnlyKeywords.any { text.contains(it) }
+            if (hasDestOnlyKeyword) {
+                Log.i(TAG, "🚖 Skipping - contains destination keyword: '$text'")
                 continue
             }
 
-            // Check if this matches pickup keywords
-            val matchesPickup = pickupKeywords.any { text.contains(it) }
-            if (!matchesPickup && pickupKeywords.isNotEmpty()) {
-                // If we have pickup keywords but this doesn't match, skip it
+            // Prefer texts that contain pickup-UNIQUE keywords
+            val hasPickupOnlyKeyword = pickupOnlyKeywords.any { text.contains(it) }
+            val hasAnyPickupKeyword = pickupKeywords.any { text.contains(it) }
+
+            // Skip if we have pickup keywords but text doesn't match any
+            if (pickupKeywords.isNotEmpty() && !hasAnyPickupKeyword) {
+                Log.d(TAG, "🚖 Skipping - no pickup keyword match: '$text'")
                 continue
             }
 
