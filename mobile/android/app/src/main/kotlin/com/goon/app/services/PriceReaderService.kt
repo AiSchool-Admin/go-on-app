@@ -1849,11 +1849,31 @@ class PriceReaderService : AccessibilityService() {
 
     /**
      * Select first pickup suggestion in Careem
+     * Clicks directly on the first suggestion's text element to avoid large parent containers
      */
     private fun selectCareemPickupSuggestion(rootNode: AccessibilityNodeInfo): Boolean {
         Log.i(TAG, "🚖 Selecting first pickup suggestion...")
 
-        // Collect suggestions
+        // Strategy 1: Find the first suggestion text element and click it
+        // Look for text elements that look like addresses (contain place names, streets, etc.)
+        val firstSuggestion = findFirstCareemSuggestionElement(rootNode)
+        if (firstSuggestion != null) {
+            val rect = android.graphics.Rect()
+            firstSuggestion.getBoundsInScreen(rect)
+            Log.i(TAG, "🚖 Found first suggestion element, bounds=${rect}")
+
+            // Click using gesture on this specific element
+            val clicked = careemGestureClick(firstSuggestion)
+            firstSuggestion.recycle()
+
+            if (clicked) {
+                Log.i(TAG, "🚖 ✓ Clicked first pickup suggestion element")
+                Thread.sleep(TimingConfig.animationWait)
+                return true
+            }
+        }
+
+        // Strategy 2: Fallback to collecting suggestions
         val suggestions = mutableListOf<Pair<AccessibilityNodeInfo, String>>()
         collectCareemSuggestions(rootNode, suggestions)
 
@@ -1876,6 +1896,78 @@ class PriceReaderService : AccessibilityService() {
         }
 
         return false
+    }
+
+    /**
+     * Find the first suggestion element in Careem's pickup suggestions list
+     * Returns the actual text element, not the parent container
+     */
+    private fun findFirstCareemSuggestionElement(rootNode: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val allText = getAllTextFromNode(rootNode)
+
+        // Find the first element that looks like an address
+        // Skip: pickUp, البيت, distances (كم), icons, etc.
+        for (text in allText) {
+            if (text.isBlank() || text.length < 5) continue
+
+            val lower = text.lowercase()
+            // Skip UI elements
+            if (lower == "pickup" || lower == "dropoff" ||
+                lower.contains("back") || lower.contains("arrow") ||
+                lower.contains("more") || lower.contains("location") ||
+                lower.contains("hospital") || lower.contains("bank") ||
+                lower.contains("shops") || lower.contains("forknife") ||
+                text == "eg" || text == "البيت") continue
+
+            // Skip distance indicators
+            if (text.matches(Regex("^[\\d.,>]+\\s*كم$"))) continue
+
+            // Skip plus codes
+            if (text.matches(Regex("^[A-Z0-9]+\\+[A-Z0-9]+.*"))) continue
+
+            // This might be an address - try to find it
+            val node = findNodeWithExactText(rootNode, text)
+            if (node != null) {
+                val rect = android.graphics.Rect()
+                node.getBoundsInScreen(rect)
+
+                // Validate bounds - should be reasonable size (not full screen)
+                val width = rect.width()
+                val height = rect.height()
+                if (width > 100 && width < 1200 && height > 30 && height < 300) {
+                    Log.i(TAG, "🚖 Found suggestion element: '$text' at ${rect}")
+                    return node
+                }
+                node.recycle()
+            }
+        }
+
+        return null
+    }
+
+    /**
+     * Find node with exact text match (not contains)
+     */
+    private fun findNodeWithExactText(root: AccessibilityNodeInfo, targetText: String): AccessibilityNodeInfo? {
+        fun search(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+            val nodeText = node.text?.toString() ?: ""
+            if (nodeText == targetText) {
+                return AccessibilityNodeInfo.obtain(node)
+            }
+
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i) ?: continue
+                val found = search(child)
+                if (found != null) {
+                    child.recycle()
+                    return found
+                }
+                child.recycle()
+            }
+            return null
+        }
+
+        return search(root)
     }
 
     /**
