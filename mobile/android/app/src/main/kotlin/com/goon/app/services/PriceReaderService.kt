@@ -1934,11 +1934,11 @@ class PriceReaderService : AccessibilityService() {
             .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 350))
             .build()
 
-        val result = dispatchGesture(gesture, object : GestureResultCallback() {
-            override fun onCompleted(gestureDescription: GestureDescription?) {
+        val result = dispatchGesture(gesture, object : AccessibilityService.GestureResultCallback() {
+            override fun onCompleted(gestureDescription: android.accessibilityservice.GestureDescription?) {
                 Log.i(TAG, "🚖 Long gesture completed successfully")
             }
-            override fun onCancelled(gestureDescription: GestureDescription?) {
+            override fun onCancelled(gestureDescription: android.accessibilityservice.GestureDescription?) {
                 Log.w(TAG, "🚖 Long gesture was cancelled")
             }
         }, null)
@@ -5055,7 +5055,7 @@ class PriceReaderService : AccessibilityService() {
                 )
             )
 
-            val result = dispatchGesture(gestureBuilder.build(), object : GestureResultCallback() {
+            val result = dispatchGesture(gestureBuilder.build(), object : AccessibilityService.GestureResultCallback() {
                 override fun onCompleted(gestureDescription: android.accessibilityservice.GestureDescription?) {
                     Log.i(TAG, "🎯 Gesture completed at ($x, $y) duration=${durationMs}ms")
                 }
