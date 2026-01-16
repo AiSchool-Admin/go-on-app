@@ -691,10 +691,29 @@ class PriceReaderService : AccessibilityService() {
                         val stillOnSelectAddress = allText.any {
                             it.lowercase().contains("select address") ||
                             it.lowercase().contains("اختر العنوان") ||
+                            it.lowercase().contains("حدد العنوان") ||  // "Select the address" in Arabic variant
                             it.lowercase().contains("pin your location")
                         }
-                        if (stillOnSelectAddress) {
-                            Log.i(TAG, "🤖 📋 DiDi still on 'Select Address' - waiting...")
+
+                        // Check if "Where to?" field is visible (means we're on address entry screen)
+                        val hasWhereToField = allText.any { it.lowercase() == "where to?" }
+
+                        if (stillOnSelectAddress || hasWhereToField) {
+                            Log.i(TAG, "🤖 📋 DiDi still on address selection screen")
+
+                            // Check if there's a suggestion visible that we should click
+                            val hasSuggestion = allText.any {
+                                it.contains("km") || it.contains("كم") ||
+                                it.contains("street") || it.contains("شارع")
+                            }
+
+                            if (hasSuggestion) {
+                                Log.w(TAG, "🚕 DiDi has suggestion visible - going back to SELECTING_SUGGESTION")
+                                automationState = AutomationState.SELECTING_SUGGESTION
+                                automationRetries = 0
+                                return
+                            }
+
                             onIntermediateScreen = true
                         }
 
