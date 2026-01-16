@@ -897,8 +897,54 @@ class PriceReaderService : AccessibilityService() {
                                 // Pickup was entered but we're still on pickup-related screen
                                 Log.i(TAG, "🚖 Pickup entered - checking state (suggClicked=$careemPickupSuggestionClicked, attempts=$careemPickupClickAttempts)")
 
-                                // PRIORITY 1: Check if we're on map confirmation screen (has تأكيد الانطلاق)
-                                // Look for multiple confirm button variations
+                                // CRITICAL CHECK: Are BOTH pickup and destination already filled?
+                                // If pickup address appears in header area (not suggestions), we need to proceed
+                                val pickupKeywords = pickupAddress.split(" ").filter { it.length > 2 }
+                                val destKeywords = destinationAddress.split(" ").filter { it.length > 2 }
+                                val pickupFilledInHeader = allText.any { text ->
+                                    pickupKeywords.any { text.contains(it) } &&
+                                    !text.matches(Regex(".*\\d+\\.?\\d*\\s*كم.*")) // Not a suggestion with distance
+                                }
+                                val destFilledInHeader = allText.any { text ->
+                                    destKeywords.any { text.contains(it) } &&
+                                    !text.matches(Regex(".*\\d+\\.?\\d*\\s*كم.*"))
+                                }
+
+                                Log.i(TAG, "🚖 Both filled? pickup=$pickupFilledInHeader, dest=$destFilledInHeader")
+
+                                // PRIORITY 1: If both addresses are filled, look for proceed button
+                                if (pickupFilledInHeader && destFilledInHeader) {
+                                    Log.i(TAG, "🚖 Both addresses filled - looking for proceed/search button")
+
+                                    // Try clicking Map icon or search button to proceed
+                                    val proceedTexts = listOf(
+                                        "Map icon", "map", "بحث", "Search", "Done", "تم",
+                                        "بحث عن أفضل سعر", "Find best price", "التالي", "Next",
+                                        "تأكيد", "Confirm", "احجز", "Book"
+                                    )
+
+                                    for (proceedText in proceedTexts) {
+                                        val proceedNode = findNodeWithText(rootNode, proceedText)
+                                        if (proceedNode != null) {
+                                            Log.i(TAG, "🚖 Found proceed button: '$proceedText'")
+                                            if (careemGestureClick(proceedNode)) {
+                                                Log.i(TAG, "🚖 ✓ Clicked '$proceedText' to proceed")
+                                                proceedNode.recycle()
+                                                Thread.sleep(1000)
+                                                return
+                                            }
+                                            proceedNode.recycle()
+                                        }
+                                    }
+
+                                    // Also try the confirm button function
+                                    if (clickCareemConfirmButton(rootNode)) {
+                                        Log.i(TAG, "🚖 ✓ Clicked confirm button to proceed")
+                                        return
+                                    }
+                                }
+
+                                // PRIORITY 2: Check if we're on map confirmation screen (has تأكيد الانطلاق)
                                 val confirmTexts = listOf("تأكيد الانطلاق", "تأكيد موقع الانطلاق", "Confirm pickup")
                                 val hasConfirmButton = allText.any { text ->
                                     confirmTexts.any { confirm -> text.contains(confirm) }
@@ -908,26 +954,25 @@ class PriceReaderService : AccessibilityService() {
                                     Log.i(TAG, "🚖 Confirm button visible - clicking it!")
                                     if (clickCareemConfirmButton(rootNode)) {
                                         Log.i(TAG, "🚖 ✓ Clicked confirm button - should proceed to price")
-                                        careemPickupSuggestionClicked = false // Reset for next time
+                                        careemPickupSuggestionClicked = false
                                         careemPickupClickAttempts = 0
                                         return
                                     }
                                 }
 
-                                // PRIORITY 2: If we already clicked suggestion multiple times, try clicking confirm anyway
+                                // PRIORITY 3: If we already clicked suggestion multiple times, try different approach
                                 if (careemPickupSuggestionClicked && careemPickupClickAttempts >= 3) {
                                     Log.i(TAG, "🚖 Already clicked suggestion $careemPickupClickAttempts times - trying confirm button anyway")
                                     if (clickCareemConfirmButton(rootNode)) {
                                         Log.i(TAG, "🚖 ✓ Clicked confirm button (after multiple attempts)")
                                         return
                                     }
-                                    // Also try clicking a different area (maybe close button or continue)
-                                    Log.i(TAG, "🚖 Trying alternative buttons...")
-                                    careemPickupClickAttempts = 0 // Reset to try suggestions again
+                                    Log.i(TAG, "🚖 Resetting attempts to try again...")
+                                    careemPickupClickAttempts = 0
                                 }
 
-                                // PRIORITY 3: Try selecting suggestion if we haven't clicked too many times
-                                if (hasSuggestionDistances && careemPickupClickAttempts < 5) {
+                                // PRIORITY 4: Try selecting suggestion only if pickup NOT already in header
+                                if (hasSuggestionDistances && !pickupFilledInHeader && careemPickupClickAttempts < 5) {
                                     Log.i(TAG, "🚖 On suggestion screen - trying to select suggestion (attempt ${careemPickupClickAttempts + 1})")
                                     if (selectCareemPickupSuggestion(rootNode)) {
                                         careemPickupSuggestionClicked = true
