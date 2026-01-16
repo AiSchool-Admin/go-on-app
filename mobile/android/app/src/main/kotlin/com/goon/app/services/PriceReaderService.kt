@@ -45,9 +45,11 @@ class PriceReaderService : AccessibilityService() {
             // EGP formats
             Pattern.compile("EGP\\s*(\\d+[.,]?\\d*)", Pattern.CASE_INSENSITIVE),
             Pattern.compile("(\\d+[.,]?\\d*)\\s*EGP", Pattern.CASE_INSENSITIVE),
-            // ج.م formats (Egyptian Arabic)
-            Pattern.compile("ج\\.?م\\.?\\s*(\\d+[.,]?\\d*)"),
-            Pattern.compile("(\\d+[.,]?\\d*)\\s*ج\\.?م\\.?"),
+            // ج.م formats (Egyptian Arabic) - including RTL mark \u200F
+            Pattern.compile("ج\\.?م\\.?[\\s\\u200F\\u200E]*(\\d+[.,]?\\d*)"),
+            Pattern.compile("(\\d+[.,]?\\d*)[\\s\\u200F\\u200E]*ج\\.?م\\.?"),
+            // Careem specific format: ج.م.‏ XX.XX (with RTL mark)
+            Pattern.compile("ج\\.م\\.?\\u200F?\\s*(\\d+[.,]\\d{2})"),
             // جنيه (Guinee)
             Pattern.compile("جنيه\\s*(\\d+[.,]?\\d*)"),
             Pattern.compile("(\\d+[.,]?\\d*)\\s*جنيه"),
@@ -5441,7 +5443,22 @@ class PriceReaderService : AccessibilityService() {
                     continue
                 }
 
-                val price = extractPrice(text)
+                var price = extractPrice(text)
+
+                // Special handling for Careem format: "ج.م.‏ XX.XX"
+                // The RTL mark and space may not be matched by standard patterns
+                if (price == null && currentPackage == CAREEM_PACKAGE && text.contains("ج.م")) {
+                    // Extract just the numeric part from Careem price format
+                    val careemPricePattern = Pattern.compile("(\\d+[.,]\\d{2})")
+                    val matcher = careemPricePattern.matcher(text)
+                    if (matcher.find()) {
+                        price = matcher.group(1)?.replace(",", ".")?.toDoubleOrNull()
+                        if (price != null) {
+                            Log.i(TAG, "🚖 Careem special extraction: $price from '$text'")
+                        }
+                    }
+                }
+
                 if (price != null && price in 10.0..5000.0) {
                     allPrices.add(price)
                     priceTexts.add(text)
