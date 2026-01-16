@@ -357,6 +357,7 @@ class PriceReaderService : AccessibilityService() {
         didiDestinationClickAttempts = 0  // Reset DiDi destination click attempts
         didiSuggestionRetryCount = 0  // Reset DiDi suggestion retry counter
         careemCarButtonClicked = false  // Reset Careem car button flag
+        careemPickupFieldClicked = false  // Reset Careem pickup field click flag
         careemPickupEntered = false  // Reset Careem pickup flag
         inDriverDestinationEntered = false  // Reset InDriver destination flag
         inDriverDoneClickedTime = 0L  // Reset InDriver Done click time
@@ -830,6 +831,8 @@ class PriceReaderService : AccessibilityService() {
                     // CRITICAL: For Careem, check if we're on pickup screen instead of price screen
                     if (packageName == CAREEM_PACKAGE) {
                         val allText = getAllTextFromNode(rootNode)
+                        Log.i(TAG, "🚖 Careem WAITING_FOR_PRICE - checking screen type")
+                        Log.i(TAG, "🚖 All text (first 20): ${allText.take(20)}")
 
                         // Detect if Careem is showing PICKUP search screen
                         // Indicators: "pickUp" element, "البيت" (Home), pickup suggestions
@@ -844,31 +847,43 @@ class PriceReaderService : AccessibilityService() {
                         // Check if we have distance indicators (كم) - means we're on suggestions screen, not price screen
                         val hasSuggestionDistances = allText.count { it.matches(Regex(".*\\d+\\.?\\d*\\s*كم.*")) } > 2
 
+                        Log.i(TAG, "🚖 isOnPickupScreen=$isOnPickupScreen, hasSuggestionDistances=$hasSuggestionDistances")
+
                         if (isOnPickupScreen || hasSuggestionDistances) {
                             Log.i(TAG, "🚖 Careem is on PICKUP screen (not price screen) - need to enter pickup address")
+                            Log.i(TAG, "🚖 State: pickupFieldClicked=$careemPickupFieldClicked, pickupEntered=$careemPickupEntered")
 
                             // Check if pickup entry is already done
                             if (!careemPickupEntered) {
                                 Log.i(TAG, "🚖 Entering pickup address: $pickupAddress")
 
-                                // Try to find and click on a pickup suggestion
-                                // The pickup field should already be focused since we're on this screen
-                                val pickupEntered = enterCareemPickupAddress(rootNode)
-                                if (pickupEntered) {
-                                    careemPickupEntered = true
-                                    Log.i(TAG, "🚖 ✓ Pickup address entered, waiting for suggestions...")
-                                    // Go back to WAITING_FOR_SUGGESTIONS to select the pickup suggestion
-                                    automationState = AutomationState.WAITING_FOR_SUGGESTIONS
-                                    automationRetries = 0
-                                    automationStep = 0
-                                    return
-                                } else {
-                                    Log.w(TAG, "🚖 Failed to enter pickup - trying to select first suggestion")
-                                    // Try clicking first suggestion directly
-                                    if (selectCareemPickupSuggestion(rootNode)) {
-                                        careemPickupEntered = true
-                                        Log.i(TAG, "🚖 ✓ Selected pickup suggestion directly")
+                                // Try to enter the pickup address
+                                // enterCareemPickupAddress returns: 0=failed, 1=clicked field, 2=entered text
+                                val result = enterCareemPickupAddress(rootNode)
+                                when (result) {
+                                    1 -> {
+                                        // Just clicked the pickup field, wait for edit mode
+                                        Log.i(TAG, "🚖 ⏳ Clicked pickup field, waiting for edit mode...")
                                         return
+                                    }
+                                    2 -> {
+                                        // Text entered successfully
+                                        careemPickupEntered = true
+                                        Log.i(TAG, "🚖 ✓ Pickup address entered, waiting for suggestions...")
+                                        // Go back to WAITING_FOR_SUGGESTIONS to select the pickup suggestion
+                                        automationState = AutomationState.WAITING_FOR_SUGGESTIONS
+                                        automationRetries = 0
+                                        automationStep = 0
+                                        return
+                                    }
+                                    else -> {
+                                        Log.w(TAG, "🚖 Failed to enter pickup - trying to select first suggestion")
+                                        // Try clicking first suggestion directly
+                                        if (selectCareemPickupSuggestion(rootNode)) {
+                                            careemPickupEntered = true
+                                            Log.i(TAG, "🚖 ✓ Selected pickup suggestion directly")
+                                            return
+                                        }
                                     }
                                 }
                             }
@@ -1264,7 +1279,8 @@ class PriceReaderService : AccessibilityService() {
 
     // Track Careem state - need to click "سيارة" first before destination
     private var careemCarButtonClicked = false
-    private var careemPickupEntered = false
+    private var careemPickupFieldClicked = false  // Track if we clicked the pickup field to open edit mode
+    private var careemPickupEntered = false       // Track if we typed the pickup address
 
     /**
      * Find and click Careem destination field
@@ -1586,11 +1602,31 @@ class PriceReaderService : AccessibilityService() {
 
     /**
      * Enter Careem pickup address
-     * Called when Careem is showing the pickup search screen
+     * Called when Careem is showing the pickup/confirmation screen
+     * First clicks on the pickup field to open edit mode, then enters the address
+     * Returns: 0 = failed, 1 = clicked field (need to wait), 2 = entered text successfully
      */
-    private fun enterCareemPickupAddress(rootNode: AccessibilityNodeInfo): Boolean {
+    private fun enterCareemPickupAddress(rootNode: AccessibilityNodeInfo): Int {
         Log.i(TAG, "🚖 ========== CAREEM PICKUP ADDRESS ENTRY ==========")
         Log.i(TAG, "🚖 Pickup to enter: $pickupAddress")
+        Log.i(TAG, "🚖 State: fieldClicked=$careemPickupFieldClicked, entered=$careemPickupEntered")
+
+        // STEP 1: If we haven't clicked the field yet, try to click it
+        if (!careemPickupFieldClicked) {
+            Log.i(TAG, "🚖 STEP 1: Clicking pickup field to open edit mode...")
+            val clicked = clickCareemPickupField(rootNode)
+            if (clicked) {
+                Log.i(TAG, "🚖 ✓ Clicked pickup field - waiting for edit mode...")
+                careemPickupFieldClicked = true
+                Thread.sleep(800) // Wait for edit mode to open
+                return 1 // Clicked field, will re-enter on next cycle
+            }
+            Log.w(TAG, "🚖 ✗ Could not click pickup field")
+            // Try entering text directly anyway
+        }
+
+        // STEP 2: We've clicked the field, now try to enter text
+        Log.i(TAG, "🚖 STEP 2: Entering pickup address text...")
 
         // Find focused EditText or input field
         val focusedInput = findFocusedEditText(rootNode)
@@ -1605,7 +1641,7 @@ class PriceReaderService : AccessibilityService() {
                 Log.i(TAG, "🚖 ✓ Entered pickup address: $pickupAddress")
                 focusedInput.recycle()
                 Thread.sleep(TimingConfig.textInputDelay)
-                return true
+                return 2 // Text entered successfully
             }
             focusedInput.recycle()
         }
@@ -1622,13 +1658,142 @@ class PriceReaderService : AccessibilityService() {
                 Log.i(TAG, "🚖 ✓ Entered pickup via EditText")
                 editTexts.forEach { try { it.recycle() } catch (e: Exception) {} }
                 Thread.sleep(TimingConfig.textInputDelay)
-                return true
+                return 2 // Text entered successfully
             }
         }
 
         editTexts.forEach { try { it.recycle() } catch (e: Exception) {} }
         Log.w(TAG, "🚖 ✗ Could not enter pickup address")
+        return 0 // Failed
+    }
+
+    /**
+     * Click on Careem pickup field to open editing mode
+     * Searches for "pickUp", "البيت", "Home" or the pickup row and clicks it
+     */
+    private fun clickCareemPickupField(rootNode: AccessibilityNodeInfo): Boolean {
+        Log.i(TAG, "🚖 Looking for pickup field to click...")
+
+        // Strategy 1: Find node with "pickUp" text and click it or its parent
+        val pickupNode = findNodeWithText(rootNode, "pickUp")
+        if (pickupNode != null) {
+            Log.i(TAG, "🚖 Found 'pickUp' node")
+            // Try clicking the node or its clickable parent
+            if (clickNodeOrParent(pickupNode)) {
+                Log.i(TAG, "🚖 ✓ Clicked 'pickUp' node")
+                pickupNode.recycle()
+                return true
+            }
+            // Try gesture click
+            if (careemGestureClick(pickupNode)) {
+                Log.i(TAG, "🚖 ✓ Gesture clicked 'pickUp' node")
+                pickupNode.recycle()
+                return true
+            }
+            pickupNode.recycle()
+        }
+
+        // Strategy 2: Find "البيت" (Home) node - this is the current pickup location
+        val homeNode = findNodeWithText(rootNode, "البيت")
+        if (homeNode != null) {
+            Log.i(TAG, "🚖 Found 'البيت' (Home) node")
+            if (clickNodeOrParent(homeNode)) {
+                Log.i(TAG, "🚖 ✓ Clicked 'البيت' node")
+                homeNode.recycle()
+                return true
+            }
+            if (careemGestureClick(homeNode)) {
+                Log.i(TAG, "🚖 ✓ Gesture clicked 'البيت' node")
+                homeNode.recycle()
+                return true
+            }
+            homeNode.recycle()
+        }
+
+        // Strategy 3: Find any row with pickup-related content
+        val allText = getAllTextFromNode(rootNode)
+        Log.i(TAG, "🚖 All text on screen: $allText")
+
+        // Try finding a ViewGroup or Row that contains pickup info
+        val clickableNodes = findClickableNodesNear(rootNode, listOf("pickUp", "Pickup", "البيت", "Home", "من أين"))
+        for (node in clickableNodes) {
+            Log.i(TAG, "🚖 Trying to click pickup-related node...")
+            if (careemGestureClick(node)) {
+                Log.i(TAG, "🚖 ✓ Gesture clicked pickup-related node")
+                clickableNodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                return true
+            }
+        }
+        clickableNodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+
+        Log.w(TAG, "🚖 ✗ Could not find pickup field to click")
         return false
+    }
+
+    /**
+     * Click a node or find its clickable parent and click that
+     */
+    private fun clickNodeOrParent(node: AccessibilityNodeInfo): Boolean {
+        // Try clicking the node itself
+        if (node.isClickable) {
+            if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                return true
+            }
+        }
+
+        // Try finding clickable parent
+        var parent = node.parent
+        var depth = 0
+        while (parent != null && depth < 5) {
+            if (parent.isClickable) {
+                val clicked = parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                parent.recycle()
+                if (clicked) return true
+            }
+            val grandparent = parent.parent
+            parent.recycle()
+            parent = grandparent
+            depth++
+        }
+        parent?.recycle()
+
+        return false
+    }
+
+    /**
+     * Find clickable nodes that are near elements with specified text
+     */
+    private fun findClickableNodesNear(root: AccessibilityNodeInfo, targetTexts: List<String>): List<AccessibilityNodeInfo> {
+        val results = mutableListOf<AccessibilityNodeInfo>()
+
+        fun searchNode(node: AccessibilityNodeInfo) {
+            val nodeText = node.text?.toString() ?: ""
+            val nodeDesc = node.contentDescription?.toString() ?: ""
+            val combined = "$nodeText $nodeDesc"
+
+            // If this node contains target text, add it and clickable ancestors
+            if (targetTexts.any { combined.contains(it, ignoreCase = true) }) {
+                if (node.isClickable) {
+                    results.add(AccessibilityNodeInfo.obtain(node))
+                }
+                // Also check parent
+                var parent = node.parent
+                if (parent != null && parent.isClickable) {
+                    results.add(AccessibilityNodeInfo.obtain(parent))
+                    parent.recycle()
+                }
+            }
+
+            // Recurse
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i) ?: continue
+                searchNode(child)
+                child.recycle()
+            }
+        }
+
+        searchNode(root)
+        return results
     }
 
     /**
