@@ -246,6 +246,10 @@ class PriceReaderService : AccessibilityService() {
     private var didiDestinationClickAttempts = 0
     private val DIDI_MAX_DESTINATION_ATTEMPTS = 10
 
+    // Track DiDi suggestion retry from WAITING_FOR_PRICE (to prevent infinite loops)
+    private var didiSuggestionRetryCount = 0
+    private val DIDI_MAX_SUGGESTION_RETRIES = 3
+
     /**
      * FULLY AUTOMATED PRICE FETCH
      * Opens app, enters destination, captures price, returns to GO-ON
@@ -280,6 +284,7 @@ class PriceReaderService : AccessibilityService() {
         uberScreenReady = false  // Reset screen ready flag
         inDriverPickupEntered = false  // Reset InDriver pickup flag
         didiDestinationClickAttempts = 0  // Reset DiDi destination click attempts
+        didiSuggestionRetryCount = 0  // Reset DiDi suggestion retry counter
         inDriverDestinationEntered = false  // Reset InDriver destination flag
         inDriverDoneClickedTime = 0L  // Reset InDriver Done click time
         inDriverDoneClickCount = 0  // Reset Done click counter (3 clicks needed for InDriver)
@@ -627,6 +632,7 @@ class PriceReaderService : AccessibilityService() {
                             automationRetries = 0
                             automationStep = 0
                             didiDestinationClickAttempts = 0
+                            didiSuggestionRetryCount = 0
                             return
                         }
 
@@ -701,17 +707,23 @@ class PriceReaderService : AccessibilityService() {
                         if (stillOnSelectAddress || hasWhereToField) {
                             Log.i(TAG, "🤖 📋 DiDi still on address selection screen")
 
-                            // Check if there's a suggestion visible that we should click
-                            val hasSuggestion = allText.any {
-                                it.contains("km") || it.contains("كم") ||
-                                it.contains("street") || it.contains("شارع")
+                            // Check if there's a REAL suggestion visible (with distance indicator)
+                            // Must have "km" or "كم" to be a real suggestion
+                            val hasRealSuggestion = allText.any {
+                                val lower = it.lowercase()
+                                (lower.contains("km") && !lower.contains("bookmark")) ||
+                                it.contains("كم")
                             }
 
-                            if (hasSuggestion) {
-                                Log.w(TAG, "🚕 DiDi has suggestion visible - going back to SELECTING_SUGGESTION")
+                            // Only retry if we have a real suggestion AND haven't exceeded retry limit
+                            if (hasRealSuggestion && didiSuggestionRetryCount < DIDI_MAX_SUGGESTION_RETRIES) {
+                                didiSuggestionRetryCount++
+                                Log.w(TAG, "🚕 DiDi has suggestion visible - retry $didiSuggestionRetryCount/$DIDI_MAX_SUGGESTION_RETRIES")
                                 automationState = AutomationState.SELECTING_SUGGESTION
                                 automationRetries = 0
                                 return
+                            } else if (didiSuggestionRetryCount >= DIDI_MAX_SUGGESTION_RETRIES) {
+                                Log.w(TAG, "🚕 DiDi suggestion retry limit reached - waiting for timeout")
                             }
 
                             onIntermediateScreen = true
@@ -730,6 +742,7 @@ class PriceReaderService : AccessibilityService() {
                             automationRetries = 0
                             automationStep = 0
                             didiDestinationClickAttempts = 0
+                            didiSuggestionRetryCount = 0
                             return
                         }
                     }
