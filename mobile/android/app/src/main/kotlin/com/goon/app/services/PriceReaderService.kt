@@ -357,6 +357,7 @@ class PriceReaderService : AccessibilityService() {
         didiDestinationClickAttempts = 0  // Reset DiDi destination click attempts
         didiSuggestionRetryCount = 0  // Reset DiDi suggestion retry counter
         careemCarButtonClicked = false  // Reset Careem car button flag
+        careemPickupEntered = false  // Reset Careem pickup flag
         inDriverDestinationEntered = false  // Reset InDriver destination flag
         inDriverDoneClickedTime = 0L  // Reset InDriver Done click time
         inDriverDoneClickCount = 0  // Reset Done click counter (3 clicks needed for InDriver)
@@ -826,6 +827,56 @@ class PriceReaderService : AccessibilityService() {
                         }
                     }
 
+                    // CRITICAL: For Careem, check if we're on pickup screen instead of price screen
+                    if (packageName == CAREEM_PACKAGE) {
+                        val allText = getAllTextFromNode(rootNode)
+
+                        // Detect if Careem is showing PICKUP search screen
+                        // Indicators: "pickUp" element, "البيت" (Home), pickup suggestions
+                        val isOnPickupScreen = allText.any {
+                            val lower = it.lowercase()
+                            lower == "pickup" || it == "pickUp" ||
+                            it.contains("ادخل وجهتك") || // "Enter your destination" - still on entry screen
+                            it.contains("استخدم موقعي الحالي") || // "Use my current location"
+                            (it.contains("البيت") && allText.any { t -> t.contains("كم") }) // Home + distance indicators
+                        }
+
+                        // Check if we have distance indicators (كم) - means we're on suggestions screen, not price screen
+                        val hasSuggestionDistances = allText.count { it.matches(Regex(".*\\d+\\.?\\d*\\s*كم.*")) } > 2
+
+                        if (isOnPickupScreen || hasSuggestionDistances) {
+                            Log.i(TAG, "🚖 Careem is on PICKUP screen (not price screen) - need to enter pickup address")
+
+                            // Check if pickup entry is already done
+                            if (!careemPickupEntered) {
+                                Log.i(TAG, "🚖 Entering pickup address: $pickupAddress")
+
+                                // Try to find and click on a pickup suggestion
+                                // The pickup field should already be focused since we're on this screen
+                                val pickupEntered = enterCareemPickupAddress(rootNode)
+                                if (pickupEntered) {
+                                    careemPickupEntered = true
+                                    Log.i(TAG, "🚖 ✓ Pickup address entered, waiting for suggestions...")
+                                    // Go back to WAITING_FOR_SUGGESTIONS to select the pickup suggestion
+                                    automationState = AutomationState.WAITING_FOR_SUGGESTIONS
+                                    automationRetries = 0
+                                    automationStep = 0
+                                    return
+                                } else {
+                                    Log.w(TAG, "🚖 Failed to enter pickup - trying to select first suggestion")
+                                    // Try clicking first suggestion directly
+                                    if (selectCareemPickupSuggestion(rootNode)) {
+                                        careemPickupEntered = true
+                                        Log.i(TAG, "🚖 ✓ Selected pickup suggestion directly")
+                                        return
+                                    }
+                                }
+                            }
+
+                            onIntermediateScreen = true
+                        }
+                    }
+
                     // CRITICAL: For InDriver, handle price detection specially
                     // Price detection is BLOCKED until automation is complete
                     // InDriver: Check if automation is already complete (price screen detected early)
@@ -1213,6 +1264,7 @@ class PriceReaderService : AccessibilityService() {
 
     // Track Careem state - need to click "سيارة" first before destination
     private var careemCarButtonClicked = false
+    private var careemPickupEntered = false
 
     /**
      * Find and click Careem destination field
@@ -1530,6 +1582,101 @@ class PriceReaderService : AccessibilityService() {
         }
 
         return false
+    }
+
+    /**
+     * Enter Careem pickup address
+     * Called when Careem is showing the pickup search screen
+     */
+    private fun enterCareemPickupAddress(rootNode: AccessibilityNodeInfo): Boolean {
+        Log.i(TAG, "🚖 ========== CAREEM PICKUP ADDRESS ENTRY ==========")
+        Log.i(TAG, "🚖 Pickup to enter: $pickupAddress")
+
+        // Find focused EditText or input field
+        val focusedInput = findFocusedEditText(rootNode)
+        if (focusedInput != null) {
+            Log.i(TAG, "🚖 Found focused input field")
+
+            // Enter the pickup address
+            val arguments = android.os.Bundle()
+            arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, pickupAddress)
+
+            if (focusedInput.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)) {
+                Log.i(TAG, "🚖 ✓ Entered pickup address: $pickupAddress")
+                focusedInput.recycle()
+                Thread.sleep(TimingConfig.textInputDelay)
+                return true
+            }
+            focusedInput.recycle()
+        }
+
+        // Try finding any EditText and enter text
+        val editTexts = mutableListOf<AccessibilityNodeInfo>()
+        findAllEditTexts(rootNode, editTexts)
+
+        for (editText in editTexts) {
+            val arguments = android.os.Bundle()
+            arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, pickupAddress)
+
+            if (editText.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)) {
+                Log.i(TAG, "🚖 ✓ Entered pickup via EditText")
+                editTexts.forEach { try { it.recycle() } catch (e: Exception) {} }
+                Thread.sleep(TimingConfig.textInputDelay)
+                return true
+            }
+        }
+
+        editTexts.forEach { try { it.recycle() } catch (e: Exception) {} }
+        Log.w(TAG, "🚖 ✗ Could not enter pickup address")
+        return false
+    }
+
+    /**
+     * Select first pickup suggestion in Careem
+     */
+    private fun selectCareemPickupSuggestion(rootNode: AccessibilityNodeInfo): Boolean {
+        Log.i(TAG, "🚖 Selecting first pickup suggestion...")
+
+        // Collect suggestions
+        val suggestions = mutableListOf<Pair<AccessibilityNodeInfo, String>>()
+        collectCareemSuggestions(rootNode, suggestions)
+
+        if (suggestions.isEmpty()) {
+            collectSuggestions(rootNode, suggestions)
+        }
+
+        Log.i(TAG, "🚖 Found ${suggestions.size} pickup suggestions")
+
+        if (suggestions.isNotEmpty()) {
+            // Click first suggestion using gesture
+            val clicked = careemGestureClick(suggestions[0].first)
+            suggestions.forEach { (node, _) -> try { node.recycle() } catch (e: Exception) {} }
+
+            if (clicked) {
+                Log.i(TAG, "🚖 ✓ Clicked pickup suggestion")
+                Thread.sleep(TimingConfig.animationWait)
+            }
+            return clicked
+        }
+
+        return false
+    }
+
+    /**
+     * Find all EditText nodes in the tree
+     */
+    private fun findAllEditTexts(node: AccessibilityNodeInfo, results: MutableList<AccessibilityNodeInfo>) {
+        val className = node.className?.toString() ?: ""
+
+        if (className.contains("EditText")) {
+            results.add(AccessibilityNodeInfo.obtain(node))
+        }
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            findAllEditTexts(child, results)
+            child.recycle()
+        }
     }
 
     /**
