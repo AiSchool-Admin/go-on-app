@@ -363,6 +363,8 @@ class PriceReaderService : AccessibilityService() {
         careemCarButtonClicked = false  // Reset Careem car button flag
         careemPickupFieldClicked = false  // Reset Careem pickup field click flag
         careemPickupEntered = false  // Reset Careem pickup flag
+        careemPickupSuggestionClicked = false  // Reset pickup suggestion flag
+        careemPickupClickAttempts = 0  // Reset pickup click attempts
         careemLoaderFirstSeenTime = 0L  // Reset Careem loader time
         inDriverDestinationEntered = false  // Reset InDriver destination flag
         inDriverDoneClickedTime = 0L  // Reset InDriver Done click time
@@ -893,25 +895,44 @@ class PriceReaderService : AccessibilityService() {
                                 }
                             } else {
                                 // Pickup was entered but we're still on pickup-related screen
-                                Log.i(TAG, "🚖 Pickup entered - checking for confirm button or suggestions")
+                                Log.i(TAG, "🚖 Pickup entered - checking state (suggClicked=$careemPickupSuggestionClicked, attempts=$careemPickupClickAttempts)")
 
                                 // PRIORITY 1: Check if we're on map confirmation screen (has تأكيد الانطلاق)
-                                // This should be clicked FIRST before trying suggestions
-                                val hasConfirmButton = allText.any { it.contains("تأكيد الانطلاق") || it.contains("تأكيد") }
+                                // Look for multiple confirm button variations
+                                val confirmTexts = listOf("تأكيد الانطلاق", "تأكيد موقع الانطلاق", "Confirm pickup")
+                                val hasConfirmButton = allText.any { text ->
+                                    confirmTexts.any { confirm -> text.contains(confirm) }
+                                }
+
                                 if (hasConfirmButton) {
-                                    Log.i(TAG, "🚖 Confirm button visible - clicking it first!")
+                                    Log.i(TAG, "🚖 Confirm button visible - clicking it!")
                                     if (clickCareemConfirmButton(rootNode)) {
-                                        Log.i(TAG, "🚖 ✓ Clicked confirm button")
+                                        Log.i(TAG, "🚖 ✓ Clicked confirm button - should proceed to price")
+                                        careemPickupSuggestionClicked = false // Reset for next time
+                                        careemPickupClickAttempts = 0
                                         return
                                     }
                                 }
 
-                                // PRIORITY 2: Only try selecting suggestions if NO confirm button visible
-                                // and we're on a suggestion screen (has distance indicators)
-                                if (hasSuggestionDistances) {
-                                    Log.i(TAG, "🚖 On suggestion screen - trying to select suggestion")
+                                // PRIORITY 2: If we already clicked suggestion multiple times, try clicking confirm anyway
+                                if (careemPickupSuggestionClicked && careemPickupClickAttempts >= 3) {
+                                    Log.i(TAG, "🚖 Already clicked suggestion $careemPickupClickAttempts times - trying confirm button anyway")
+                                    if (clickCareemConfirmButton(rootNode)) {
+                                        Log.i(TAG, "🚖 ✓ Clicked confirm button (after multiple attempts)")
+                                        return
+                                    }
+                                    // Also try clicking a different area (maybe close button or continue)
+                                    Log.i(TAG, "🚖 Trying alternative buttons...")
+                                    careemPickupClickAttempts = 0 // Reset to try suggestions again
+                                }
+
+                                // PRIORITY 3: Try selecting suggestion if we haven't clicked too many times
+                                if (hasSuggestionDistances && careemPickupClickAttempts < 5) {
+                                    Log.i(TAG, "🚖 On suggestion screen - trying to select suggestion (attempt ${careemPickupClickAttempts + 1})")
                                     if (selectCareemPickupSuggestion(rootNode)) {
-                                        Log.i(TAG, "🚖 ✓ Selected pickup suggestion")
+                                        careemPickupSuggestionClicked = true
+                                        careemPickupClickAttempts++
+                                        Log.i(TAG, "🚖 ✓ Clicked pickup suggestion (total attempts: $careemPickupClickAttempts)")
                                         return
                                     }
                                 }
@@ -1340,6 +1361,8 @@ class PriceReaderService : AccessibilityService() {
     private var careemCarButtonClicked = false
     private var careemPickupFieldClicked = false  // Track if we clicked the pickup field to open edit mode
     private var careemPickupEntered = false       // Track if we typed the pickup address
+    private var careemPickupSuggestionClicked = false  // Track if we clicked a pickup suggestion
+    private var careemPickupClickAttempts = 0     // Count pickup suggestion click attempts
     private var careemLoaderFirstSeenTime = 0L   // Track when we first see the loader
 
     /**
@@ -1947,24 +1970,29 @@ class PriceReaderService : AccessibilityService() {
             firstSuggestion.getBoundsInScreen(rect)
             Log.i(TAG, "🚖 Found first suggestion element, bounds=${rect}")
 
-            // Try ACTION_CLICK on clickable parent first
-            Log.i(TAG, "🚖 Trying ACTION_CLICK on node or parent...")
-            if (clickNodeOrParent(firstSuggestion)) {
-                Log.i(TAG, "🚖 ✓ ACTION_CLICK succeeded!")
-                firstSuggestion.recycle()
-                Thread.sleep(800)
-                return true
-            }
-
-            // Try gesture click with longer duration
-            Log.i(TAG, "🚖 ACTION_CLICK failed, trying long gesture click...")
+            // IMPORTANT: For Careem, use GESTURE CLICK as PRIMARY method
+            // ACTION_CLICK reports success but doesn't actually work in Careem!
+            Log.i(TAG, "🚖 Using gesture click (Careem requires gesture, not ACTION_CLICK)...")
             val clicked = careemGestureClickLong(firstSuggestion)
             firstSuggestion.recycle()
 
             if (clicked) {
-                Log.i(TAG, "🚖 ✓ Long gesture click succeeded!")
-                Thread.sleep(800)
+                Log.i(TAG, "🚖 ✓ Gesture click succeeded!")
+                Thread.sleep(1200) // Wait longer for Careem to process
                 return true
+            }
+
+            // Fallback to ACTION_CLICK only if gesture fails
+            Log.i(TAG, "🚖 Gesture failed, trying ACTION_CLICK as fallback...")
+            val refoundSuggestion = findFirstCareemSuggestionElement(rootNode)
+            if (refoundSuggestion != null) {
+                if (clickNodeOrParent(refoundSuggestion)) {
+                    Log.i(TAG, "🚖 ✓ ACTION_CLICK fallback succeeded!")
+                    refoundSuggestion.recycle()
+                    Thread.sleep(800)
+                    return true
+                }
+                refoundSuggestion.recycle()
             }
         }
 
@@ -2028,25 +2056,18 @@ class PriceReaderService : AccessibilityService() {
 
         if (filteredSuggestions.isNotEmpty()) {
             val (bestNode, bestText) = filteredSuggestions[0]
-            Log.i(TAG, "🚖 Selected pickup suggestion: '$bestText'")
+            Log.i(TAG, "🚖 Selected pickup suggestion (fallback): '$bestText'")
 
-            // Try ACTION_CLICK first
-            if (clickNodeOrParent(bestNode)) {
-                Log.i(TAG, "🚖 ✓ ACTION_CLICK on pickup suggestion succeeded!")
-                allSuggestions.forEach { (node, _) -> try { node.recycle() } catch (e: Exception) {} }
-                Thread.sleep(800)
-                return true
-            }
-
-            // Click using gesture with longer duration
+            // IMPORTANT: Use GESTURE CLICK as PRIMARY for Careem
+            Log.i(TAG, "🚖 Using gesture click on fallback suggestion...")
             val clicked = careemGestureClickLong(bestNode)
             allSuggestions.forEach { (node, _) -> try { node.recycle() } catch (e: Exception) {} }
 
             if (clicked) {
-                Log.i(TAG, "🚖 ✓ Long gesture click on pickup suggestion succeeded!")
-                Thread.sleep(800)
+                Log.i(TAG, "🚖 ✓ Gesture click on pickup suggestion succeeded!")
+                Thread.sleep(1200) // Wait longer for Careem
+                return true
             }
-            return clicked
         }
 
         // If no filtered suggestions, recycle all and return false
