@@ -886,6 +886,22 @@ class PriceReaderService : AccessibilityService() {
                                         }
                                     }
                                 }
+                            } else {
+                                // Pickup was entered but we're still on suggestion screen
+                                // This means the suggestion click didn't work or there's a confirm button
+                                Log.i(TAG, "🚖 Pickup entered but still on suggestion screen - trying to click suggestion or confirm")
+
+                                // Try clicking the first pickup suggestion
+                                if (selectCareemPickupSuggestion(rootNode)) {
+                                    Log.i(TAG, "🚖 ✓ Re-clicked pickup suggestion")
+                                    return
+                                }
+
+                                // Try clicking confirm/search button
+                                if (clickCareemConfirmButton(rootNode)) {
+                                    Log.i(TAG, "🚖 ✓ Clicked confirm/search button")
+                                    return
+                                }
                             }
 
                             onIntermediateScreen = true
@@ -1858,6 +1874,45 @@ class PriceReaderService : AccessibilityService() {
             }
             return clicked
         }
+
+        return false
+    }
+
+    /**
+     * Click Careem confirm/search button to proceed to price screen
+     */
+    private fun clickCareemConfirmButton(rootNode: AccessibilityNodeInfo): Boolean {
+        Log.i(TAG, "🚖 Looking for confirm/search button...")
+
+        // Common confirm button texts in Careem (Arabic and English)
+        val confirmTexts = listOf(
+            "بحث", "Search", "تأكيد", "Confirm", "Done", "تم",
+            "بحث عن أفضل سعر", "Find best price", "احجز", "Book",
+            "التالي", "Next", "متابعة", "Continue"
+        )
+
+        for (text in confirmTexts) {
+            val node = findNodeWithText(rootNode, text)
+            if (node != null) {
+                Log.i(TAG, "🚖 Found button with text: '$text'")
+                if (clickNodeOrParent(node)) {
+                    Log.i(TAG, "🚖 ✓ Clicked '$text' button")
+                    node.recycle()
+                    Thread.sleep(800)
+                    return true
+                }
+                if (careemGestureClick(node)) {
+                    Log.i(TAG, "🚖 ✓ Gesture clicked '$text' button")
+                    node.recycle()
+                    return true
+                }
+                node.recycle()
+            }
+        }
+
+        // Also look for any clickable button at the bottom of the screen
+        val allText = getAllTextFromNode(rootNode)
+        Log.i(TAG, "🚖 All text for confirm button search: ${allText.takeLast(10)}")
 
         return false
     }
@@ -3203,10 +3258,19 @@ class PriceReaderService : AccessibilityService() {
 
     /**
      * Select a suggestion that MATCHES the destination, not just the first one
+     * For Careem pickup selection, uses pickupAddress instead of destinationAddress
      */
     private fun selectFirstSuggestion(rootNode: AccessibilityNodeInfo, packageName: String): Boolean {
-        // Extract keywords from destination address (remove Plus Codes and numbers)
-        val destKeywords = extractDestinationKeywords(destinationAddress)
+        // For Careem, if we're selecting pickup suggestions (after pickup was entered), use pickup address
+        val addressToMatch = if (packageName == CAREEM_PACKAGE && careemPickupFieldClicked) {
+            Log.i(TAG, "🚖 Using PICKUP address for suggestion matching: $pickupAddress")
+            pickupAddress
+        } else {
+            destinationAddress
+        }
+
+        // Extract keywords from the appropriate address (remove Plus Codes and numbers)
+        val destKeywords = extractDestinationKeywords(addressToMatch)
         Log.i(TAG, "🔍 Looking for suggestion matching: $destKeywords")
 
         // Collect all visible suggestions with their text
