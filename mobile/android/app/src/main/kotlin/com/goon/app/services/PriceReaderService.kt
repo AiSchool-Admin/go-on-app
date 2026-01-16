@@ -4792,11 +4792,13 @@ class PriceReaderService : AccessibilityService() {
 
             val bestPrice = when {
                 carPrices.isNotEmpty() -> {
-                    // Use identified car prices
-                    carPrices.minOrNull() ?: findBestPrice(carOnlyPrices)
+                    // Use the MINIMUM of both identified car prices AND all car-range prices
+                    // This ensures we don't miss options like "UberX Saver" or "Wait & Save"
+                    val allCarPrices = (carPrices + carOnlyPrices).distinct()
+                    allCarPrices.minOrNull() ?: findBestPrice(carOnlyPrices)
                 }
                 carOnlyPrices.isNotEmpty() -> {
-                    // Use car-range prices (>= 40 EGP)
+                    // Use car-range prices (>= 45 EGP)
                     carOnlyPrices.minOrNull() ?: findBestPrice(prices)
                 }
                 else -> {
