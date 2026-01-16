@@ -1243,12 +1243,15 @@ class PriceReaderService : AccessibilityService() {
         if (isOnHomeScreen && !careemCarButtonClicked) {
             Log.i(TAG, "🚖 Detected Careem HOME screen - need to click 'سيارة' (Car) button first")
 
-            // Look for "سيارة" button
+            // Look for "سيارة" button using multiple strategies
             val carButtonTexts = listOf("سيارة", "Car", "Ride", "سياره")
+
+            // Strategy 1: Use findAccessibilityNodeInfosByText
             for (buttonText in carButtonTexts) {
                 val nodes = rootNode.findAccessibilityNodeInfosByText(buttonText)
+                Log.i(TAG, "🚖 findAccessibilityNodeInfosByText('$buttonText') returned ${nodes.size} nodes")
                 for (node in nodes) {
-                    Log.i(TAG, "🚖 Found '$buttonText' button, attempting click...")
+                    Log.i(TAG, "🚖 Found '$buttonText' button via system search, attempting click...")
 
                     // Try clicking the node or its ancestors
                     if (smartClick(node)) {
@@ -1277,6 +1280,79 @@ class PriceReaderService : AccessibilityService() {
                     }
                     node.recycle()
                 }
+            }
+
+            // Strategy 2: Use recursive findNodeWithText (custom search)
+            Log.i(TAG, "🚖 Strategy 2: Using recursive findNodeWithText...")
+            for (buttonText in carButtonTexts) {
+                val node = findNodeWithText(rootNode, buttonText)
+                if (node != null) {
+                    Log.i(TAG, "🚖 Found '$buttonText' via recursive search, attempting click...")
+
+                    // Try clicking the node itself
+                    if (smartClick(node)) {
+                        Log.i(TAG, "🚖 ✓ Clicked on '$buttonText' button via recursive search!")
+                        careemCarButtonClicked = true
+                        node.recycle()
+                        Thread.sleep(TimingConfig.animationWait)
+                        return true
+                    }
+
+                    // Try ancestors
+                    var current = node.parent
+                    for (level in 1..4) {
+                        if (current == null) break
+                        if (smartClick(current)) {
+                            Log.i(TAG, "🚖 ✓ Clicked on ancestor level $level of '$buttonText' via recursive search!")
+                            careemCarButtonClicked = true
+                            current.recycle()
+                            node.recycle()
+                            Thread.sleep(TimingConfig.animationWait)
+                            return true
+                        }
+                        val parent = current.parent
+                        current.recycle()
+                        current = parent
+                    }
+                    node.recycle()
+                }
+            }
+
+            // Strategy 3: Try clicking by screen position (bottom navigation area)
+            Log.i(TAG, "🚖 Strategy 3: Trying gesture click on likely button position...")
+            try {
+                val displayMetrics = resources.displayMetrics
+                val screenWidth = displayMetrics.widthPixels
+                val screenHeight = displayMetrics.heightPixels
+
+                // Careem "سيارة" button is typically in the bottom navigation bar, first item
+                // Usually at around 12.5% from left edge (first of 4 items), at about 92% from top
+                val targetX = (screenWidth * 0.125f).toInt()
+                val targetY = (screenHeight * 0.92f).toInt()
+
+                Log.i(TAG, "🚖 Attempting gesture click at ($targetX, $targetY) for Car button")
+
+                val path = android.graphics.Path()
+                path.moveTo(targetX.toFloat(), targetY.toFloat())
+
+                val gesture = android.accessibilityservice.GestureDescription.Builder()
+                    .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 100))
+                    .build()
+
+                dispatchGesture(gesture, object : AccessibilityService.GestureResultCallback() {
+                    override fun onCompleted(gestureDescription: android.accessibilityservice.GestureDescription?) {
+                        Log.i(TAG, "🚖 ✓ Gesture click completed on Car button position")
+                    }
+                    override fun onCancelled(gestureDescription: android.accessibilityservice.GestureDescription?) {
+                        Log.w(TAG, "🚖 Gesture click cancelled")
+                    }
+                }, null)
+
+                careemCarButtonClicked = true
+                Thread.sleep(TimingConfig.animationWait)
+                return true
+            } catch (e: Exception) {
+                Log.e(TAG, "🚖 Gesture click failed: ${e.message}")
             }
 
             Log.w(TAG, "🚖 Could not find 'سيارة' button on home screen")
@@ -5385,6 +5461,41 @@ class PriceReaderService : AccessibilityService() {
         }
 
         return texts
+    }
+
+    /**
+     * Recursively find a node containing specific text (in text or contentDescription)
+     * Returns the node that can be clicked, or null if not found
+     */
+    private fun findNodeWithText(node: AccessibilityNodeInfo, targetText: String): AccessibilityNodeInfo? {
+        // Check this node's text
+        val nodeText = node.text?.toString()?.trim() ?: ""
+        val nodeDesc = node.contentDescription?.toString()?.trim() ?: ""
+
+        if (nodeText.contains(targetText) || nodeDesc.contains(targetText)) {
+            Log.i(TAG, "🔍 Found node with '$targetText': text='$nodeText', desc='$nodeDesc', clickable=${node.isClickable}")
+            // Return a copy of this node (don't recycle it, caller will handle)
+            return AccessibilityNodeInfo.obtain(node)
+        }
+
+        // Recursively search children
+        for (i in 0 until node.childCount) {
+            try {
+                val child = node.getChild(i)
+                if (child != null) {
+                    val found = findNodeWithText(child, targetText)
+                    if (found != null) {
+                        child.recycle()
+                        return found
+                    }
+                    child.recycle()
+                }
+            } catch (e: Exception) {
+                // Skip problematic nodes
+            }
+        }
+
+        return null
     }
 
     /**
