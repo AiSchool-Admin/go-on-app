@@ -93,6 +93,81 @@ class PriceReaderService : AccessibilityService() {
         var rideSortPreference: String = "lowest_price"
     }
 
+    /**
+     * DEVICE-ADAPTIVE TIMING CONFIGURATION
+     * All timing values are centralized here for easy tuning across different devices.
+     * The calibrate() function adjusts these based on device performance.
+     */
+    object TimingConfig {
+        // Performance multiplier (1.0 = normal, <1.0 = fast device, >1.0 = slow device)
+        private var performanceMultiplier = 1.0
+        private var isCalibrated = false
+
+        // Base timing values (in milliseconds)
+        private const val BASE_CLICK_DELAY = 300L
+        private const val BASE_ANIMATION_WAIT = 500L
+        private const val BASE_SCAN_INTERVAL = 500L
+        private const val BASE_TEXT_INPUT_DELAY = 100L
+        private const val BASE_KEYBOARD_WAIT = 300L
+
+        // Computed timing values (adjusted by performance multiplier)
+        val clickDelay: Long get() = (BASE_CLICK_DELAY * performanceMultiplier).toLong()
+        val animationWait: Long get() = (BASE_ANIMATION_WAIT * performanceMultiplier).toLong()
+        val scanInterval: Long get() = (BASE_SCAN_INTERVAL * performanceMultiplier).toLong()
+        val textInputDelay: Long get() = (BASE_TEXT_INPUT_DELAY * performanceMultiplier).toLong()
+        val keyboardWait: Long get() = (BASE_KEYBOARD_WAIT * performanceMultiplier).toLong()
+
+        // App-specific timeouts (less affected by device speed)
+        const val UBER_MIN_WAIT_MS = 3000L
+        const val DIDI_TIMEOUT_MS = 20000L
+        const val DEFAULT_TIMEOUT_MS = 12000L
+        const val INDRIVER_MIN_WAIT_AFTER_DONE_MS = 1000L  // OPTIMIZED: Reduced for faster detection
+
+        // Retry limits
+        const val MAX_RETRIES = 10
+        const val DIDI_MAX_DESTINATION_ATTEMPTS = 10
+        const val DIDI_MAX_SUGGESTION_RETRIES = 3
+        const val INDRIVER_MAX_DONE_CLICKS = 3
+
+        // Minimum valid prices (to filter out invalid readings)
+        const val UBER_MIN_PRICE = 50.0
+
+        /**
+         * Calibrate timing based on device performance.
+         * Call this once when the service starts.
+         */
+        fun calibrate() {
+            if (isCalibrated) return
+
+            val startTime = System.nanoTime()
+            // Simple benchmark: string operations
+            var dummy = ""
+            repeat(10000) { dummy += "x"; dummy = dummy.takeLast(100) }
+            val elapsedNs = System.nanoTime() - startTime
+            val elapsedMs = elapsedNs / 1_000_000
+
+            // Determine performance tier
+            performanceMultiplier = when {
+                elapsedMs < 20 -> 0.8    // Fast device - reduce delays
+                elapsedMs < 50 -> 1.0    // Normal device
+                elapsedMs < 100 -> 1.3   // Slower device
+                else -> 1.5              // Very slow device
+            }
+
+            isCalibrated = true
+            Log.i(TAG, "📱 Device calibrated: benchmark=${elapsedMs}ms, multiplier=$performanceMultiplier")
+            Log.i(TAG, "📱 Timings: click=${clickDelay}ms, animation=${animationWait}ms, scan=${scanInterval}ms")
+        }
+
+        /**
+         * Force recalibration (useful for testing)
+         */
+        fun recalibrate() {
+            isCalibrated = false
+            calibrate()
+        }
+    }
+
     // Service ratings for "best_service" preference
     private val serviceRatings = mapOf(
         UBER_PACKAGE to 4.5,
@@ -128,6 +203,9 @@ class PriceReaderService : AccessibilityService() {
         super.onServiceConnected()
         instance = this
         isServiceActive = true
+
+        // Calibrate timing for this device
+        TimingConfig.calibrate()
 
         Log.i(TAG, "✓ GO-ON Price Reader Service Connected - ENHANCED VERSION")
 
@@ -179,7 +257,7 @@ class PriceReaderService : AccessibilityService() {
                 if (isActiveMonitoring) {
                     Log.d(TAG, "⏱ Active scan tick for $packageName")
                     performAggressiveScan(packageName)
-                    scanHandler?.postDelayed(this, 500)
+                    scanHandler?.postDelayed(this, TimingConfig.scanInterval)
                 }
             }
         }
@@ -195,18 +273,14 @@ class PriceReaderService : AccessibilityService() {
     private var automationState = AutomationState.IDLE
     private var automationStep = 0
     private var automationRetries = 0
-    private val MAX_RETRIES = 10  // Increased for better reliability
     private var automationStartTime = 0L  // Timestamp when automation started
     private var uberScreenReady = false  // Flag to indicate Uber ride selection screen is loaded
-    private val UBER_MIN_WAIT_MS = 3000L  // OPTIMIZED: Reduced to 3s for faster detection
-    private val UBER_MIN_PRICE = 50.0  // Minimum valid price for Uber
 
     // Track if InDriver destination was successfully entered (to avoid accepting default price)
     private var inDriverDestinationEntered = false
 
     // Track when InDriver "Done" button was clicked - need to wait for real price
     private var inDriverDoneClickedTime = 0L
-    private val INDRIVER_MIN_WAIT_AFTER_DONE_MS = 1000L  // OPTIMIZED: Reduced to 1s
 
     // Track InDriver confirmation clicks (3 clicks usually enough!)
     // InDriver flow after entering coordinates:
@@ -215,7 +289,6 @@ class PriceReaderService : AccessibilityService() {
     //   3. THEN "البحث عن عروض" prices screen appears
     // Note: If price screen is detected early, we skip remaining clicks
     private var inDriverDoneClickCount = 0
-    private val INDRIVER_MAX_DONE_CLICKS = 3  // OPTIMIZED: Reduced from 5 to 3 (usually 2 clicks needed)
 
     // CRITICAL: Block ALL InDriver price detection until automation is complete
     // This prevents the 95 EGP default price from being cached during automation
@@ -244,11 +317,9 @@ class PriceReaderService : AccessibilityService() {
 
     // Track DiDi destination click retries (to prevent infinite loops)
     private var didiDestinationClickAttempts = 0
-    private val DIDI_MAX_DESTINATION_ATTEMPTS = 10
 
     // Track DiDi suggestion retry from WAITING_FOR_PRICE (to prevent infinite loops)
     private var didiSuggestionRetryCount = 0
-    private val DIDI_MAX_SUGGESTION_RETRIES = 3
 
     /**
      * FULLY AUTOMATED PRICE FETCH
@@ -324,13 +395,13 @@ class PriceReaderService : AccessibilityService() {
                     if (automationState != AutomationState.PRICE_CAPTURED &&
                         automationState != AutomationState.FAILED &&
                         automationState != AutomationState.IDLE) {
-                        scanHandler?.postDelayed(this, 500) // OPTIMIZED: 500ms for faster automation
+                        scanHandler?.postDelayed(this, TimingConfig.scanInterval)
                     }
                 }
             }
         }
         // Initial delay to let the app load
-        scanHandler?.postDelayed(scanRunnable!!, 500) // OPTIMIZED: 500ms initial delay
+        scanHandler?.postDelayed(scanRunnable!!, TimingConfig.scanInterval)
     }
 
     private fun performAutomationStep(packageName: String) {
@@ -351,7 +422,7 @@ class PriceReaderService : AccessibilityService() {
             Log.i(TAG, "🤖 ========================================")
             Log.i(TAG, "🤖 AUTOMATION STATE: $automationState")
             Log.i(TAG, "🤖 Package: $packageName")
-            Log.i(TAG, "🤖 Retries: $automationRetries / $MAX_RETRIES")
+            Log.i(TAG, "🤖 Retries: $automationRetries / ${TimingConfig.MAX_RETRIES}")
             Log.i(TAG, "🤖 Step: $automationStep")
             Log.i(TAG, "🤖 ========================================")
 
@@ -380,8 +451,8 @@ class PriceReaderService : AccessibilityService() {
                         automationRetries = 0
                     } else {
                         automationRetries++
-                        Log.w(TAG, "🤖 ✗ Pickup field not found (attempt $automationRetries/$MAX_RETRIES)")
-                        if (automationRetries > MAX_RETRIES) {
+                        Log.w(TAG, "🤖 ✗ Pickup field not found (attempt $automationRetries/${TimingConfig.MAX_RETRIES})")
+                        if (automationRetries > TimingConfig.MAX_RETRIES) {
                             Log.e(TAG, "🤖 ✗✗✗ FAILED: Max retries exceeded for finding pickup field")
                             automationState = AutomationState.FAILED
                         }
@@ -457,8 +528,8 @@ class PriceReaderService : AccessibilityService() {
                     // For DiDi: Track overall destination click attempts
                     if (packageName == DIDI_PACKAGE) {
                         didiDestinationClickAttempts++
-                        Log.i(TAG, "🚕 DiDi destination click attempt: $didiDestinationClickAttempts/$DIDI_MAX_DESTINATION_ATTEMPTS")
-                        if (didiDestinationClickAttempts > DIDI_MAX_DESTINATION_ATTEMPTS) {
+                        Log.i(TAG, "🚕 DiDi destination click attempt: $didiDestinationClickAttempts/${TimingConfig.DIDI_MAX_DESTINATION_ATTEMPTS}")
+                        if (didiDestinationClickAttempts > TimingConfig.DIDI_MAX_DESTINATION_ATTEMPTS) {
                             Log.e(TAG, "🚕 ✗✗✗ DiDi FAILED: Max destination click attempts exceeded")
                             automationState = AutomationState.FAILED
                             return
@@ -472,8 +543,8 @@ class PriceReaderService : AccessibilityService() {
                         automationRetries = 0
                     } else {
                         automationRetries++
-                        Log.w(TAG, "🤖 ✗ Destination field not found (attempt $automationRetries/$MAX_RETRIES)")
-                        if (automationRetries > MAX_RETRIES) {
+                        Log.w(TAG, "🤖 ✗ Destination field not found (attempt $automationRetries/${TimingConfig.MAX_RETRIES})")
+                        if (automationRetries > TimingConfig.MAX_RETRIES) {
                             Log.e(TAG, "🤖 ✗✗✗ FAILED: Max retries exceeded for finding destination field")
                             automationState = AutomationState.FAILED
                         }
@@ -665,8 +736,8 @@ class PriceReaderService : AccessibilityService() {
                         automationStep = 0
                     } else {
                         automationRetries++
-                        Log.w(TAG, "🤖 ✗ No suggestion selected (attempt $automationRetries/$MAX_RETRIES)")
-                        if (automationRetries > MAX_RETRIES) {
+                        Log.w(TAG, "🤖 ✗ No suggestion selected (attempt $automationRetries/${TimingConfig.MAX_RETRIES})")
+                        if (automationRetries > TimingConfig.MAX_RETRIES) {
                             // Try scanning for price anyway
                             Log.w(TAG, "🤖 Skipping to WAITING_FOR_PRICE despite selection failure")
                             automationState = AutomationState.WAITING_FOR_PRICE
@@ -716,13 +787,13 @@ class PriceReaderService : AccessibilityService() {
                             }
 
                             // Only retry if we have a real suggestion AND haven't exceeded retry limit
-                            if (hasRealSuggestion && didiSuggestionRetryCount < DIDI_MAX_SUGGESTION_RETRIES) {
+                            if (hasRealSuggestion && didiSuggestionRetryCount < TimingConfig.DIDI_MAX_SUGGESTION_RETRIES) {
                                 didiSuggestionRetryCount++
-                                Log.w(TAG, "🚕 DiDi has suggestion visible - retry $didiSuggestionRetryCount/$DIDI_MAX_SUGGESTION_RETRIES")
+                                Log.w(TAG, "🚕 DiDi has suggestion visible - retry $didiSuggestionRetryCount/${TimingConfig.DIDI_MAX_SUGGESTION_RETRIES}")
                                 automationState = AutomationState.SELECTING_SUGGESTION
                                 automationRetries = 0
                                 return
-                            } else if (didiSuggestionRetryCount >= DIDI_MAX_SUGGESTION_RETRIES) {
+                            } else if (didiSuggestionRetryCount >= TimingConfig.DIDI_MAX_SUGGESTION_RETRIES) {
                                 Log.w(TAG, "🚕 DiDi suggestion retry limit reached - waiting for timeout")
                             }
 
@@ -779,14 +850,14 @@ class PriceReaderService : AccessibilityService() {
                         }
 
                         val timeSinceDoneClick = if (inDriverDoneClickedTime > 0) System.currentTimeMillis() - inDriverDoneClickedTime else Long.MAX_VALUE
-                        val bothClicksMade = inDriverDoneClickCount >= INDRIVER_MAX_DONE_CLICKS
-                        val doneWaitSatisfied = bothClicksMade && timeSinceDoneClick >= INDRIVER_MIN_WAIT_AFTER_DONE_MS
+                        val bothClicksMade = inDriverDoneClickCount >= TimingConfig.INDRIVER_MAX_DONE_CLICKS
+                        val doneWaitSatisfied = bothClicksMade && timeSinceDoneClick >= TimingConfig.INDRIVER_MIN_WAIT_AFTER_DONE_MS
 
                         if (!doneWaitSatisfied) {
                             if (!bothClicksMade) {
-                                Log.i(TAG, "🤖 ⏳ InDriver clicks: $inDriverDoneClickCount/$INDRIVER_MAX_DONE_CLICKS")
+                                Log.i(TAG, "🤖 ⏳ InDriver clicks: $inDriverDoneClickCount/${TimingConfig.INDRIVER_MAX_DONE_CLICKS}")
                             } else {
-                                Log.i(TAG, "🤖 ⏳ InDriver wait: ${timeSinceDoneClick}ms/${INDRIVER_MIN_WAIT_AFTER_DONE_MS}ms")
+                                Log.i(TAG, "🤖 ⏳ InDriver wait: ${timeSinceDoneClick}ms/${TimingConfig.INDRIVER_MIN_WAIT_AFTER_DONE_MS}ms")
                             }
                             return
                         }
@@ -810,8 +881,8 @@ class PriceReaderService : AccessibilityService() {
                     }
 
                     // For Uber: Wait minimum time to let prices fully load
-                    if (isUber && elapsedTime < UBER_MIN_WAIT_MS) {
-                        Log.i(TAG, "🤖 ⏳ Uber: Waiting (${elapsedTime}ms < ${UBER_MIN_WAIT_MS}ms)")
+                    if (isUber && elapsedTime < TimingConfig.UBER_MIN_WAIT_MS) {
+                        Log.i(TAG, "🤖 ⏳ Uber: Waiting (${elapsedTime}ms < ${TimingConfig.UBER_MIN_WAIT_MS}ms)")
                         return
                     }
 
@@ -835,9 +906,9 @@ class PriceReaderService : AccessibilityService() {
                     }
 
                     // Still no valid prices, check timeout
-                    // DiDi needs more time (20s), others can use 12s
+                    // DiDi needs more time, others use default timeout
                     automationStep++
-                    val timeoutMs = if (packageName == DIDI_PACKAGE) 20000L else 12000L
+                    val timeoutMs = if (packageName == DIDI_PACKAGE) TimingConfig.DIDI_TIMEOUT_MS else TimingConfig.DEFAULT_TIMEOUT_MS
                     if (elapsedTime > timeoutMs) { // App-specific timeout
                         // Accept whatever we have if any
                         if (cachedPrice != null && cachedPrice.price > 0) {
@@ -959,7 +1030,7 @@ class PriceReaderService : AccessibilityService() {
      */
     private fun findAndClickDiDiDestinationField(rootNode: AccessibilityNodeInfo): Boolean {
         Log.i(TAG, "🚕 ========== DIDI DESTINATION FIELD SEARCH ==========")
-        Log.i(TAG, "🚕 Attempt: $didiDestinationClickAttempts/$DIDI_MAX_DESTINATION_ATTEMPTS")
+        Log.i(TAG, "🚕 Attempt: $didiDestinationClickAttempts/${TimingConfig.DIDI_MAX_DESTINATION_ATTEMPTS}")
 
         // Vary strategy based on attempt number - cycle through quickly
         // Since gesture tap doesn't work on DiDi, try each strategy just once
@@ -1030,7 +1101,7 @@ class PriceReaderService : AccessibilityService() {
         if (attemptStrategy == "gesture") {
             Log.i(TAG, "🚕 Strategy: Gesture tap at center (${targetRect.centerX()}, ${targetRect.centerY()})")
             clickAtPosition(targetRect.centerX().toFloat(), targetRect.centerY().toFloat())
-            Thread.sleep(300)
+            Thread.sleep(TimingConfig.clickDelay)
             targetNode.recycle()
             return true
         }
@@ -1047,7 +1118,7 @@ class PriceReaderService : AccessibilityService() {
 
                 if (current.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
                     Log.i(TAG, "🚕 ✓ ACTION_CLICK succeeded on level $level!")
-                    Thread.sleep(500)
+                    Thread.sleep(TimingConfig.animationWait)
                     current.recycle()
                     targetNode.recycle()
                     return true
@@ -1086,7 +1157,7 @@ class PriceReaderService : AccessibilityService() {
                 val clickY = targetRect.centerY().toFloat()
                 Log.i(TAG, "🚕   Clicking at ($clickX, $clickY)")
                 clickAtPosition(clickX, clickY)
-                Thread.sleep(500)
+                Thread.sleep(TimingConfig.animationWait)
 
                 for (c in containers) c.recycle()
                 return true
@@ -1192,7 +1263,7 @@ class PriceReaderService : AccessibilityService() {
                 if (node.isFocusable) {
                     Log.i(TAG, "🚗   Attempting to focus then click...")
                     node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-                    Thread.sleep(100)
+                    Thread.sleep(TimingConfig.textInputDelay)
                     if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
                         Log.i(TAG, "🚗 ✓✓✓ SUCCESS: Focus+Click on pickup field '$searchText'")
                         node.recycle()
@@ -1282,7 +1353,7 @@ class PriceReaderService : AccessibilityService() {
             if (cleared) {
                 Log.i(TAG, "🤖 ✓ Cleared existing pickup location")
                 // Wait a moment for UI to update after clearing
-                Thread.sleep(300)
+                Thread.sleep(TimingConfig.clickDelay)
             } else {
                 Log.w(TAG, "🤖 Could not find/click clear button - will try to overwrite")
             }
@@ -1549,7 +1620,7 @@ class PriceReaderService : AccessibilityService() {
                 // Try focus then click
                 if (node.isFocusable) {
                     node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-                    Thread.sleep(100)
+                    Thread.sleep(TimingConfig.textInputDelay)
                     if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
                         Log.i(TAG, "🎯 ✓✓✓ Focus+Click destination field by ID!")
                         return true
@@ -1844,7 +1915,7 @@ class PriceReaderService : AccessibilityService() {
                 if (node.isFocusable) {
                     Log.i(TAG, "🚗   Attempting to focus then click...")
                     node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-                    Thread.sleep(100)
+                    Thread.sleep(TimingConfig.textInputDelay)
                     if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
                         Log.i(TAG, "🚗 ✓✓✓ SUCCESS: Focus+Click on '$searchText'")
                         node.recycle()
@@ -2056,7 +2127,7 @@ class PriceReaderService : AccessibilityService() {
                     )
 
                     dispatchGesture(gestureBuilder.build(), null, null)
-                    Thread.sleep(300)
+                    Thread.sleep(TimingConfig.clickDelay)
                     return true
                 }
             }
@@ -2178,7 +2249,7 @@ class PriceReaderService : AccessibilityService() {
             if (node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)) {
                 Log.i(TAG, "🚗 ✓ Focused field")
                 // After focus, try click again
-                Thread.sleep(100)
+                Thread.sleep(TimingConfig.textInputDelay)
                 if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
                     return true
                 }
@@ -2380,7 +2451,7 @@ class PriceReaderService : AccessibilityService() {
                 // This should trigger navigation to the price screen
                 if (packageName == INDRIVER_PACKAGE) {
                     Log.i(TAG, "🤖 [InDriver] Pressing ENTER to submit destination...")
-                    Thread.sleep(300)  // Small delay before pressing Enter
+                    Thread.sleep(TimingConfig.clickDelay)  // Small delay before pressing Enter
 
                     // Try multiple methods to submit the form:
 
@@ -2399,7 +2470,7 @@ class PriceReaderService : AccessibilityService() {
                     }
 
                     // Method 2: Try clicking slightly above (85% of screen)
-                    Thread.sleep(200)
+                    Thread.sleep(TimingConfig.textInputDelay * 2)
                     val upperY = screenHeight * 0.85f
                     Log.i(TAG, "🤖 [InDriver] Trying upper bottom click at ($centerX, $upperY)")
                     if (clickAtPosition(centerX, upperY)) {
@@ -2434,7 +2505,7 @@ class PriceReaderService : AccessibilityService() {
 
             // First try to focus the field
             node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-            Thread.sleep(100)
+            Thread.sleep(TimingConfig.textInputDelay)
 
             if (node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) {
                 Log.i(TAG, "🤖 ✓ Entered text into EditText: '$text'")
@@ -3631,8 +3702,8 @@ class PriceReaderService : AccessibilityService() {
             Log.i(TAG, "🗺️ Map confirmation: clickCount=$inDriverDoneClickCount, isPickup=$isPickupScreen, isDest=$isDestinationScreen, timeSinceClick=${timeSinceDoneClick}ms")
 
             // Block if we've already made max clicks
-            if (inDriverDoneClickCount >= INDRIVER_MAX_DONE_CLICKS) {
-                Log.i(TAG, "🗺️ Already clicked 'تم' $inDriverDoneClickCount times (max=$INDRIVER_MAX_DONE_CLICKS) - NOT clicking again!")
+            if (inDriverDoneClickCount >= TimingConfig.INDRIVER_MAX_DONE_CLICKS) {
+                Log.i(TAG, "🗺️ Already clicked 'تم' $inDriverDoneClickCount times (max=${TimingConfig.INDRIVER_MAX_DONE_CLICKS}) - NOT clicking again!")
                 return false
             }
 
@@ -3821,7 +3892,7 @@ class PriceReaderService : AccessibilityService() {
 
                 if (clickAtPosition(centerX, centerY)) {
                     Log.i(TAG, "🗺️ ✓✓✓ SUCCESS: Clicked Done button via GESTURE!")
-                    Thread.sleep(500)
+                    Thread.sleep(TimingConfig.animationWait)
                     return true
                 }
             } else {
@@ -3847,7 +3918,7 @@ class PriceReaderService : AccessibilityService() {
                     if (clickAtPosition(px, py)) {
                         Log.i(TAG, "🗺️ ✓✓✓ SUCCESS: Clicked parent L$level via gesture!")
                         parent.recycle()
-                        Thread.sleep(500)
+                        Thread.sleep(TimingConfig.animationWait)
                         return true
                     }
                 }
@@ -3875,7 +3946,7 @@ class PriceReaderService : AccessibilityService() {
 
             if (clickAtPosition(hardcodedX, hardcodedY)) {
                 Log.i(TAG, "🗺️ ✓✓✓ SUCCESS: Clicked via HARDCODED position!")
-                Thread.sleep(500)
+                Thread.sleep(TimingConfig.animationWait)
                 return true
             }
         }
@@ -4091,7 +4162,7 @@ class PriceReaderService : AccessibilityService() {
         Log.i(TAG, "🎯 Trying gesture tap at ($centerX, $centerY)...")
         clickNodeByGesture(node)
         // Wait a bit and assume it might have worked
-        Thread.sleep(300)
+        Thread.sleep(TimingConfig.clickDelay)
 
         // Strategy 4: Shell tap - DISABLED (requires root, causes SecurityException crashes)
         // shellTap(centerX, centerY)
@@ -4113,7 +4184,7 @@ class PriceReaderService : AccessibilityService() {
             Log.i(TAG, "🎯 Node is clickable, trying ACTION_CLICK...")
             if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
                 Log.i(TAG, "🎯 ✓ Gentle click SUCCESS")
-                Thread.sleep(500) // Wait after click
+                Thread.sleep(TimingConfig.animationWait) // Wait after click
                 return true
             }
         }
@@ -4124,7 +4195,7 @@ class PriceReaderService : AccessibilityService() {
                 Log.i(TAG, "🎯 Parent is clickable, trying ACTION_CLICK on parent...")
                 if (parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
                     Log.i(TAG, "🎯 ✓ Gentle click SUCCESS via parent")
-                    Thread.sleep(500)
+                    Thread.sleep(TimingConfig.animationWait)
                     parent.recycle()
                     return true
                 }
@@ -4148,7 +4219,7 @@ class PriceReaderService : AccessibilityService() {
             if (exitCode == 0) {
                 Log.i(TAG, "🖱️ ✓ Shell tap SUCCESS")
                 // Give the app time to process the tap
-                Thread.sleep(200)
+                Thread.sleep(TimingConfig.textInputDelay * 2)
                 true
             } else {
                 Log.w(TAG, "🖱️ ✗ Shell tap failed with exit code: $exitCode")
