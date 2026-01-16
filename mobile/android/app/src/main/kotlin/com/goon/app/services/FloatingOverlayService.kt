@@ -1187,7 +1187,7 @@ class FloatingOverlayService : Service() {
                     val infoContainer = cardLayout?.getChildAt(1) as? LinearLayout
                     infoContainer?.addView(TextView(this).apply {
                         text = "اضغط للحجز ←"
-                        setTextColor(0xFF90CAF9.toInt())
+                        setTextColor(0xFF38A169.toInt()) // Green - readable on white
                         textSize = 11f
                         tag = "hint_$packageName"
                     })
@@ -1208,7 +1208,7 @@ class FloatingOverlayService : Service() {
             } else if (price != null && price > 0) {
                 val priceText = TextView(this).apply {
                     text = "${price.toInt()} ج.م"
-                    setTextColor(0xFF4CAF50.toInt())
+                    setTextColor(0xFF38A169.toInt()) // Green success color
                     textSize = 20f
                     setTypeface(null, Typeface.BOLD)
                 }
@@ -1219,7 +1219,7 @@ class FloatingOverlayService : Service() {
             } else if (status == "error") {
                 val errorText = TextView(this).apply {
                     text = "✗"
-                    setTextColor(0xFFFF5252.toInt())
+                    setTextColor(0xFFE53E3E.toInt()) // Red error color
                     textSize = 24f
                 }
                 priceContainer?.addView(errorText)
@@ -1244,12 +1244,23 @@ class FloatingOverlayService : Service() {
             }
         }
 
-        // Update card backgrounds
+        // Update card backgrounds - MODERN LIGHT THEME
         for ((pkg, card) in priceCards) {
             if (pkg == bestPackage) {
-                card.background = createRoundedBackground(0xFF1B5E20.toInt(), (12 * density).toInt()) // Dark green
+                // Best price: Light green background with green border
+                card.background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = 12 * density
+                    setColor(0xFFF0FFF4.toInt()) // Very light green background
+                    setStroke((2 * density).toInt(), 0xFF38A169.toInt()) // Green border
+                }
             } else {
-                card.background = createRoundedBackground(0xFF2A2A2A.toInt(), (12 * density).toInt())
+                // Normal: White background
+                card.background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = 12 * density
+                    setColor(0xFFFFFFFF.toInt()) // White
+                }
             }
         }
     }
