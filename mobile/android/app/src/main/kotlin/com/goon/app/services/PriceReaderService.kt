@@ -1815,10 +1815,14 @@ class PriceReaderService : AccessibilityService() {
         Log.i(TAG, "🚖 Found ${editTexts.size} EditText fields")
 
         // Sort by Y position - pickup field is usually at the TOP
-        val sortedEditTexts = editTexts.sortedBy {
-            val rect = android.graphics.Rect()
-            it.getBoundsInScreen(rect)
-            rect.top
+        // Using explicit sort to avoid inline class compilation issues
+        val sortedEditTexts = editTexts.toMutableList()
+        sortedEditTexts.sortWith { a, b ->
+            val rectA = android.graphics.Rect()
+            val rectB = android.graphics.Rect()
+            a.getBoundsInScreen(rectA)
+            b.getBoundsInScreen(rectB)
+            rectA.top.compareTo(rectB.top)
         }
 
         // Log all EditTexts with their positions
@@ -2144,9 +2148,13 @@ class PriceReaderService : AccessibilityService() {
             }
 
             true
-        }.sortedByDescending { (_, text) ->
-            // Sort by pickup-unique keyword matches (best matches first)
-            pickupOnlyKeywords.count { text.contains(it) }
+        }.toMutableList()
+        // Sort by pickup-unique keyword matches (best matches first)
+        // Using explicit sort to avoid inline class compilation issues
+        filteredSuggestions.sortWith { a, b ->
+            val countB = pickupOnlyKeywords.count { b.second.contains(it) }
+            val countA = pickupOnlyKeywords.count { a.second.contains(it) }
+            countB.compareTo(countA)
         }
 
         Log.i(TAG, "🚖 After filtering: ${filteredSuggestions.size} valid pickup suggestions")
@@ -3997,7 +4005,9 @@ class PriceReaderService : AccessibilityService() {
             .distinct()
 
         // Prioritize: longer words first (usually more specific)
-        val sortedWords = words.sortedByDescending { it.length }
+        // Using explicit sort instead of sortedByDescending to avoid inline class issues
+        val sortedWords = words.toMutableList()
+        sortedWords.sortWith { a, b -> b.length.compareTo(a.length) }
 
         Log.i(TAG, "🔑 Keywords extracted: $sortedWords from: '$address'")
         return sortedWords
@@ -6201,8 +6211,14 @@ class PriceReaderService : AccessibilityService() {
 
         // If we couldn't match any, try alternative: assign prices to types in order
         if (vehiclePrices.isEmpty() && vehicleTypePositions.isNotEmpty() && pricesWithIndex.isNotEmpty()) {
-            val sortedPrices = pricesWithIndex.sortedBy { it.first }.map { it.second }.distinct()
-            val sortedTypes = vehicleTypePositions.sortedBy { it.first }.map { it.second }.distinct()
+            // Using explicit sort to avoid inline class compilation issues
+            val pricesSorted = pricesWithIndex.toMutableList()
+            pricesSorted.sortWith { a, b -> a.first.compareTo(b.first) }
+            val sortedPrices = pricesSorted.map { it.second }.distinct()
+
+            val typesSorted = vehicleTypePositions.toMutableList()
+            typesSorted.sortWith { a, b -> a.first.compareTo(b.first) }
+            val sortedTypes = typesSorted.map { it.second }.distinct()
 
             for ((index, typeName) in sortedTypes.withIndex()) {
                 if (index < sortedPrices.size) {
