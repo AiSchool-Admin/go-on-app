@@ -2036,11 +2036,18 @@ class PriceReaderService : AccessibilityService() {
     /**
      * Find the first suggestion element in Careem's pickup suggestions list
      * Returns the actual text element, not the parent container
+     * IMPORTANT: Only returns suggestions that match PICKUP address, not destination
      */
     private fun findFirstCareemSuggestionElement(rootNode: AccessibilityNodeInfo): AccessibilityNodeInfo? {
         val allText = getAllTextFromNode(rootNode)
 
-        // Find the first element that looks like an address
+        // Extract keywords from pickup and destination to validate suggestions
+        val pickupKeywords = pickupAddress.split(" ").filter { it.length > 2 }
+        val destKeywords = destinationAddress.split(" ").filter { it.length > 2 }
+
+        Log.i(TAG, "🚖 Finding pickup suggestion - pickup keywords: $pickupKeywords, dest keywords: $destKeywords")
+
+        // Find the first element that looks like an address AND matches pickup keywords
         // Skip: pickUp, البيت, distances (كم), icons, etc.
         for (text in allText) {
             if (text.isBlank() || text.length < 5) continue
@@ -2062,7 +2069,24 @@ class PriceReaderService : AccessibilityService() {
             // Skip plus codes
             if (text.matches(Regex("^[A-Z0-9]+\\+[A-Z0-9]+.*"))) continue
 
-            // This might be an address - try to find it
+            // CRITICAL: Skip if this suggestion matches DESTINATION keywords
+            // This prevents clicking on destination suggestions when we're looking for pickup
+            val matchesDestination = destKeywords.any { keyword ->
+                text.contains(keyword) && !pickupKeywords.any { text.contains(it) }
+            }
+            if (matchesDestination) {
+                Log.i(TAG, "🚖 Skipping destination suggestion: '$text'")
+                continue
+            }
+
+            // Check if this matches pickup keywords
+            val matchesPickup = pickupKeywords.any { text.contains(it) }
+            if (!matchesPickup && pickupKeywords.isNotEmpty()) {
+                // If we have pickup keywords but this doesn't match, skip it
+                continue
+            }
+
+            // This might be a valid pickup address - try to find it
             val node = findNodeWithExactText(rootNode, text)
             if (node != null) {
                 val rect = android.graphics.Rect()
@@ -2072,13 +2096,14 @@ class PriceReaderService : AccessibilityService() {
                 val width = rect.width()
                 val height = rect.height()
                 if (width > 100 && width < 1200 && height > 30 && height < 300) {
-                    Log.i(TAG, "🚖 Found suggestion element: '$text' at ${rect}")
+                    Log.i(TAG, "🚖 Found VALID pickup suggestion: '$text' at ${rect}")
                     return node
                 }
                 node.recycle()
             }
         }
 
+        Log.i(TAG, "🚖 No valid pickup suggestion found")
         return null
     }
 
