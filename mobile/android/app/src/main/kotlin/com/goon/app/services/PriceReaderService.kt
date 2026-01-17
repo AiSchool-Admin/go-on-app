@@ -859,6 +859,46 @@ class PriceReaderService : AccessibilityService() {
 
                         Log.i(TAG, "🚖 isOnPickupScreen=$isOnPickupScreen, hasSuggestionDistances=$hasSuggestionDistances")
 
+                        // CRITICAL: Check if Careem went BACK to home screen (need to click "سيارة" again)
+                        // This can happen if user presses back, or if navigation didn't work
+                        // Home screen indicators: Get more with Careem, service buttons (سيارة, حوّل محلياً, طلب المال, etc.)
+                        val hasCareemHomeIndicators = allText.any {
+                            it.contains("Get more with Careem") ||
+                            it.contains("أدخل كود الخصم") ||
+                            it.contains("استمتع بعروض") ||
+                            it.contains("Super App") ||
+                            it.contains("Careem+") ||
+                            it.contains("كريم+") ||
+                            it.contains("طعام") ||  // Food service
+                            it.contains("Bike") ||  // Bike service
+                            it.contains("توصيل")    // Delivery service
+                        }
+
+                        val hasCareemServiceButtons = allText.any { it.contains("سيارة") || it.contains("سياره") } &&
+                            allText.any { t ->
+                                t.contains("حوّل محلياً") || t.contains("حول محليا") || t.contains("طلب المال") ||
+                                t.contains("طعام") || t.contains("Bike") || t.contains("توصيل")
+                            }
+
+                        val isOnCareemHomeScreen = hasCareemHomeIndicators || hasCareemServiceButtons
+
+                        Log.i(TAG, "🚖 isOnCareemHomeScreen=$isOnCareemHomeScreen (indicators=$hasCareemHomeIndicators, serviceButtons=$hasCareemServiceButtons)")
+
+                        if (isOnCareemHomeScreen) {
+                            Log.w(TAG, "🚖 Careem went back to HOME screen during WAITING_FOR_PRICE!")
+                            Log.w(TAG, "🚖 Detected: homeIndicators=$hasCareemHomeIndicators, serviceButtons=$hasCareemServiceButtons")
+                            Log.w(TAG, "🚖 Restarting automation from FINDING_DESTINATION_FIELD to click 'سيارة' button...")
+
+                            // Reset Careem-specific flags so the car button click will be attempted again
+                            careemCarButtonClicked = false
+                            careemCarButtonClickAttempts = 0
+
+                            automationState = AutomationState.FINDING_DESTINATION_FIELD
+                            automationRetries = 0
+                            automationStep = 0
+                            return
+                        }
+
                         if (isOnPickupScreen || hasSuggestionDistances) {
                             Log.i(TAG, "🚖 Careem is on PICKUP screen (not price screen) - need to enter pickup address")
                             Log.i(TAG, "🚖 State: pickupFieldClicked=$careemPickupFieldClicked, pickupEntered=$careemPickupEntered")
