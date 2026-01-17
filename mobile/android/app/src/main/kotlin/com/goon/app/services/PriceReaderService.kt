@@ -371,6 +371,7 @@ class PriceReaderService : AccessibilityService() {
         careemUseCurrentLocationAttempted = false  // Reset current location fallback flag
         careemNoValidPickupSuggestionCount = 0  // Reset no valid pickup count
         careemPickupButtonFallbackAttempted = false  // Reset pickUp button fallback flag
+        careemPickupPhaseComplete = false  // Reset Careem pickup phase complete flag
         careemLoaderFirstSeenTime = 0L  // Reset Careem loader time
         inDriverDestinationEntered = false  // Reset InDriver destination flag
         inDriverDoneClickedTime = 0L  // Reset InDriver Done click time
@@ -444,9 +445,13 @@ class PriceReaderService : AccessibilityService() {
 
             when (automationState) {
                 AutomationState.WAITING_FOR_APP -> {
-                    // For InDriver: enter PICKUP first, then destination
+                    // For InDriver and Careem: enter PICKUP first, then destination
+                    // Careem has issues with suggestions not refreshing when pickup is entered after destination
                     if (packageName == INDRIVER_PACKAGE) {
                         Log.i(TAG, "🤖 ✓ InDriver active, transitioning to FINDING_PICKUP_FIELD...")
+                        automationState = AutomationState.FINDING_PICKUP_FIELD
+                    } else if (packageName == CAREEM_PACKAGE) {
+                        Log.i(TAG, "🤖 ✓ Careem active, transitioning to FINDING_PICKUP_FIELD (PICKUP FIRST flow)...")
                         automationState = AutomationState.FINDING_PICKUP_FIELD
                     } else {
                         Log.i(TAG, "🤖 ✓ App is active, transitioning to FINDING_DESTINATION_FIELD...")
@@ -455,47 +460,94 @@ class PriceReaderService : AccessibilityService() {
                 }
 
                 // ============================================================
-                // InDriver-specific: Enter PICKUP first
+                // InDriver and Careem: Enter PICKUP first
                 // ============================================================
                 AutomationState.FINDING_PICKUP_FIELD -> {
-                    Log.i(TAG, "🤖 [InDriver] Searching for PICKUP field ('من')...")
+                    if (packageName == CAREEM_PACKAGE) {
+                        Log.i(TAG, "🤖 [Careem] Searching for PICKUP field (PICKUP FIRST flow)...")
 
-                    val found = findAndClickInDriverPickupField(rootNode)
-                    if (found) {
-                        Log.i(TAG, "🤖 ✓✓✓ Found pickup field! Transitioning to ENTERING_PICKUP...")
-                        automationState = AutomationState.ENTERING_PICKUP
-                        automationRetries = 0
+                        // For Careem: First need to click "سيارة" button on home screen
+                        val found = findAndClickCareemPickupFieldFirst(rootNode)
+                        if (found) {
+                            Log.i(TAG, "🤖 ✓✓✓ [Careem] Found pickup field! Transitioning to ENTERING_PICKUP...")
+                            automationState = AutomationState.ENTERING_PICKUP
+                            automationRetries = 0
+                        } else {
+                            automationRetries++
+                            Log.w(TAG, "🤖 ✗ [Careem] Pickup field not found (attempt $automationRetries/${TimingConfig.MAX_RETRIES})")
+                            if (automationRetries > TimingConfig.MAX_RETRIES) {
+                                Log.e(TAG, "🤖 ✗✗✗ [Careem] FAILED: Max retries exceeded for finding pickup field")
+                                automationState = AutomationState.FAILED
+                            }
+                        }
                     } else {
-                        automationRetries++
-                        Log.w(TAG, "🤖 ✗ Pickup field not found (attempt $automationRetries/${TimingConfig.MAX_RETRIES})")
-                        if (automationRetries > TimingConfig.MAX_RETRIES) {
-                            Log.e(TAG, "🤖 ✗✗✗ FAILED: Max retries exceeded for finding pickup field")
-                            automationState = AutomationState.FAILED
+                        // InDriver flow
+                        Log.i(TAG, "🤖 [InDriver] Searching for PICKUP field ('من')...")
+
+                        val found = findAndClickInDriverPickupField(rootNode)
+                        if (found) {
+                            Log.i(TAG, "🤖 ✓✓✓ Found pickup field! Transitioning to ENTERING_PICKUP...")
+                            automationState = AutomationState.ENTERING_PICKUP
+                            automationRetries = 0
+                        } else {
+                            automationRetries++
+                            Log.w(TAG, "🤖 ✗ Pickup field not found (attempt $automationRetries/${TimingConfig.MAX_RETRIES})")
+                            if (automationRetries > TimingConfig.MAX_RETRIES) {
+                                Log.e(TAG, "🤖 ✗✗✗ FAILED: Max retries exceeded for finding pickup field")
+                                automationState = AutomationState.FAILED
+                            }
                         }
                     }
                 }
 
                 AutomationState.ENTERING_PICKUP -> {
-                    Log.i(TAG, "🤖 [InDriver] Entering pickup text: '$pickupAddress' (coords: $pickupLat, $pickupLng)")
+                    if (packageName == CAREEM_PACKAGE) {
+                        Log.i(TAG, "🤖 [Careem] Entering pickup text: '$pickupAddress' (PICKUP FIRST flow)")
 
-                    val entered = enterInDriverPickupText(rootNode)
-                    if (entered) {
-                        Log.i(TAG, "🤖 ✓ Entered pickup!")
-                        inDriverPickupEntered = true
-                        latestPrices.remove(packageName)  // Clear any cached price
+                        val entered = enterCareemPickupTextFirst(rootNode)
+                        if (entered) {
+                            Log.i(TAG, "🤖 ✓ [Careem] Entered pickup!")
+                            careemPickupEntered = true
+                            careemPickupFieldClicked = true  // Mark so selectFirstSuggestion uses pickup address
+                            latestPrices.remove(packageName)  // Clear any cached price
 
-                        // CRITICAL: Go DIRECTLY to destination field - don't handle suggestions yet!
-                        // We need to enter BOTH pickup and destination BEFORE clicking any suggestions
-                        Log.i(TAG, "🤖 ✓ Now going DIRECTLY to FINDING_DESTINATION_FIELD (skip suggestions)...")
-                        automationState = AutomationState.FINDING_DESTINATION_FIELD
-                        automationRetries = 0
-                        automationStep = 0
+                            // For Careem: Go to WAITING_FOR_SUGGESTIONS to wait for PICKUP suggestions
+                            // After pickup suggestion is selected, we'll then enter destination
+                            Log.i(TAG, "🤖 ✓ [Careem] Now going to WAITING_FOR_SUGGESTIONS for pickup...")
+                            automationState = AutomationState.WAITING_FOR_SUGGESTIONS
+                            automationRetries = 0
+                            automationStep = 0
+                        } else {
+                            Log.w(TAG, "🤖 ✗ [Careem] Failed to enter pickup text")
+                            automationRetries++
+                            if (automationRetries > 3) {
+                                Log.e(TAG, "🤖 ✗✗✗ [Careem] Pickup entry FAILED")
+                                automationState = AutomationState.FAILED
+                            }
+                        }
                     } else {
-                        Log.w(TAG, "🤖 ✗ Failed to enter pickup text")
-                        automationRetries++
-                        if (automationRetries > 3) {
-                            Log.e(TAG, "🤖 ✗✗✗ InDriver pickup entry FAILED")
-                            automationState = AutomationState.FAILED
+                        // InDriver flow
+                        Log.i(TAG, "🤖 [InDriver] Entering pickup text: '$pickupAddress' (coords: $pickupLat, $pickupLng)")
+
+                        val entered = enterInDriverPickupText(rootNode)
+                        if (entered) {
+                            Log.i(TAG, "🤖 ✓ Entered pickup!")
+                            inDriverPickupEntered = true
+                            latestPrices.remove(packageName)  // Clear any cached price
+
+                            // CRITICAL: Go DIRECTLY to destination field - don't handle suggestions yet!
+                            // We need to enter BOTH pickup and destination BEFORE clicking any suggestions
+                            Log.i(TAG, "🤖 ✓ Now going DIRECTLY to FINDING_DESTINATION_FIELD (skip suggestions)...")
+                            automationState = AutomationState.FINDING_DESTINATION_FIELD
+                            automationRetries = 0
+                            automationStep = 0
+                        } else {
+                            Log.w(TAG, "🤖 ✗ Failed to enter pickup text")
+                            automationRetries++
+                            if (automationRetries > 3) {
+                                Log.e(TAG, "🤖 ✗✗✗ InDriver pickup entry FAILED")
+                                automationState = AutomationState.FAILED
+                            }
                         }
                     }
                 }
@@ -527,7 +579,12 @@ class PriceReaderService : AccessibilityService() {
                 // Common destination entry states
                 // ============================================================
                 AutomationState.FINDING_DESTINATION_FIELD -> {
-                    Log.i(TAG, "🤖 Searching for destination field...")
+                    // Log additional info for Careem PICKUP FIRST flow
+                    if (packageName == CAREEM_PACKAGE && careemPickupPhaseComplete) {
+                        Log.i(TAG, "🤖 [Careem PICKUP FIRST] Searching for DESTINATION field (pickup already done)...")
+                    } else {
+                        Log.i(TAG, "🤖 Searching for destination field...")
+                    }
 
                     // CRITICAL: For InDriver, check if prices are ALREADY cached (InDriver shows prices on initial map)
                     if (packageName == INDRIVER_PACKAGE) {
@@ -746,15 +803,31 @@ class PriceReaderService : AccessibilityService() {
 
                     val selected = selectFirstSuggestion(rootNode, packageName)
                     if (selected) {
-                        Log.i(TAG, "🤖 ✓ Selected suggestion, transitioning to WAITING_FOR_PRICE...")
+                        Log.i(TAG, "🤖 ✓ Selected suggestion")
 
-                        // CRITICAL FIX: If this was a Careem PICKUP suggestion selection,
+                        // CRITICAL: For Careem PICKUP FIRST flow
+                        // If we just selected PICKUP suggestion (pickup phase not complete), go to destination entry
+                        if (packageName == CAREEM_PACKAGE && careemPickupFieldClicked && !careemPickupPhaseComplete) {
+                            Log.i(TAG, "🚖 [Careem] PICKUP suggestion selected! Now moving to DESTINATION entry...")
+                            careemPickupSuggestionClicked = true
+                            careemPickupPhaseComplete = true  // Mark pickup phase as done
+                            careemPickupFieldClicked = false  // Reset so next selectFirstSuggestion uses destination address
+
+                            // Go to FINDING_DESTINATION_FIELD for destination entry
+                            automationState = AutomationState.FINDING_DESTINATION_FIELD
+                            automationRetries = 0
+                            automationStep = 0
+                            return
+                        }
+
+                        // CRITICAL FIX: If this was a Careem PICKUP suggestion selection (legacy path),
                         // mark it so WAITING_FOR_PRICE doesn't try to click it again
                         if (packageName == CAREEM_PACKAGE && careemPickupFieldClicked) {
                             careemPickupSuggestionClicked = true
                             Log.i(TAG, "🚖 Marked pickup suggestion as clicked (via SELECTING_SUGGESTION state)")
                         }
 
+                        Log.i(TAG, "🤖 ✓ Transitioning to WAITING_FOR_PRICE...")
                         automationState = AutomationState.WAITING_FOR_PRICE
                         automationRetries = 0
                         automationStep = 0
@@ -762,6 +835,17 @@ class PriceReaderService : AccessibilityService() {
                         automationRetries++
                         Log.w(TAG, "🤖 ✗ No suggestion selected (attempt $automationRetries/${TimingConfig.MAX_RETRIES})")
                         if (automationRetries > TimingConfig.MAX_RETRIES) {
+                            // For Careem PICKUP FIRST flow: if pickup suggestion failed, try moving to destination anyway
+                            if (packageName == CAREEM_PACKAGE && !careemPickupPhaseComplete) {
+                                Log.w(TAG, "🚖 [Careem] Pickup suggestion selection failed - trying to proceed to destination entry anyway")
+                                careemPickupPhaseComplete = true  // Mark pickup phase as done
+                                careemPickupFieldClicked = false
+                                automationState = AutomationState.FINDING_DESTINATION_FIELD
+                                automationRetries = 0
+                                automationStep = 0
+                                return
+                            }
+
                             // Try scanning for price anyway
                             Log.w(TAG, "🤖 Skipping to WAITING_FOR_PRICE despite selection failure")
                             automationState = AutomationState.WAITING_FOR_PRICE
@@ -910,8 +994,9 @@ class PriceReaderService : AccessibilityService() {
                             careemUseCurrentLocationAttempted = false
                             careemNoValidPickupSuggestionCount = 0
                             careemPickupButtonFallbackAttempted = false
+                            careemPickupPhaseComplete = false  // Reset pickup phase for new attempt
 
-                            automationState = AutomationState.FINDING_DESTINATION_FIELD
+                            automationState = AutomationState.FINDING_PICKUP_FIELD  // Start from pickup first (PICKUP FIRST flow)
                             automationRetries = 0
                             automationStep = 0
                             return
@@ -1589,6 +1674,278 @@ class PriceReaderService : AccessibilityService() {
     private var careemUseCurrentLocationAttempted = false  // Track if we tried "use current location" fallback
     private var careemNoValidPickupSuggestionCount = 0  // Count consecutive failures to find valid pickup suggestions
     private var careemPickupButtonFallbackAttempted = false  // Track if we tried clicking "pickUp" button fallback
+    private var careemPickupPhaseComplete = false  // Track if Careem pickup entry is done (PICKUP FIRST flow)
+
+    /**
+     * Find and click Careem PICKUP field for PICKUP FIRST flow
+     * This is called BEFORE destination entry to solve the suggestion refresh issue
+     * Flow: Click "سيارة" → Find pickup field → Click it → Enter pickup address
+     */
+    private fun findAndClickCareemPickupFieldFirst(rootNode: AccessibilityNodeInfo): Boolean {
+        Log.i(TAG, "🚖 ========== CAREEM PICKUP FIELD FIRST SEARCH ==========")
+
+        // Debug: Log ALL visible text on screen
+        Log.i(TAG, "🚖 === ALL VISIBLE TEXT ON CAREEM SCREEN ===")
+        val allText = getAllTextFromNode(rootNode)
+        allText.take(20).forEachIndexed { index, text ->
+            Log.i(TAG, "🚖 [$index] '$text'")
+        }
+        Log.i(TAG, "🚖 === END OF VISIBLE TEXT (${allText.size} items) ===")
+
+        // STEP 1: Check if we're on Careem HOME screen (need to click "سيارة" first)
+        val hasCareemHomeIndicators = allText.any {
+            it.contains("Get more with Careem") ||
+            it.contains("أدخل كود الخصم") ||
+            it.contains("استمتع بعروض") ||
+            it.contains("مرحبا") ||
+            it.contains("أهلا") ||
+            it.contains("Super App") ||
+            it.contains("Careem+") ||
+            it.contains("كريم+") ||
+            it.contains("طعام") ||  // Food service
+            it.contains("Bike") ||  // Bike service
+            it.contains("توصيل")    // Delivery service
+        }
+
+        val hasCareemServiceButtons = allText.any { it.contains("سيارة") || it.contains("سياره") } &&
+            allText.any { t ->
+                t.contains("حول محليا") || t.contains("طلب المال") ||
+                t.contains("طعام") || t.contains("Bike") || t.contains("توصيل")
+            }
+
+        val isOnHomeScreen = hasCareemHomeIndicators || hasCareemServiceButtons
+
+        // STEP 1: If on home screen, click "سيارة" button first
+        if (isOnHomeScreen && !careemCarButtonClicked) {
+            Log.i(TAG, "🚖 [PICKUP FIRST] Detected Careem HOME screen - need to click 'سيارة' (Car) button first")
+
+            // Look for "سيارة" button using multiple strategies
+            val carButtonTexts = listOf("سيارة", "Car", "Ride", "سياره")
+            for (buttonText in carButtonTexts) {
+                val nodes = rootNode.findAccessibilityNodeInfosByText(buttonText)
+                if (nodes.isNotEmpty()) {
+                    Log.i(TAG, "🚖 [PICKUP FIRST] Found ${nodes.size} nodes for '$buttonText'")
+                    for (node in nodes) {
+                        if (smartClick(node)) {
+                            Log.i(TAG, "🚖 [PICKUP FIRST] ✓ Clicked '$buttonText' button - waiting for ride screen...")
+                            careemCarButtonClicked = true
+                            nodes.forEach { it.recycle() }
+                            Thread.sleep(TimingConfig.animationWait)
+                            return false  // Return false to allow re-entry after screen loads
+                        }
+                        // Try gesture click
+                        if (careemGestureClick(node)) {
+                            Log.i(TAG, "🚖 [PICKUP FIRST] ✓ Gesture clicked '$buttonText' button")
+                            careemCarButtonClicked = true
+                            nodes.forEach { it.recycle() }
+                            Thread.sleep(TimingConfig.animationWait)
+                            return false
+                        }
+                    }
+                    nodes.forEach { it.recycle() }
+                }
+            }
+
+            Log.w(TAG, "🚖 [PICKUP FIRST] Could not find 'سيارة' button on home screen")
+            careemCarButtonClicked = true  // Mark to avoid infinite loop
+            return false
+        }
+
+        // STEP 2: We're on ride booking screen - find and click the PICKUP field
+        Log.i(TAG, "🚖 [PICKUP FIRST] On ride booking screen - looking for PICKUP field...")
+
+        // Strategy 1: Look for "pickUp" element
+        val pickupNode = findNodeWithText(rootNode, "pickUp")
+        if (pickupNode != null) {
+            Log.i(TAG, "🚖 [PICKUP FIRST] Found 'pickUp' node")
+            if (clickNodeOrParent(pickupNode)) {
+                Log.i(TAG, "🚖 [PICKUP FIRST] ✓ Clicked 'pickUp' node")
+                pickupNode.recycle()
+                Thread.sleep(500)
+                return true
+            }
+            if (careemGestureClick(pickupNode)) {
+                Log.i(TAG, "🚖 [PICKUP FIRST] ✓ Gesture clicked 'pickUp' node")
+                pickupNode.recycle()
+                Thread.sleep(500)
+                return true
+            }
+            pickupNode.recycle()
+        }
+
+        // Strategy 2: Look for "البيت" (Home) or pickup-related text
+        val pickupTexts = listOf("البيت", "Home", "من أين", "Pickup", "من", "نقطة الانطلاق")
+        for (pickupText in pickupTexts) {
+            val nodes = rootNode.findAccessibilityNodeInfosByText(pickupText)
+            if (nodes.isNotEmpty()) {
+                Log.i(TAG, "🚖 [PICKUP FIRST] Found ${nodes.size} nodes for '$pickupText'")
+                for (node in nodes) {
+                    // Skip if this is inside the destination area
+                    val nodeText = node.text?.toString() ?: ""
+                    val destKeywords = destinationAddress.split(" ").filter { it.length > 2 }
+                    val isDestinationRelated = destKeywords.any { nodeText.contains(it) }
+                    if (isDestinationRelated) {
+                        Log.i(TAG, "🚖 [PICKUP FIRST] Skipping - appears to be destination related")
+                        continue
+                    }
+
+                    if (clickNodeOrParent(node)) {
+                        Log.i(TAG, "🚖 [PICKUP FIRST] ✓ Clicked '$pickupText' node")
+                        nodes.forEach { it.recycle() }
+                        Thread.sleep(500)
+                        return true
+                    }
+                    if (careemGestureClick(node)) {
+                        Log.i(TAG, "🚖 [PICKUP FIRST] ✓ Gesture clicked '$pickupText' node")
+                        nodes.forEach { it.recycle() }
+                        Thread.sleep(500)
+                        return true
+                    }
+                }
+                nodes.forEach { it.recycle() }
+            }
+        }
+
+        // Strategy 3: Find EditTexts and click the TOP one (pickup is usually at top)
+        val editTexts = mutableListOf<AccessibilityNodeInfo>()
+        findAllEditTexts(rootNode, editTexts)
+
+        if (editTexts.isNotEmpty()) {
+            Log.i(TAG, "🚖 [PICKUP FIRST] Found ${editTexts.size} EditText fields")
+
+            // Sort by Y position
+            val sortedEditTexts = editTexts.toMutableList()
+            sortedEditTexts.sortWith { a, b ->
+                val rectA = android.graphics.Rect()
+                val rectB = android.graphics.Rect()
+                a.getBoundsInScreen(rectA)
+                b.getBoundsInScreen(rectB)
+                rectA.top.compareTo(rectB.top)
+            }
+
+            // Click the FIRST (top) EditText - this should be the pickup field
+            val topEditText = sortedEditTexts.first()
+            val rect = android.graphics.Rect()
+            topEditText.getBoundsInScreen(rect)
+            val text = topEditText.text?.toString() ?: ""
+            Log.i(TAG, "🚖 [PICKUP FIRST] Top EditText: y=${rect.top}, text='$text'")
+
+            if (topEditText.performAction(AccessibilityNodeInfo.ACTION_FOCUS)) {
+                Log.i(TAG, "🚖 [PICKUP FIRST] ✓ Focused top EditText")
+                editTexts.forEach { try { it.recycle() } catch (e: Exception) {} }
+                Thread.sleep(300)
+                return true
+            }
+            if (topEditText.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                Log.i(TAG, "🚖 [PICKUP FIRST] ✓ Clicked top EditText")
+                editTexts.forEach { try { it.recycle() } catch (e: Exception) {} }
+                Thread.sleep(300)
+                return true
+            }
+            if (careemGestureClick(topEditText)) {
+                Log.i(TAG, "🚖 [PICKUP FIRST] ✓ Gesture clicked top EditText")
+                editTexts.forEach { try { it.recycle() } catch (e: Exception) {} }
+                Thread.sleep(300)
+                return true
+            }
+
+            editTexts.forEach { try { it.recycle() } catch (e: Exception) {} }
+        }
+
+        Log.w(TAG, "🚖 [PICKUP FIRST] ✗ Could not find pickup field")
+        return false
+    }
+
+    /**
+     * Enter Careem pickup address text for PICKUP FIRST flow
+     * Called after clickingthe pickup field in PICKUP FIRST flow
+     */
+    private fun enterCareemPickupTextFirst(rootNode: AccessibilityNodeInfo): Boolean {
+        Log.i(TAG, "🚖 ========== CAREEM PICKUP TEXT ENTRY (PICKUP FIRST) ==========")
+        Log.i(TAG, "🚖 Pickup to enter: $pickupAddress")
+
+        // Find ALL EditText fields
+        val editTexts = mutableListOf<AccessibilityNodeInfo>()
+        findAllEditTexts(rootNode, editTexts)
+
+        Log.i(TAG, "🚖 [PICKUP FIRST] Found ${editTexts.size} EditText fields")
+
+        // Sort by Y position - pickup field is usually at the TOP
+        val sortedEditTexts = editTexts.toMutableList()
+        sortedEditTexts.sortWith { a, b ->
+            val rectA = android.graphics.Rect()
+            val rectB = android.graphics.Rect()
+            a.getBoundsInScreen(rectA)
+            b.getBoundsInScreen(rectB)
+            rectA.top.compareTo(rectB.top)
+        }
+
+        // Log all EditTexts with their positions
+        sortedEditTexts.forEachIndexed { index, et ->
+            val rect = android.graphics.Rect()
+            et.getBoundsInScreen(rect)
+            val text = et.text?.toString() ?: ""
+            val hint = et.hintText?.toString() ?: ""
+            Log.i(TAG, "🚖 [PICKUP FIRST] EditText[$index]: y=${rect.top}, text='$text', hint='$hint'")
+        }
+
+        // Use the FIRST (topmost) EditText - this is the pickup field
+        for (editText in sortedEditTexts) {
+            val currentText = editText.text?.toString() ?: ""
+            val rect = android.graphics.Rect()
+            editText.getBoundsInScreen(rect)
+
+            // Skip if this field contains destination-related text
+            val destKeywords = destinationAddress.split(" ").filter { it.length > 3 }
+            val hasDestination = destKeywords.any { currentText.contains(it) }
+
+            if (hasDestination) {
+                Log.i(TAG, "🚖 [PICKUP FIRST] Skipping field with destination text: '$currentText'")
+                continue
+            }
+
+            Log.i(TAG, "🚖 [PICKUP FIRST] Using EditText at y=${rect.top} for pickup")
+
+            // Clear existing text first
+            val clearArgs = android.os.Bundle()
+            clearArgs.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "")
+            editText.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, clearArgs)
+            Thread.sleep(100)
+
+            // Enter the pickup address
+            val arguments = android.os.Bundle()
+            arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, pickupAddress)
+
+            if (editText.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)) {
+                Log.i(TAG, "🚖 [PICKUP FIRST] ✓ Entered pickup address: $pickupAddress")
+                editTexts.forEach { try { it.recycle() } catch (e: Exception) {} }
+                Thread.sleep(TimingConfig.textInputDelay)
+                return true
+            }
+        }
+
+        editTexts.forEach { try { it.recycle() } catch (e: Exception) {} }
+
+        // Fallback: try focused input
+        val focusedInput = findFocusedEditText(rootNode)
+        if (focusedInput != null) {
+            Log.i(TAG, "🚖 [PICKUP FIRST] Fallback: Using focused input field")
+
+            val arguments = android.os.Bundle()
+            arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, pickupAddress)
+
+            if (focusedInput.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)) {
+                Log.i(TAG, "🚖 [PICKUP FIRST] ✓ Entered pickup address via focused field: $pickupAddress")
+                focusedInput.recycle()
+                Thread.sleep(TimingConfig.textInputDelay)
+                return true
+            }
+            focusedInput.recycle()
+        }
+
+        Log.w(TAG, "🚖 [PICKUP FIRST] ✗ Could not enter pickup address")
+        return false
+    }
 
     /**
      * Find and click Careem destination field
@@ -1598,7 +1955,12 @@ class PriceReaderService : AccessibilityService() {
      * 3. Then the destination field appears
      */
     private fun findAndClickCareemDestinationField(rootNode: AccessibilityNodeInfo): Boolean {
-        Log.i(TAG, "🚖 ========== CAREEM DESTINATION FIELD SEARCH ==========")
+        // Log if we're in PICKUP FIRST flow
+        if (careemPickupPhaseComplete) {
+            Log.i(TAG, "🚖 ========== CAREEM DESTINATION FIELD SEARCH (PICKUP FIRST - pickup already done) ==========")
+        } else {
+            Log.i(TAG, "🚖 ========== CAREEM DESTINATION FIELD SEARCH ==========")
+        }
 
         // Debug: Log ALL visible text on screen
         Log.i(TAG, "🚖 === ALL VISIBLE TEXT ON CAREEM SCREEN ===")
