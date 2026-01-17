@@ -1816,18 +1816,21 @@ class PriceReaderService : AccessibilityService() {
         if (isOnHomeScreen && !careemCarButtonClicked) {
             Log.i(TAG, "🚖 [PICKUP FIRST] Detected Careem HOME screen - need to click 'سيارة' (Car) button first")
 
-            // Look for "سيارة" button using multiple strategies
-            val carButtonTexts = listOf("سيارة", "Car", "Ride", "سياره")
+            // Look for "سيارة" button using NORMALIZED text search
+            // Android's findAccessibilityNodeInfosByText doesn't handle Unicode normalization
+            // so we use our custom function that handles RTL marks and zero-width characters
+            val carButtonTexts = listOf("سيارة", "سياره", "Car", "Ride")
             for (buttonText in carButtonTexts) {
-                val nodes = rootNode.findAccessibilityNodeInfosByText(buttonText)
+                // Use normalized text search instead of Android's findAccessibilityNodeInfosByText
+                val nodes = findAllNodesWithNormalizedText(rootNode, buttonText)
                 if (nodes.isNotEmpty()) {
-                    Log.i(TAG, "🚖 [PICKUP FIRST] Found ${nodes.size} nodes for '$buttonText'")
+                    Log.i(TAG, "🚖 [PICKUP FIRST] Found ${nodes.size} nodes for '$buttonText' (normalized search)")
                     for (node in nodes) {
                         if (smartClick(node)) {
                             Log.i(TAG, "🚖 [PICKUP FIRST] ✓ Clicked '$buttonText' button - waiting for ride screen...")
                             careemCarButtonClicked = true
                             careemCarButtonClickAttempts = 0  // Reset attempts on success
-                            nodes.forEach { it.recycle() }
+                            nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
                             Thread.sleep(TimingConfig.animationWait)
                             return false  // Return false to allow re-entry after screen loads
                         }
@@ -1836,12 +1839,12 @@ class PriceReaderService : AccessibilityService() {
                             Log.i(TAG, "🚖 [PICKUP FIRST] ✓ Gesture clicked '$buttonText' button")
                             careemCarButtonClicked = true
                             careemCarButtonClickAttempts = 0  // Reset attempts on success
-                            nodes.forEach { it.recycle() }
+                            nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
                             Thread.sleep(TimingConfig.animationWait)
                             return false
                         }
                     }
-                    nodes.forEach { it.recycle() }
+                    nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
                 }
             }
 
@@ -2121,22 +2124,33 @@ class PriceReaderService : AccessibilityService() {
             Log.i(TAG, "🚖 Detected Careem HOME screen - need to click 'سيارة' (Car) button first")
 
             // Look for "سيارة" button using multiple strategies
-            val carButtonTexts = listOf("سيارة", "Car", "Ride", "سياره")
+            // Use NORMALIZED text search to handle invisible Unicode characters (RTL marks, zero-width spaces)
+            val carButtonTexts = listOf("سيارة", "سياره", "Car", "Ride")
 
-            // Strategy 1: Use findAccessibilityNodeInfosByText
+            // Strategy 1: Use NORMALIZED text search (handles Unicode issues)
+            Log.i(TAG, "🚖 Strategy 1: Using normalized text search...")
             for (buttonText in carButtonTexts) {
-                val nodes = rootNode.findAccessibilityNodeInfosByText(buttonText)
-                Log.i(TAG, "🚖 findAccessibilityNodeInfosByText('$buttonText') returned ${nodes.size} nodes")
+                val nodes = findAllNodesWithNormalizedText(rootNode, buttonText)
+                Log.i(TAG, "🚖 findAllNodesWithNormalizedText('$buttonText') returned ${nodes.size} nodes")
                 for (node in nodes) {
-                    Log.i(TAG, "🚖 Found '$buttonText' button via system search, attempting click...")
+                    Log.i(TAG, "🚖 Found '$buttonText' button via normalized search, attempting click...")
 
                     // Try clicking the node or its ancestors
                     if (smartClick(node)) {
                         Log.i(TAG, "🚖 ✓ Clicked on '$buttonText' button!")
                         careemCarButtonClicked = true
-                        node.recycle()
+                        nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
                         Thread.sleep(TimingConfig.animationWait)
                         return true // Will retry and find destination field
+                    }
+
+                    // Try gesture click directly
+                    if (careemGestureClick(node)) {
+                        Log.i(TAG, "🚖 ✓ Gesture clicked '$buttonText' button!")
+                        careemCarButtonClicked = true
+                        nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                        Thread.sleep(TimingConfig.animationWait)
+                        return true
                     }
 
                     // Try ancestors
@@ -2147,7 +2161,7 @@ class PriceReaderService : AccessibilityService() {
                             Log.i(TAG, "🚖 ✓ Clicked on ancestor level $level of '$buttonText'!")
                             careemCarButtonClicked = true
                             current.recycle()
-                            node.recycle()
+                            nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
                             Thread.sleep(TimingConfig.animationWait)
                             return true
                         }
@@ -2155,57 +2169,21 @@ class PriceReaderService : AccessibilityService() {
                         current.recycle()
                         current = parent
                     }
-                    node.recycle()
                 }
+                nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
             }
 
-            // Strategy 2: Use recursive findNodeWithText (custom search)
-            Log.i(TAG, "🚖 Strategy 2: Using recursive findNodeWithText...")
+            // Strategy 2: Try gesture click on node bounds using normalized search
+            Log.i(TAG, "🚖 Strategy 2: Trying gesture click on 'سيارة' node bounds...")
             for (buttonText in carButtonTexts) {
-                val node = findNodeWithText(rootNode, buttonText)
-                if (node != null) {
-                    Log.i(TAG, "🚖 Found '$buttonText' via recursive search, attempting click...")
-
-                    // Try clicking the node itself
-                    if (smartClick(node)) {
-                        Log.i(TAG, "🚖 ✓ Clicked on '$buttonText' button via recursive search!")
-                        careemCarButtonClicked = true
-                        node.recycle()
-                        Thread.sleep(TimingConfig.animationWait)
-                        return true
-                    }
-
-                    // Try ancestors
-                    var current = node.parent
-                    for (level in 1..4) {
-                        if (current == null) break
-                        if (smartClick(current)) {
-                            Log.i(TAG, "🚖 ✓ Clicked on ancestor level $level of '$buttonText' via recursive search!")
-                            careemCarButtonClicked = true
-                            current.recycle()
-                            node.recycle()
-                            Thread.sleep(TimingConfig.animationWait)
-                            return true
-                        }
-                        val parent = current.parent
-                        current.recycle()
-                        current = parent
-                    }
-                    node.recycle()
-                }
-            }
-
-            // Strategy 3: Try gesture click on node bounds (if we found the node but couldn't click it)
-            Log.i(TAG, "🚖 Strategy 3: Trying gesture click on 'سيارة' node bounds...")
-            for (buttonText in carButtonTexts) {
-                val nodes = rootNode.findAccessibilityNodeInfosByText(buttonText)
+                val nodes = findAllNodesWithNormalizedText(rootNode, buttonText)
                 for (node in nodes) {
                     val rect = android.graphics.Rect()
                     node.getBoundsInScreen(rect)
                     if (rect.width() > 0 && rect.height() > 0) {
                         val centerX = rect.centerX().toFloat()
                         val centerY = rect.centerY().toFloat()
-                        Log.i(TAG, "🚖 Strategy 3: Found '$buttonText' at ($centerX, $centerY), using gesture click")
+                        Log.i(TAG, "🚖 Strategy 2: Found '$buttonText' at ($centerX, $centerY), using gesture click")
 
                         try {
                             val path = android.graphics.Path()
@@ -2216,19 +2194,19 @@ class PriceReaderService : AccessibilityService() {
                                 .build()
 
                             dispatchGesture(gesture, null, null)
-                            Log.i(TAG, "🚖 ✓ Strategy 3: Gesture click dispatched on '$buttonText' bounds")
+                            Log.i(TAG, "🚖 ✓ Strategy 2: Gesture click dispatched on '$buttonText' bounds")
 
                             careemCarButtonClicked = true
                             careemCarButtonClickAttempts++
-                            node.recycle()
+                            nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
                             Thread.sleep(TimingConfig.animationWait)
                             return true
                         } catch (e: Exception) {
-                            Log.e(TAG, "🚖 Strategy 3 gesture click failed: ${e.message}")
+                            Log.e(TAG, "🚖 Strategy 2 gesture click failed: ${e.message}")
                         }
                     }
-                    node.recycle()
                 }
+                nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
             }
 
             // Strategy 4: Try clicking by screen position (multiple positions based on attempts)
@@ -7599,6 +7577,80 @@ class PriceReaderService : AccessibilityService() {
         }
 
         return null
+    }
+
+    /**
+     * Find a node containing specific text using NORMALIZED comparison
+     * This handles invisible Unicode characters (RTL marks, zero-width spaces) that
+     * Android's findAccessibilityNodeInfosByText doesn't handle properly
+     */
+    private fun findNodeWithNormalizedText(node: AccessibilityNodeInfo, targetText: String): AccessibilityNodeInfo? {
+        // Check this node's text using normalized comparison
+        val nodeText = node.text?.toString()?.trim() ?: ""
+        val nodeDesc = node.contentDescription?.toString()?.trim() ?: ""
+
+        if (normalizedContains(nodeText, targetText) || normalizedContains(nodeDesc, targetText)) {
+            Log.i(TAG, "🔍 Found node with normalized '$targetText': text='$nodeText', desc='$nodeDesc', clickable=${node.isClickable}")
+            // Return a copy of this node (don't recycle it, caller will handle)
+            return AccessibilityNodeInfo.obtain(node)
+        }
+
+        // Recursively search children
+        for (i in 0 until node.childCount) {
+            try {
+                val child = node.getChild(i)
+                if (child != null) {
+                    val found = findNodeWithNormalizedText(child, targetText)
+                    if (found != null) {
+                        child.recycle()
+                        return found
+                    }
+                    child.recycle()
+                }
+            } catch (e: Exception) {
+                // Skip problematic nodes
+            }
+        }
+
+        return null
+    }
+
+    /**
+     * Find ALL nodes containing specific text using NORMALIZED comparison
+     * Returns a list of all matching nodes (caller must recycle them)
+     */
+    private fun findAllNodesWithNormalizedText(node: AccessibilityNodeInfo, targetText: String): MutableList<AccessibilityNodeInfo> {
+        val results = mutableListOf<AccessibilityNodeInfo>()
+        findAllNodesWithNormalizedTextRecursive(node, targetText, results)
+        return results
+    }
+
+    private fun findAllNodesWithNormalizedTextRecursive(
+        node: AccessibilityNodeInfo,
+        targetText: String,
+        results: MutableList<AccessibilityNodeInfo>
+    ) {
+        // Check this node's text using normalized comparison
+        val nodeText = node.text?.toString()?.trim() ?: ""
+        val nodeDesc = node.contentDescription?.toString()?.trim() ?: ""
+
+        if (normalizedContains(nodeText, targetText) || normalizedContains(nodeDesc, targetText)) {
+            Log.i(TAG, "🔍 Found node with normalized '$targetText': text='$nodeText', desc='$nodeDesc', clickable=${node.isClickable}")
+            results.add(AccessibilityNodeInfo.obtain(node))
+        }
+
+        // Recursively search children
+        for (i in 0 until node.childCount) {
+            try {
+                val child = node.getChild(i)
+                if (child != null) {
+                    findAllNodesWithNormalizedTextRecursive(child, targetText, results)
+                    child.recycle()
+                }
+            } catch (e: Exception) {
+                // Skip problematic nodes
+            }
+        }
     }
 
     /**
