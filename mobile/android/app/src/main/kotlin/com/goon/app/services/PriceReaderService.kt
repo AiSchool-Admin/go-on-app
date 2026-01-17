@@ -361,6 +361,7 @@ class PriceReaderService : AccessibilityService() {
         didiDestinationClickAttempts = 0  // Reset DiDi destination click attempts
         didiSuggestionRetryCount = 0  // Reset DiDi suggestion retry counter
         careemCarButtonClicked = false  // Reset Careem car button flag
+        careemCarButtonClickAttempts = 0  // Reset Careem car button click attempts
         careemSearchBarClicked = false  // Reset Careem search bar click flag
         careemSearchBarClickAttempts = 0  // Reset search bar click attempts
         careemPickupFieldClicked = false  // Reset Careem pickup field click flag
@@ -1406,6 +1407,7 @@ class PriceReaderService : AccessibilityService() {
 
     // Track Careem state - need to click "سيارة" first before destination
     private var careemCarButtonClicked = false
+    private var careemCarButtonClickAttempts = 0  // Track how many times we've tried clicking the car button
     private var careemSearchBarClicked = false   // Track if we clicked the search bar on map view
     private var careemSearchBarClickAttempts = 0 // Track search bar click attempts for different positions
     private var careemPickupFieldClicked = false  // Track if we clicked the pickup field to open edit mode
@@ -1433,12 +1435,28 @@ class PriceReaderService : AccessibilityService() {
         Log.i(TAG, "🚖 === END OF VISIBLE TEXT (${allText.size} items) ===")
 
         // STEP 1: Check if we're on Careem HOME screen (need to click "سيارة" first)
-        val isOnHomeScreen = allText.any {
+        // Careem Super App shows various services: سيارة (Ride), طعام (Food), توصيل (Delivery), etc.
+        val hasCareemHomeIndicators = allText.any {
             it.contains("Get more with Careem") ||
             it.contains("أدخل كود الخصم") ||
             it.contains("استمتع بعروض") ||
-            (it.contains("سيارة") && allText.any { t -> t.contains("حول محليا") || t.contains("طلب المال") })
+            it.contains("مرحبا") ||
+            it.contains("أهلا") ||
+            it.contains("Super App") ||
+            it.contains("Careem+") ||
+            it.contains("كريم+") ||
+            it.contains("طعام") ||  // Food service
+            it.contains("Bike") ||  // Bike service
+            it.contains("توصيل")    // Delivery service
         }
+
+        val hasCareemServiceButtons = allText.any { it.contains("سيارة") || it.contains("سياره") } &&
+            allText.any { t ->
+                t.contains("حول محليا") || t.contains("طلب المال") ||
+                t.contains("طعام") || t.contains("Bike") || t.contains("توصيل")
+            }
+
+        val isOnHomeScreen = hasCareemHomeIndicators || hasCareemServiceButtons
 
         if (isOnHomeScreen && !careemCarButtonClicked) {
             Log.i(TAG, "🚖 Detected Careem HOME screen - need to click 'سيارة' (Car) button first")
@@ -1518,36 +1536,99 @@ class PriceReaderService : AccessibilityService() {
                 }
             }
 
-            // Strategy 3: Try clicking by screen position (bottom navigation area)
-            Log.i(TAG, "🚖 Strategy 3: Trying gesture click on likely button position...")
-            try {
-                val displayMetrics = resources.displayMetrics
-                val screenWidth = displayMetrics.widthPixels
-                val screenHeight = displayMetrics.heightPixels
+            // Strategy 3: Try gesture click on node bounds (if we found the node but couldn't click it)
+            Log.i(TAG, "🚖 Strategy 3: Trying gesture click on 'سيارة' node bounds...")
+            for (buttonText in carButtonTexts) {
+                val nodes = rootNode.findAccessibilityNodeInfosByText(buttonText)
+                for (node in nodes) {
+                    val rect = android.graphics.Rect()
+                    node.getBoundsInScreen(rect)
+                    if (rect.width() > 0 && rect.height() > 0) {
+                        val centerX = rect.centerX().toFloat()
+                        val centerY = rect.centerY().toFloat()
+                        Log.i(TAG, "🚖 Strategy 3: Found '$buttonText' at ($centerX, $centerY), using gesture click")
 
-                // Careem "سيارة" button is typically in the bottom navigation bar, first item
-                // Usually at around 12.5% from left edge (first of 4 items), at about 92% from top
-                val targetX = (screenWidth * 0.125f).toInt()
-                val targetY = (screenHeight * 0.92f).toInt()
+                        try {
+                            val path = android.graphics.Path()
+                            path.moveTo(centerX, centerY)
 
-                Log.i(TAG, "🚖 Attempting gesture click at ($targetX, $targetY) for Car button")
+                            val gesture = android.accessibilityservice.GestureDescription.Builder()
+                                .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 100))
+                                .build()
 
-                val path = android.graphics.Path()
-                path.moveTo(targetX.toFloat(), targetY.toFloat())
+                            dispatchGesture(gesture, null, null)
+                            Log.i(TAG, "🚖 ✓ Strategy 3: Gesture click dispatched on '$buttonText' bounds")
 
-                val gesture = android.accessibilityservice.GestureDescription.Builder()
-                    .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 100))
-                    .build()
+                            careemCarButtonClicked = true
+                            careemCarButtonClickAttempts++
+                            node.recycle()
+                            Thread.sleep(TimingConfig.animationWait)
+                            return true
+                        } catch (e: Exception) {
+                            Log.e(TAG, "🚖 Strategy 3 gesture click failed: ${e.message}")
+                        }
+                    }
+                    node.recycle()
+                }
+            }
 
-                // Use null callback to avoid anonymous class compilation issues
-                dispatchGesture(gesture, null, null)
-                Log.i(TAG, "🚖 ✓ Gesture click dispatched on Car button position")
+            // Strategy 4: Try clicking by screen position (multiple positions based on attempts)
+            // Careem Super App may have "سيارة" in different places:
+            // - Bottom navigation bar (old layout)
+            // - Service grid in middle of screen (new Super App layout)
+            // - Top service icons row
+            if (careemCarButtonClickAttempts < 6) {
+                Log.i(TAG, "🚖 Strategy 4: Trying gesture click on likely button position (attempt ${careemCarButtonClickAttempts + 1}/6)...")
+                try {
+                    val displayMetrics = resources.displayMetrics
+                    val screenWidth = displayMetrics.widthPixels
+                    val screenHeight = displayMetrics.heightPixels
 
+                    // Try different positions based on attempt number
+                    // Position 0: Bottom navigation bar, first item (12.5%, 92%)
+                    // Position 1: Service grid top-left (20%, 35%)
+                    // Position 2: Service grid top-center (50%, 35%)
+                    // Position 3: Service row - first item (15%, 25%)
+                    // Position 4: Service grid middle-left (20%, 45%)
+                    // Position 5: Service grid top area (25%, 30%)
+                    val positions = listOf(
+                        Pair(0.125f, 0.92f),   // Bottom nav, first item
+                        Pair(0.20f, 0.35f),    // Service grid top-left
+                        Pair(0.50f, 0.35f),    // Service grid top-center
+                        Pair(0.15f, 0.25f),    // Service row first item
+                        Pair(0.20f, 0.45f),    // Service grid middle-left
+                        Pair(0.25f, 0.30f)     // Service grid top area
+                    )
+
+                    val (xRatio, yRatio) = positions[careemCarButtonClickAttempts]
+                    val targetX = (screenWidth * xRatio).toInt()
+                    val targetY = (screenHeight * yRatio).toInt()
+
+                    Log.i(TAG, "🚖 Attempting gesture click at ($targetX, $targetY) for Car button")
+
+                    val path = android.graphics.Path()
+                    path.moveTo(targetX.toFloat(), targetY.toFloat())
+
+                    val gesture = android.accessibilityservice.GestureDescription.Builder()
+                        .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 100))
+                        .build()
+
+                    dispatchGesture(gesture, null, null)
+                    Log.i(TAG, "🚖 ✓ Strategy 4: Gesture click dispatched at position ${careemCarButtonClickAttempts + 1}")
+
+                    careemCarButtonClickAttempts++
+                    // Don't set careemCarButtonClicked = true yet - we'll verify on next iteration
+                    // If still on home screen, we'll try the next position
+                    Thread.sleep(TimingConfig.animationWait)
+                    return true
+                } catch (e: Exception) {
+                    Log.e(TAG, "🚖 Strategy 4 gesture click failed: ${e.message}")
+                    careemCarButtonClickAttempts++
+                }
+            } else {
+                // We've tried all positions, mark as clicked to avoid infinite loop
+                Log.w(TAG, "🚖 Exhausted all click positions - marking car button as clicked")
                 careemCarButtonClicked = true
-                Thread.sleep(TimingConfig.animationWait)
-                return true
-            } catch (e: Exception) {
-                Log.e(TAG, "🚖 Gesture click failed: ${e.message}")
             }
 
             Log.w(TAG, "🚖 Could not find 'سيارة' button on home screen")
