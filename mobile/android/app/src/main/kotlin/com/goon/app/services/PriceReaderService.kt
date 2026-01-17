@@ -723,7 +723,44 @@ class PriceReaderService : AccessibilityService() {
                     }
 
                     // After enough time, transition to SELECTING_SUGGESTION or WAITING_FOR_PRICE
-                    if (automationStep > 3) { // Wait ~3.6 seconds for suggestions
+                    // For Careem PICKUP phase, wait a bit longer for suggestions to refresh
+                    val waitSteps = if (packageName == CAREEM_PACKAGE && careemPickupEntered && !careemPickupPhaseComplete) {
+                        5 // Wait ~6 seconds for Careem pickup suggestions
+                    } else {
+                        3 // Default ~3.6 seconds
+                    }
+
+                    if (automationStep > waitSteps) {
+                        // For Careem PICKUP: Check if suggestions have actually refreshed
+                        if (packageName == CAREEM_PACKAGE && careemPickupEntered && !careemPickupPhaseComplete) {
+                            val allText = getAllTextFromNode(rootNode)
+                            val pickupKeywords = pickupAddress.split(" ").filter { it.length > 2 }
+                            val destKeywords = destinationAddress.split(" ").filter { it.length > 2 }
+
+                            // Check if any suggestion contains pickup keywords (but not destination)
+                            val hasSuggestionsForPickup = allText.any { text ->
+                                val containsPickupKeyword = pickupKeywords.any { keyword -> text.contains(keyword, ignoreCase = true) }
+                                val containsDestKeyword = destKeywords.any { keyword -> text.contains(keyword, ignoreCase = true) }
+                                containsPickupKeyword && !containsDestKeyword
+                            }
+
+                            // Check if suggestions still show destination
+                            val stillShowsDestination = allText.any { text ->
+                                val isDistanceLine = text.matches(Regex(".*\\d+\\.?\\d*\\s*كم.*"))
+                                val containsDestKeyword = destKeywords.any { keyword -> text.contains(keyword, ignoreCase = true) }
+                                isDistanceLine || containsDestKeyword
+                            }
+
+                            if (!hasSuggestionsForPickup && stillShowsDestination) {
+                                Log.w(TAG, "🚖 Careem pickup suggestions NOT refreshed yet (still showing destination)")
+                                // Continue waiting a few more steps
+                                if (automationStep <= waitSteps + 3) {
+                                    Log.i(TAG, "🚖 Waiting more for Careem pickup suggestions to refresh...")
+                                    return
+                                }
+                            }
+                        }
+
                         Log.i(TAG, "🤖 Transitioning to SELECTING_SUGGESTION...")
                         automationState = AutomationState.SELECTING_SUGGESTION
                         automationStep = 0
@@ -834,6 +871,39 @@ class PriceReaderService : AccessibilityService() {
                     } else {
                         automationRetries++
                         Log.w(TAG, "🤖 ✗ No suggestion selected (attempt $automationRetries/${TimingConfig.MAX_RETRIES})")
+
+                        // EARLY FALLBACK for Careem PICKUP: Try "Use my current location" button
+                        // This is triggered EARLIER (at retry 3) to avoid wasting time on unrefreshed suggestions
+                        if (packageName == CAREEM_PACKAGE && careemPickupEntered && !careemPickupPhaseComplete && automationRetries >= 3) {
+                            if (!careemUseCurrentLocationAttempted) {
+                                Log.i(TAG, "🚖 [Careem] Trying early fallback: Use current location button")
+                                val currentLocationTexts = listOf(
+                                    "استخدم موقعي الحالي",  // Use my current location
+                                    "موقعي الحالي",         // My current location
+                                    "Use my current location",
+                                    "Current location"
+                                )
+                                for (locText in currentLocationTexts) {
+                                    val locNode = findNodeWithText(rootNode, locText)
+                                    if (locNode != null) {
+                                        Log.i(TAG, "🚖 Found '$locText' button - clicking it!")
+                                        if (careemGestureClick(locNode) || clickNodeOrParent(locNode)) {
+                                            Log.i(TAG, "🚖 ✓ Clicked '$locText' - using current location as pickup!")
+                                            careemUseCurrentLocationAttempted = true
+                                            careemPickupSuggestionClicked = true
+                                            locNode.recycle()
+                                            Thread.sleep(800)
+                                            // Reset retries and continue
+                                            automationRetries = 0
+                                            return
+                                        }
+                                        locNode.recycle()
+                                    }
+                                }
+                                careemUseCurrentLocationAttempted = true
+                            }
+                        }
+
                         if (automationRetries > TimingConfig.MAX_RETRIES) {
                             // For Careem PICKUP FIRST flow: if pickup suggestion failed, try moving to destination anyway
                             if (packageName == CAREEM_PACKAGE && !careemPickupPhaseComplete) {
@@ -2471,8 +2541,44 @@ class PriceReaderService : AccessibilityService() {
 
             if (editText.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)) {
                 Log.i(TAG, "🚖 ✓ Entered pickup address: $pickupAddress")
+
+                // CRITICAL FIX: Trigger suggestion refresh by adding a space then removing it
+                // ACTION_SET_TEXT doesn't always trigger text watchers in some apps
+                // This forces Careem to recognize the text change and refresh suggestions
+                Thread.sleep(200)
+
+                // Add a space to trigger text change listener
+                val triggerArgs = android.os.Bundle()
+                triggerArgs.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "$pickupAddress ")
+                editText.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, triggerArgs)
+                Thread.sleep(100)
+
+                // Remove the space (set back to original text)
+                val finalArgs = android.os.Bundle()
+                finalArgs.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, pickupAddress)
+                editText.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, finalArgs)
+
+                // Additional trigger: click inside the field to ensure focus
+                Thread.sleep(100)
+                val fieldRect = android.graphics.Rect()
+                editText.getBoundsInScreen(fieldRect)
+                val clickX = (fieldRect.left + fieldRect.right) / 2
+                val clickY = (fieldRect.top + fieldRect.bottom) / 2
+
+                // Use gesture to click inside the field
+                val clickPath = android.graphics.Path()
+                clickPath.moveTo(clickX.toFloat(), clickY.toFloat())
+                val clickGesture = android.accessibilityservice.GestureDescription.Builder()
+                    .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(clickPath, 0, 50))
+                    .build()
+
+                dispatchGesture(clickGesture, null, null)
+                Log.i(TAG, "🚖 ✓ Clicked inside pickup field at ($clickX, $clickY) to trigger focus")
+
+                Log.i(TAG, "🚖 ✓ Triggered suggestion refresh for pickup")
+
                 editTexts.forEach { try { it.recycle() } catch (e: Exception) {} }
-                Thread.sleep(TimingConfig.textInputDelay)
+                Thread.sleep(TimingConfig.textInputDelay + 500) // Extra wait for suggestions to load
                 return 2 // Text entered successfully
             }
         }
@@ -2489,6 +2595,18 @@ class PriceReaderService : AccessibilityService() {
 
             if (focusedInput.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)) {
                 Log.i(TAG, "🚖 ✓ Entered pickup address via focused field: $pickupAddress")
+
+                // CRITICAL FIX: Trigger suggestion refresh (same as above)
+                Thread.sleep(200)
+                val triggerArgs = android.os.Bundle()
+                triggerArgs.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "$pickupAddress ")
+                focusedInput.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, triggerArgs)
+                Thread.sleep(100)
+                val finalArgs = android.os.Bundle()
+                finalArgs.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, pickupAddress)
+                focusedInput.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, finalArgs)
+                Log.i(TAG, "🚖 ✓ Triggered suggestion refresh for pickup (focused field)")
+
                 focusedInput.recycle()
                 Thread.sleep(TimingConfig.textInputDelay)
                 return 2 // Text entered successfully
