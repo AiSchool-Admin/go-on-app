@@ -1455,6 +1455,14 @@ class PriceReaderService : AccessibilityService() {
                         return
                     }
 
+                    // CRITICAL: Skip price scan if on intermediate screen (e.g., suggestion list)
+                    // This prevents extracting fake "prices" from address strings like "33 - 33 Bank Masr..."
+                    if (onIntermediateScreen) {
+                        Log.i(TAG, "🤖 On intermediate screen - skipping price scan, waiting for actual price screen...")
+                        automationStep++
+                        return
+                    }
+
                     // No valid cache, try aggressive scan
                     Log.i(TAG, "🤖 No valid cache, trying aggressive scan...")
                     val priceInfo = performAggressiveScan(packageName)
@@ -6899,6 +6907,33 @@ class PriceReaderService : AccessibilityService() {
                 val trimmedText = text.trim()
                 if (trimmedText.startsWith("-") || trimmedText.startsWith("−")) {
                     Log.d(TAG, "⏭️ Skipping discount/negative value: '$text'")
+                    continue
+                }
+
+                // CRITICAL: Skip address-like text patterns
+                // These are suggestion list items containing numbers like "33 - 33 Bank Masr..."
+                // Pattern: Contains multiple dashes, country/city names, or distance indicators
+                val textLower = text.lowercase()
+                val isAddressPattern = (
+                    // Contains "- " patterns typical of addresses (building number - street - city)
+                    (text.count { it == '-' } >= 2 && (
+                        textLower.contains("مصر") ||    // Egypt
+                        textLower.contains("egypt") ||
+                        textLower.contains("cairo") ||
+                        textLower.contains("القاهرة") || // Cairo
+                        textLower.contains("الجيزة") ||  // Giza
+                        textLower.contains("road") ||
+                        textLower.contains("street") ||
+                        textLower.contains("شارع")       // Street
+                    )) ||
+                    // Distance-based suggestion (e.g., "2.5 كم")
+                    text.matches(Regex(".*\\d+\\.?\\d*\\s*كم.*")) ||
+                    // Plus code patterns (e.g., "5FHH+PQ4")
+                    text.matches(Regex(".*[A-Z0-9]{4,}\\+[A-Z0-9]+.*"))
+                )
+
+                if (isAddressPattern) {
+                    Log.d(TAG, "⏭️ Skipping address pattern: '$text'")
                     continue
                 }
 
