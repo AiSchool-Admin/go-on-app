@@ -2506,6 +2506,17 @@ class PriceReaderService : AccessibilityService() {
                 val rect = android.graphics.Rect()
                 node.getBoundsInScreen(rect)
 
+                // CRITICAL: Skip EditText fields - we want suggestion rows, not input fields
+                // After typing in the input field, the text appears there AND in suggestions
+                // We must click the suggestion row, not the input field
+                val className = node.className?.toString() ?: ""
+                val isEditable = node.isEditable || className.contains("EditText")
+                if (isEditable) {
+                    Log.i(TAG, "🚖 Skipping EditText/editable node: '$text' at ${rect}")
+                    node.recycle()
+                    continue
+                }
+
                 // Validate bounds - should be reasonable size (not full screen)
                 val width = rect.width()
                 val height = rect.height()
@@ -4247,10 +4258,22 @@ class PriceReaderService : AccessibilityService() {
         val text = node.text?.toString() ?: ""
         val desc = node.contentDescription?.toString() ?: ""
 
+        // CRITICAL: Skip EditText/editable nodes - we want suggestion rows, not input fields
+        val isEditable = node.isEditable || className.contains("EditText")
+        if (isEditable) {
+            return // Don't collect suggestions from EditText or recurse into them
+        }
+
         // If this is a RecyclerView or ListView, get its children
         if (className.contains("RecyclerView") || className.contains("ListView")) {
             for (i in 0 until minOf(node.childCount, 10)) {
                 val child = node.getChild(i) ?: continue
+                val childClassName = child.className?.toString() ?: ""
+                // Skip EditText children
+                if (child.isEditable || childClassName.contains("EditText")) {
+                    child.recycle()
+                    continue
+                }
                 val childText = getNodeText(child)
                 if (childText.isNotBlank() && childText.length > 3 &&
                     !childText.lowercase().contains("where") &&
@@ -4288,6 +4311,12 @@ class PriceReaderService : AccessibilityService() {
         val className = node.className?.toString() ?: ""
         val text = node.text?.toString() ?: ""
         val desc = node.contentDescription?.toString() ?: ""
+
+        // CRITICAL: Skip EditText/editable nodes - we want suggestion rows, not input fields
+        val isEditable = node.isEditable || className.contains("EditText")
+        if (isEditable) {
+            return // Don't collect suggestions from EditText or recurse into them
+        }
 
         // Skip UI elements that are not suggestions
         val isUIElement = text.lowercase().let {
