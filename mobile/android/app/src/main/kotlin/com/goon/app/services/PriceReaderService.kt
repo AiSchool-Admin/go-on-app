@@ -370,6 +370,7 @@ class PriceReaderService : AccessibilityService() {
         careemPickupClickAttempts = 0  // Reset pickup click attempts
         careemUseCurrentLocationAttempted = false  // Reset current location fallback flag
         careemNoValidPickupSuggestionCount = 0  // Reset no valid pickup count
+        careemPickupButtonFallbackAttempted = false  // Reset pickUp button fallback flag
         careemLoaderFirstSeenTime = 0L  // Reset Careem loader time
         inDriverDestinationEntered = false  // Reset InDriver destination flag
         inDriverDoneClickedTime = 0L  // Reset InDriver Done click time
@@ -908,6 +909,7 @@ class PriceReaderService : AccessibilityService() {
                             careemPickupClickAttempts = 0
                             careemUseCurrentLocationAttempted = false
                             careemNoValidPickupSuggestionCount = 0
+                            careemPickupButtonFallbackAttempted = false
 
                             automationState = AutomationState.FINDING_DESTINATION_FIELD
                             automationRetries = 0
@@ -1101,20 +1103,26 @@ class PriceReaderService : AccessibilityService() {
                                                 Log.i(TAG, "🚖 Current location button not found, trying other fallbacks...")
                                             }
 
-                                            // Try clicking "pickUp" button (set location on map)
-                                            val pickupButtonTexts = listOf("pickUp", "Map icon", "على الخريطة", "Set on map")
-                                            for (buttonText in pickupButtonTexts) {
-                                                val buttonNode = findNodeWithText(rootNode, buttonText)
-                                                if (buttonNode != null) {
-                                                    Log.i(TAG, "🚖 Found fallback button: '$buttonText'")
-                                                    if (careemGestureClick(buttonNode)) {
-                                                        Log.i(TAG, "🚖 ✓ Clicked '$buttonText' fallback button")
+                                            // Try clicking "pickUp" button ONCE (set location on map)
+                                            // Only try this fallback once - if it didn't help, move to other fallbacks
+                                            if (!careemPickupButtonFallbackAttempted) {
+                                                val pickupButtonTexts = listOf("pickUp", "Map icon", "على الخريطة", "Set on map")
+                                                for (buttonText in pickupButtonTexts) {
+                                                    val buttonNode = findNodeWithText(rootNode, buttonText)
+                                                    if (buttonNode != null) {
+                                                        Log.i(TAG, "🚖 Found fallback button: '$buttonText'")
+                                                        if (careemGestureClick(buttonNode)) {
+                                                            Log.i(TAG, "🚖 ✓ Clicked '$buttonText' fallback button")
+                                                            careemPickupButtonFallbackAttempted = true
+                                                            buttonNode.recycle()
+                                                            Thread.sleep(800)
+                                                            return
+                                                        }
                                                         buttonNode.recycle()
-                                                        Thread.sleep(800)
-                                                        return
                                                     }
-                                                    buttonNode.recycle()
                                                 }
+                                                careemPickupButtonFallbackAttempted = true
+                                                Log.i(TAG, "🚖 pickUp button fallback attempted, will try other fallbacks next")
                                             }
 
                                             // FALLBACK 2: Try clicking on map to use current GPS location
@@ -1580,6 +1588,7 @@ class PriceReaderService : AccessibilityService() {
     private var careemLoaderFirstSeenTime = 0L   // Track when we first see the loader
     private var careemUseCurrentLocationAttempted = false  // Track if we tried "use current location" fallback
     private var careemNoValidPickupSuggestionCount = 0  // Count consecutive failures to find valid pickup suggestions
+    private var careemPickupButtonFallbackAttempted = false  // Track if we tried clicking "pickUp" button fallback
 
     /**
      * Find and click Careem destination field
