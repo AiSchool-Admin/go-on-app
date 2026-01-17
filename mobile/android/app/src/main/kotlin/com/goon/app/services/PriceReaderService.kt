@@ -1098,11 +1098,20 @@ class PriceReaderService : AccessibilityService() {
                                 Log.i(TAG, "🚖 Careem in DESTINATION phase - checking if suggestions are for destination")
 
                                 // Check if suggestions match destination keywords
+                                // NOTE: In Careem, distance indicators and suggestion names are in SEPARATE text nodes
+                                // e.g., "1.7 كم" and "AM GROUP" are separate entries
+                                // So we check if ANY text contains destination keywords (hasSuggestionDistances already confirmed distances exist)
                                 val destKeywords = destinationAddress.split(" ").filter { it.length > 2 }
-                                val suggestionsMatchDestination = allText.any { text ->
-                                    text.matches(Regex(".*\\d+\\.?\\d*\\s*كم.*")) && // Has distance indicator
-                                    destKeywords.any { text.contains(it) }
+                                val suggestionsMatchDestination = destKeywords.isNotEmpty() && allText.any { text ->
+                                    // Check if text contains destination keyword (case-insensitive)
+                                    // Skip short texts (less than 4 chars) and UI elements
+                                    val textLower = text.lowercase()
+                                    text.length >= 4 &&
+                                    !textLower.contains("pickup") && !textLower.contains("pickUp") &&
+                                    !textLower.contains("back") && !textLower.contains("map icon") &&
+                                    destKeywords.any { keyword -> textLower.contains(keyword.lowercase()) }
                                 }
+                                Log.i(TAG, "🚖 destKeywords=$destKeywords, suggestionsMatchDestination=$suggestionsMatchDestination")
 
                                 if (suggestionsMatchDestination && careemDestinationClickAttempts < 5) {
                                     Log.i(TAG, "🚖 Destination suggestions visible - re-clicking destination (attempt ${careemDestinationClickAttempts + 1})")
