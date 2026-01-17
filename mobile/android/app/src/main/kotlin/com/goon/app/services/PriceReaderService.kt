@@ -5330,24 +5330,63 @@ class PriceReaderService : AccessibilityService() {
                         val parent = current?.parent
                         if (parent != null) {
                             if (parent.isClickable) {
-                                clickableNode = parent
-                                break
+                                // Validate the parent's bounds - it shouldn't be too large
+                                // A single suggestion row is typically 60-150px tall
+                                val parentRect = android.graphics.Rect()
+                                parent.getBoundsInScreen(parentRect)
+                                val parentHeight = parentRect.height()
+
+                                if (parentHeight <= 200) {
+                                    // Reasonable size for a suggestion row
+                                    clickableNode = parent
+                                    break
+                                } else {
+                                    // Too large (probably a container holding multiple suggestions)
+                                    // Keep searching for a smaller clickable parent
+                                    Log.d(TAG, "🚖 Skipping large container (height=$parentHeight) at level $level")
+                                    current = parent
+                                }
+                            } else {
+                                current = parent
                             }
-                            current = parent
                         } else {
                             break
                         }
                     }
                 }
 
-                if (clickableNode != null) {
-                    // Get all text from the clickable node to form the full suggestion
-                    val fullText = getNodeText(clickableNode)
-                    if (fullText.isNotBlank() && fullText.length > 5) {
-                        // Avoid duplicates
-                        val alreadyAdded = suggestions.any { it.second == fullText }
-                        if (!alreadyAdded) {
-                            suggestions.add(Pair(AccessibilityNodeInfo.obtain(clickableNode), fullText))
+                // IMPORTANT: If no suitable clickable parent found, use the text node itself
+                // Gesture clicks work on non-clickable nodes too - they just tap the coordinates
+                val nodeToUse = clickableNode ?: node
+                val usingTextNode = clickableNode == null
+
+                // Get all text from the node (or combine with siblings if using text node)
+                val fullText = if (usingTextNode) {
+                    // For text node, try to get text from parent to include distance + name + address
+                    val parentNode = node.parent
+                    if (parentNode != null) {
+                        val parentText = getNodeText(parentNode)
+                        parentNode.recycle()
+                        if (parentText.isNotBlank() && parentText.length > text.length) {
+                            parentText
+                        } else {
+                            text
+                        }
+                    } else {
+                        text
+                    }
+                } else {
+                    getNodeText(nodeToUse)
+                }
+
+                if (fullText.isNotBlank() && fullText.length > 5) {
+                    // Avoid duplicates
+                    val alreadyAdded = suggestions.any { it.second == fullText }
+                    if (!alreadyAdded) {
+                        suggestions.add(Pair(AccessibilityNodeInfo.obtain(nodeToUse), fullText))
+                        if (usingTextNode) {
+                            Log.i(TAG, "🚖 Careem suggestion (using text node): '$fullText'")
+                        } else {
                             Log.i(TAG, "🚖 Careem suggestion: '$fullText'")
                         }
                     }
@@ -6687,12 +6726,17 @@ class PriceReaderService : AccessibilityService() {
         val centerX = rect.centerX()
         val centerY = rect.centerY()
 
-        Log.i(TAG, "🚖 Careem gesture click at ($centerX, $centerY), bounds=$rect")
+        Log.i(TAG, "🚖 Careem gesture click at ($centerX, $centerY), bounds=$rect, size=${rect.width()}x${rect.height()}")
 
         // Validate coordinates
         if (centerX <= 0 || centerY <= 0 || rect.width() < 50 || rect.height() < 20) {
-            Log.w(TAG, "🚖 Invalid bounds for Careem click")
+            Log.w(TAG, "🚖 Invalid bounds for Careem click: too small or invalid")
             return false
+        }
+
+        // Warn if bounds are suspiciously large (might be clicking on container)
+        if (rect.height() > 250) {
+            Log.w(TAG, "🚖 WARNING: Bounds height ${rect.height()} is large - might be clicking container instead of suggestion row")
         }
 
         // Use gesture tap directly (ACTION_CLICK doesn't work on Careem)
