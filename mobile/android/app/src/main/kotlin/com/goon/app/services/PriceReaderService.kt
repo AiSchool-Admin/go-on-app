@@ -1045,6 +1045,48 @@ class PriceReaderService : AccessibilityService() {
                                         careemPickupClickAttempts++
                                         Log.i(TAG, "🚖 ✓ Clicked pickup suggestion (total attempts: $careemPickupClickAttempts)")
                                         return
+                                    } else {
+                                        // IMPORTANT: Increment attempts even when selection fails
+                                        // This prevents infinite loops when no valid pickup suggestions exist
+                                        careemPickupClickAttempts++
+                                        Log.w(TAG, "🚖 ✗ No valid pickup suggestion found (attempt $careemPickupClickAttempts)")
+
+                                        // FALLBACK: After 2 failed attempts, try alternative methods
+                                        // This handles cases where Careem shows cached destination suggestions
+                                        // instead of actual pickup suggestions
+                                        if (careemPickupClickAttempts >= 2) {
+                                            Log.i(TAG, "🚖 Trying fallback: clicking 'pickUp' or 'Map icon' button...")
+
+                                            // Try clicking "pickUp" button (set location on map)
+                                            val pickupButtonTexts = listOf("pickUp", "Map icon", "على الخريطة", "Set on map")
+                                            for (buttonText in pickupButtonTexts) {
+                                                val buttonNode = findNodeWithText(rootNode, buttonText)
+                                                if (buttonNode != null) {
+                                                    Log.i(TAG, "🚖 Found fallback button: '$buttonText'")
+                                                    if (careemGestureClick(buttonNode)) {
+                                                        Log.i(TAG, "🚖 ✓ Clicked '$buttonText' fallback button")
+                                                        buttonNode.recycle()
+                                                        Thread.sleep(800)
+                                                        return
+                                                    }
+                                                    buttonNode.recycle()
+                                                }
+                                            }
+
+                                            // FALLBACK 2: If we've failed 3+ times and no buttons work,
+                                            // try clicking the FIRST suggestion regardless of keywords
+                                            // (better than infinite retries)
+                                            if (careemPickupClickAttempts >= 3) {
+                                                Log.i(TAG, "🚖 Trying last resort: click first suggestion regardless of keywords...")
+                                                if (clickFirstCareemSuggestionGesture(rootNode)) {
+                                                    Log.i(TAG, "🚖 ✓ Clicked first suggestion as last resort")
+                                                    careemPickupSuggestionClicked = true
+                                                    return
+                                                }
+                                            }
+                                        }
+
+                                        return
                                     }
                                 }
                             }
