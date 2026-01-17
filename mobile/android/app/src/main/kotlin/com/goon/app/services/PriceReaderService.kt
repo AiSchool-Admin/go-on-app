@@ -944,13 +944,21 @@ class PriceReaderService : AccessibilityService() {
                                 // If pickup address appears in header area (not suggestions), we need to proceed
                                 val pickupKeywords = pickupAddress.split(" ").filter { it.length > 2 }
                                 val destKeywords = destinationAddress.split(" ").filter { it.length > 2 }
+
+                                // CRITICAL FIX: Exclude text that exactly matches the search term (still in EditText)
+                                // A properly filled address would be formatted with additional details (street, city, etc.)
+                                // Not just the raw search term like "GOODWAY-TECH"
                                 val pickupFilledInHeader = allText.any { text ->
                                     pickupKeywords.any { text.contains(it) } &&
-                                    !text.matches(Regex(".*\\d+\\.?\\d*\\s*كم.*")) // Not a suggestion with distance
+                                    !text.matches(Regex(".*\\d+\\.?\\d*\\s*كم.*")) && // Not a suggestion with distance
+                                    text.lowercase() != pickupAddress.lowercase() && // Not the exact search term (still in EditText)
+                                    text.length > pickupAddress.length + 5 // Should be longer (has additional address details)
                                 }
                                 val destFilledInHeader = allText.any { text ->
                                     destKeywords.any { text.contains(it) } &&
-                                    !text.matches(Regex(".*\\d+\\.?\\d*\\s*كم.*"))
+                                    !text.matches(Regex(".*\\d+\\.?\\d*\\s*كم.*")) &&
+                                    text.lowercase() != destinationAddress.lowercase() &&
+                                    text.length > destinationAddress.length + 5
                                 }
 
                                 Log.i(TAG, "🚖 Both filled? pickup=$pickupFilledInHeader, dest=$destFilledInHeader")
@@ -2237,12 +2245,29 @@ class PriceReaderService : AccessibilityService() {
 
         Log.i(TAG, "🚖 Filtering - pickup unique: $pickupOnlyKeywords, dest unique: $destOnlyKeywords")
 
+        // First, check if ANY suggestions match pickup keywords
+        val anyMatchesPickup = allSuggestions.any { (_, text) ->
+            pickupKeywords.any { text.contains(it) }
+        }
+
+        // If no suggestions match pickup keywords, relax filtering (just exclude destination-only matches)
+        val relaxedFiltering = !anyMatchesPickup && pickupKeywords.isNotEmpty()
+        if (relaxedFiltering) {
+            Log.i(TAG, "🚖 No suggestions match pickup keywords '$pickupKeywords' - using relaxed filtering")
+        }
+
         val filteredSuggestions = allSuggestions.filter { (_, text) ->
             // SKIP if contains destination-UNIQUE keyword
             val hasDestOnlyKeyword = destOnlyKeywords.any { text.contains(it) }
             if (hasDestOnlyKeyword) {
                 Log.i(TAG, "🚖 Skipping (has dest keyword): '$text'")
                 return@filter false
+            }
+
+            // If using relaxed filtering, accept any non-destination suggestion
+            if (relaxedFiltering) {
+                Log.i(TAG, "🚖 Including (relaxed, no dest keyword): '$text'")
+                return@filter true
             }
 
             // INCLUDE if matches any pickup keyword
@@ -2317,6 +2342,94 @@ class PriceReaderService : AccessibilityService() {
 
         Thread.sleep(1200) // Wait longer for Careem to respond
         return result
+    }
+
+    /**
+     * Careem-specific fallback to click the first suggestion using gesture
+     * Used when collectCareemSuggestions returns empty but suggestions are visible on screen
+     * Searches for nodes with distance indicators (كم) which indicate suggestion rows
+     */
+    private fun clickFirstCareemSuggestionGesture(rootNode: AccessibilityNodeInfo): Boolean {
+        Log.i(TAG, "🚖 clickFirstCareemSuggestionGesture: Looking for suggestion by distance indicator...")
+
+        // Find nodes that contain distance indicator (suggests it's a suggestion row)
+        val allText = getAllTextFromNode(rootNode)
+        Log.i(TAG, "🚖 All text on screen (first 15): ${allText.take(15)}")
+
+        // Look for suggestion text that appears AFTER a distance indicator
+        // Careem pattern: [location icon, distance (كم), place name, full address, moreVertical...]
+        var foundDistance = false
+        var suggestionText: String? = null
+
+        for (text in allText) {
+            // Check if this is a distance indicator
+            if (text.matches(Regex("^[\\d.,>]+\\s*كم$"))) {
+                foundDistance = true
+                continue
+            }
+
+            // After finding distance, next substantive text might be suggestion name
+            if (foundDistance && text.isNotBlank() && text.length > 3) {
+                val lower = text.lowercase()
+                // Skip UI elements
+                if (lower == "morevertical" || lower == "location" || lower == "eg" ||
+                    lower.contains("navigation") || lower.contains("back") ||
+                    text == "البيت" || text.contains("pickUp")) {
+                    continue
+                }
+                suggestionText = text
+                Log.i(TAG, "🚖 Found potential suggestion after distance: '$text'")
+                break
+            }
+        }
+
+        // If we found a suggestion text, try to click its node
+        if (suggestionText != null) {
+            val node = findNodeWithText(rootNode, suggestionText)
+            if (node != null) {
+                Log.i(TAG, "🚖 Found node for '$suggestionText', attempting gesture click...")
+                val clicked = careemGestureClick(node)
+                node.recycle()
+                if (clicked) {
+                    Log.i(TAG, "🚖 ✓ Gesture click on suggestion succeeded!")
+                    return true
+                }
+            }
+        }
+
+        // Alternative: Look for any address-like text (contains common address markers)
+        Log.i(TAG, "🚖 Trying alternative: Looking for address-like text...")
+        for (text in allText) {
+            if (text.isBlank() || text.length < 10) continue
+
+            // Skip known UI elements and the typed search text
+            val lower = text.lowercase()
+            if (lower.contains("google") || lower.contains("navigation") ||
+                lower.contains("menu") || lower == pickupAddress.lowercase() ||
+                lower == destinationAddress.lowercase()) continue
+
+            // Check if it looks like an address (has common markers)
+            val isAddress = text.contains("،") || text.contains(",") ||
+                           text.contains("-") || text.contains("شارع") ||
+                           text.contains("مصر") || text.contains("محافظة") ||
+                           text.contains("Street") || text.contains("Egypt")
+
+            if (isAddress) {
+                val node = findNodeWithText(rootNode, text)
+                if (node != null) {
+                    Log.i(TAG, "🚖 Found address node: '$text', attempting gesture click...")
+                    val clicked = careemGestureClick(node)
+                    node.recycle()
+                    if (clicked) {
+                        Log.i(TAG, "🚖 ✓ Gesture click on address succeeded!")
+                        return true
+                    }
+                }
+            }
+        }
+
+        Log.w(TAG, "🚖 ✗ No suggestion found for gesture click")
+        return false
     }
 
     /**
@@ -3935,7 +4048,14 @@ class PriceReaderService : AccessibilityService() {
             return false
         }
 
-        // Fallback: find any clickable item (only for non-DiDi apps)
+        // CRITICAL FIX: For Careem, use gesture-based fallback instead of ACTION_CLICK
+        // Careem doesn't respond to ACTION_CLICK, only gesture taps
+        if (packageName == CAREEM_PACKAGE) {
+            Log.i(TAG, "🚖 No suggestions collected, trying Careem-specific fallback...")
+            return clickFirstCareemSuggestionGesture(rootNode)
+        }
+
+        // Fallback: find any clickable item (only for non-DiDi/non-Careem apps)
         return clickFirstMatchingSuggestion(rootNode)
     }
 
@@ -4181,16 +4301,26 @@ class PriceReaderService : AccessibilityService() {
         if (text.isNotBlank() && text.length > 3 && !isUIElement) {
             // Look for clickable items with location-like text
             // Careem suggestions typically have: address text with street names or place names
-            val isLocationText = text.contains("شارع") || // Street
-                                text.contains("Street") ||
-                                text.contains("مصر") || // Egypt
+            val isLocationText = text.contains("شارع") || // Street (Arabic)
+                                text.contains("Street") || // Street
+                                text.contains("Road") || // Road
+                                text.contains("Avenue") || // Avenue
+                                text.contains("مصر") || // Egypt (Arabic)
+                                text.contains("Egypt") || // Egypt
                                 text.contains("القاهرة") || // Cairo
+                                text.contains("Cairo") ||
                                 text.contains("الجيزة") || // Giza
-                                text.contains("محافظة") || // Governorate
-                                text.contains("مدينة") || // City
+                                text.contains("Giza") ||
+                                text.contains("العبور") || // Al Obour
+                                text.contains("Obour") ||
+                                text.contains("القليوبية") || // Qalyubia
+                                text.contains("محافظة") || // Governorate (Arabic)
+                                text.contains("مدينة") || // City (Arabic)
                                 text.contains("-") || // Address separator
                                 text.contains(",") || // Address separator
-                                text.matches(Regex(".*\\d+.*")) // Contains numbers (street/building)
+                                text.contains("،") || // Arabic comma
+                                text.matches(Regex(".*\\d+.*")) || // Contains numbers (street/building)
+                                text.length > 20 // Long text is likely an address
 
             // Also detect distance indicators (كم = km)
             val isDistanceIndicator = text.matches(Regex(".*\\d+\\.?\\d*\\s*كم.*"))
