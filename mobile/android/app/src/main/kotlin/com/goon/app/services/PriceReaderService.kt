@@ -368,6 +368,8 @@ class PriceReaderService : AccessibilityService() {
         careemPickupEntered = false  // Reset Careem pickup flag
         careemPickupSuggestionClicked = false  // Reset pickup suggestion flag
         careemPickupClickAttempts = 0  // Reset pickup click attempts
+        careemUseCurrentLocationAttempted = false  // Reset current location fallback flag
+        careemNoValidPickupSuggestionCount = 0  // Reset no valid pickup count
         careemLoaderFirstSeenTime = 0L  // Reset Careem loader time
         inDriverDestinationEntered = false  // Reset InDriver destination flag
         inDriverDoneClickedTime = 0L  // Reset InDriver Done click time
@@ -904,6 +906,8 @@ class PriceReaderService : AccessibilityService() {
                             careemPickupEntered = false
                             careemPickupSuggestionClicked = false
                             careemPickupClickAttempts = 0
+                            careemUseCurrentLocationAttempted = false
+                            careemNoValidPickupSuggestionCount = 0
 
                             automationState = AutomationState.FINDING_DESTINATION_FIELD
                             automationRetries = 0
@@ -1054,8 +1058,48 @@ class PriceReaderService : AccessibilityService() {
                                         // FALLBACK: After 2 failed attempts, try alternative methods
                                         // This handles cases where Careem shows cached destination suggestions
                                         // instead of actual pickup suggestions
+                                        careemNoValidPickupSuggestionCount++
+
                                         if (careemPickupClickAttempts >= 2) {
-                                            Log.i(TAG, "🚖 Trying fallback: clicking 'pickUp' or 'Map icon' button...")
+                                            Log.i(TAG, "🚖 Trying fallback: no pickup suggestions found (consecutive failures: $careemNoValidPickupSuggestionCount)")
+
+                                            // BEST FALLBACK: Click "استخدم موقعي الحالي" (Use my current location)
+                                            // This bypasses the need for a matching suggestion
+                                            if (!careemUseCurrentLocationAttempted) {
+                                                Log.i(TAG, "🚖 Trying to use current location as pickup...")
+                                                val currentLocationTexts = listOf(
+                                                    "استخدم موقعي الحالي",  // Use my current location
+                                                    "موقعي الحالي",         // My current location
+                                                    "Use my current location",
+                                                    "Current location",
+                                                    "Use current location"
+                                                )
+                                                for (locText in currentLocationTexts) {
+                                                    val locNode = findNodeWithText(rootNode, locText)
+                                                    if (locNode != null) {
+                                                        Log.i(TAG, "🚖 Found '$locText' button!")
+                                                        if (careemGestureClick(locNode)) {
+                                                            Log.i(TAG, "🚖 ✓ Clicked '$locText' - using current location as pickup!")
+                                                            careemUseCurrentLocationAttempted = true
+                                                            careemPickupSuggestionClicked = true
+                                                            locNode.recycle()
+                                                            Thread.sleep(1000)
+                                                            return
+                                                        }
+                                                        if (clickNodeOrParent(locNode)) {
+                                                            Log.i(TAG, "🚖 ✓ Clicked '$locText' via parent - using current location!")
+                                                            careemUseCurrentLocationAttempted = true
+                                                            careemPickupSuggestionClicked = true
+                                                            locNode.recycle()
+                                                            Thread.sleep(1000)
+                                                            return
+                                                        }
+                                                        locNode.recycle()
+                                                    }
+                                                }
+                                                careemUseCurrentLocationAttempted = true
+                                                Log.i(TAG, "🚖 Current location button not found, trying other fallbacks...")
+                                            }
 
                                             // Try clicking "pickUp" button (set location on map)
                                             val pickupButtonTexts = listOf("pickUp", "Map icon", "على الخريطة", "Set on map")
@@ -1073,11 +1117,25 @@ class PriceReaderService : AccessibilityService() {
                                                 }
                                             }
 
-                                            // FALLBACK 2: If we've failed 3+ times and no buttons work,
-                                            // try clicking the FIRST suggestion regardless of keywords
-                                            // (better than infinite retries)
-                                            if (careemPickupClickAttempts >= 3) {
-                                                Log.i(TAG, "🚖 Trying last resort: click first suggestion regardless of keywords...")
+                                            // FALLBACK 2: Try clicking on map to use current GPS location
+                                            // This works when Careem's search returns no results for the pickup address
+                                            if (careemPickupClickAttempts >= 3 && careemNoValidPickupSuggestionCount >= 2) {
+                                                Log.i(TAG, "🚖 All suggestions are destination-related - trying map click to use current location")
+                                                if (clickCareemMapForPickup(rootNode)) {
+                                                    Log.i(TAG, "🚖 ✓ Clicked on map - should use current GPS location as pickup")
+                                                    careemPickupSuggestionClicked = true
+                                                    Thread.sleep(1000)
+                                                    // After clicking map, look for confirm button
+                                                    if (clickCareemConfirmButton(rootNode)) {
+                                                        Log.i(TAG, "🚖 ✓ Clicked confirm after map selection")
+                                                    }
+                                                    return
+                                                }
+                                            }
+
+                                            // FALLBACK 3: If map click failed, try any suggestion as absolute last resort
+                                            if (careemPickupClickAttempts >= 4) {
+                                                Log.i(TAG, "🚖 Trying absolute last resort: click first suggestion regardless of keywords...")
                                                 if (clickFirstCareemSuggestionGesture(rootNode)) {
                                                     Log.i(TAG, "🚖 ✓ Clicked first suggestion as last resort")
                                                     careemPickupSuggestionClicked = true
@@ -1520,6 +1578,8 @@ class PriceReaderService : AccessibilityService() {
     private var careemPickupSuggestionClicked = false  // Track if we clicked a pickup suggestion
     private var careemPickupClickAttempts = 0     // Count pickup suggestion click attempts
     private var careemLoaderFirstSeenTime = 0L   // Track when we first see the loader
+    private var careemUseCurrentLocationAttempted = false  // Track if we tried "use current location" fallback
+    private var careemNoValidPickupSuggestionCount = 0  // Count consecutive failures to find valid pickup suggestions
 
     /**
      * Find and click Careem destination field
@@ -2405,13 +2465,32 @@ class PriceReaderService : AccessibilityService() {
      * Careem-specific fallback to click the first suggestion using gesture
      * Used when collectCareemSuggestions returns empty but suggestions are visible on screen
      * Searches for nodes with distance indicators (كم) which indicate suggestion rows
+     *
+     * CRITICAL: When in pickup mode (careemPickupFieldClicked=true), skip suggestions
+     * that match destination keywords - these are stale suggestions from previous search
      */
     private fun clickFirstCareemSuggestionGesture(rootNode: AccessibilityNodeInfo): Boolean {
         Log.i(TAG, "🚖 clickFirstCareemSuggestionGesture: Looking for suggestion by distance indicator...")
+        Log.i(TAG, "🚖 Mode: pickupFieldClicked=$careemPickupFieldClicked")
 
         // Find nodes that contain distance indicator (suggests it's a suggestion row)
         val allText = getAllTextFromNode(rootNode)
         Log.i(TAG, "🚖 All text on screen (first 15): ${allText.take(15)}")
+
+        // CRITICAL: When in pickup mode, prepare destination keywords to skip
+        val destKeywords = if (careemPickupFieldClicked) {
+            extractDestinationKeywords(destinationAddress)
+        } else {
+            emptyList()
+        }
+
+        // Helper function to check if text matches destination (stale suggestion)
+        fun matchesDestination(text: String): Boolean {
+            if (!careemPickupFieldClicked) return false
+            return destKeywords.any { keyword ->
+                text.lowercase().contains(keyword.lowercase())
+            }
+        }
 
         // Look for suggestion text that appears AFTER a distance indicator
         // Careem pattern: [location icon, distance (كم), place name, full address, moreVertical...]
@@ -2434,6 +2513,14 @@ class PriceReaderService : AccessibilityService() {
                     text == "البيت" || text.contains("pickUp")) {
                     continue
                 }
+
+                // CRITICAL: In pickup mode, skip suggestions that match destination
+                if (matchesDestination(text)) {
+                    Log.i(TAG, "🚖 Skipping stale destination suggestion: '$text'")
+                    foundDistance = false  // Reset to look for next suggestion
+                    continue
+                }
+
                 suggestionText = text
                 Log.i(TAG, "🚖 Found potential suggestion after distance: '$text'")
                 break
@@ -2464,6 +2551,12 @@ class PriceReaderService : AccessibilityService() {
             if (lower.contains("google") || lower.contains("navigation") ||
                 lower.contains("menu") || lower == pickupAddress.lowercase() ||
                 lower == destinationAddress.lowercase()) continue
+
+            // CRITICAL: In pickup mode, skip addresses that match destination
+            if (matchesDestination(text)) {
+                Log.i(TAG, "🚖 Skipping stale destination address: '$text'")
+                continue
+            }
 
             // Check if it looks like an address (has common markers)
             val isAddress = text.contains("،") || text.contains(",") ||
@@ -2612,6 +2705,90 @@ class PriceReaderService : AccessibilityService() {
         }
 
         return search(root)
+    }
+
+    /**
+     * Ultimate fallback: Click on Careem map area to use current GPS location as pickup
+     * When no valid pickup suggestions exist (all are destination-related), this uses
+     * the user's current location on the map as the pickup point
+     */
+    private fun clickCareemMapForPickup(rootNode: AccessibilityNodeInfo): Boolean {
+        Log.i(TAG, "🚖 clickCareemMapForPickup: Trying to use map location as pickup...")
+
+        // Strategy 1: Look for "خرائط Google" (Google Maps) node and click near it
+        // The map is usually in the upper portion of the screen
+        val mapNode = findNodeWithText(rootNode, "خرائط Google")
+        if (mapNode != null) {
+            val rect = android.graphics.Rect()
+            mapNode.getBoundsInScreen(rect)
+            Log.i(TAG, "🚖 Found Google Maps node at: $rect")
+
+            // Click in the CENTER of the map area (not on the text itself)
+            // The map is usually below/around the "خرائط Google" attribution
+            val mapCenterX = rect.centerX()
+            val mapCenterY = rect.bottom + 200  // Below the attribution text
+
+            val path = android.graphics.Path()
+            path.moveTo(mapCenterX.toFloat(), mapCenterY.toFloat())
+
+            val gesture = android.accessibilityservice.GestureDescription.Builder()
+                .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 200))
+                .build()
+
+            val result = dispatchGesture(gesture, null, null)
+            mapNode.recycle()
+
+            if (result) {
+                Log.i(TAG, "🚖 ✓ Clicked on map at ($mapCenterX, $mapCenterY) to set pickup")
+                Thread.sleep(800)
+                return true
+            }
+        }
+
+        // Strategy 2: Look for any map-related node
+        val mapTexts = listOf("Map", "map", "الخريطة", "خريطة")
+        for (mapText in mapTexts) {
+            val node = findNodeWithText(rootNode, mapText)
+            if (node != null) {
+                Log.i(TAG, "🚖 Found map element: '$mapText'")
+                if (careemGestureClick(node)) {
+                    Log.i(TAG, "🚖 ✓ Clicked map element")
+                    node.recycle()
+                    Thread.sleep(800)
+                    return true
+                }
+                node.recycle()
+            }
+        }
+
+        // Strategy 3: Click on the center-upper area of the screen (where map usually is)
+        // Get screen dimensions - use a reasonable default
+        val displayMetrics = resources.displayMetrics
+        val screenWidth = displayMetrics.widthPixels
+        val screenHeight = displayMetrics.heightPixels
+
+        // Map is usually in upper-middle portion
+        val mapX = screenWidth / 2
+        val mapY = screenHeight / 3  // Upper third of screen
+
+        Log.i(TAG, "🚖 Trying blind click on map area at ($mapX, $mapY)")
+
+        val path = android.graphics.Path()
+        path.moveTo(mapX.toFloat(), mapY.toFloat())
+
+        val gesture = android.accessibilityservice.GestureDescription.Builder()
+            .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 200))
+            .build()
+
+        val result = dispatchGesture(gesture, null, null)
+        if (result) {
+            Log.i(TAG, "🚖 ✓ Dispatched blind map click")
+            Thread.sleep(800)
+            return true
+        }
+
+        Log.w(TAG, "🚖 ✗ Could not click on map for pickup")
+        return false
     }
 
     /**
@@ -4090,6 +4267,25 @@ class PriceReaderService : AccessibilityService() {
         // Fallback: click first suggestion if no match found
         Log.w(TAG, "⚠️ No matching suggestion found, clicking first one")
         if (suggestions.isNotEmpty()) {
+            // CRITICAL FIX: When in Careem PICKUP mode, don't click suggestions that match DESTINATION
+            // This prevents clicking a destination suggestion when we need a pickup suggestion
+            if (packageName == CAREEM_PACKAGE && careemPickupFieldClicked) {
+                val firstSuggestionText = suggestions[0].second
+                val destKeywordsCheck = extractDestinationKeywords(destinationAddress)
+                val matchesDestination = destKeywordsCheck.any { keyword ->
+                    firstSuggestionText.lowercase().contains(keyword.lowercase())
+                }
+
+                if (matchesDestination) {
+                    Log.w(TAG, "🚖 CRITICAL: First suggestion '$firstSuggestionText' matches DESTINATION, not clicking!")
+                    Log.w(TAG, "🚖 This means Careem suggestions haven't refreshed after entering pickup text")
+                    suggestions.forEach { (node, _) ->
+                        try { node.recycle() } catch (e: Exception) {}
+                    }
+                    return false  // Don't click - let caller handle fallback
+                }
+            }
+
             Log.i(TAG, "⚠️ Fallback: selecting '${suggestions[0].second}'")
 
             // For Careem: use gesture-only click
