@@ -1027,23 +1027,32 @@ class PriceReaderService : AccessibilityService() {
                         // CRITICAL: Check if Careem went BACK to home screen (need to click "سيارة" again)
                         // This can happen if user presses back, or if navigation didn't work
                         // Home screen indicators: Get more with Careem, service buttons (سيارة, حوّل محلياً, طلب المال, etc.)
-                        val hasCareemHomeIndicators = allText.any {
-                            it.contains("Get more with Careem") ||
-                            it.contains("أدخل كود الخصم") ||
-                            it.contains("استمتع بعروض") ||
-                            it.contains("Super App") ||
-                            it.contains("Careem+") ||
-                            it.contains("كريم+") ||
-                            it.contains("طعام") ||  // Food service
-                            it.contains("Bike") ||  // Bike service
-                            it.contains("توصيل")    // Delivery service
+                        // Use normalized string matching to handle invisible Unicode characters
+                        val hasCareemHomeIndicators = allText.any { text ->
+                            normalizedContains(text, "Get more with Careem") ||
+                            normalizedContains(text, "أدخل كود الخصم") ||
+                            normalizedContains(text, "استمتع بعروض") ||
+                            normalizedContains(text, "Super App") ||
+                            normalizedContains(text, "Careem+") ||
+                            normalizedContains(text, "كريم+") ||
+                            normalizedContains(text, "طعام") ||  // Food service
+                            normalizedContains(text, "Bike") ||  // Bike service
+                            normalizedContains(text, "توصيل")    // Delivery service
                         }
 
-                        val hasCareemServiceButtons = allText.any { it.contains("سيارة") || it.contains("سياره") } &&
-                            allText.any { t ->
-                                t.contains("حوّل محلياً") || t.contains("حول محليا") || t.contains("طلب المال") ||
-                                t.contains("طعام") || t.contains("Bike") || t.contains("توصيل")
-                            }
+                        // Check for service buttons with normalized matching
+                        val hasCarButton = allText.any { text ->
+                            normalizedContains(text, "سيارة") || normalizedContains(text, "سياره")
+                        }
+                        val hasOtherServiceButtons = allText.any { text ->
+                            normalizedContains(text, "حوّل محلياً") ||
+                            normalizedContains(text, "حول محليا") ||
+                            normalizedContains(text, "طلب المال") ||
+                            normalizedContains(text, "طعام") ||
+                            normalizedContains(text, "Bike") ||
+                            normalizedContains(text, "توصيل")
+                        }
+                        val hasCareemServiceButtons = hasCarButton && hasOtherServiceButtons
 
                         val isOnCareemHomeScreen = hasCareemHomeIndicators || hasCareemServiceButtons
 
@@ -1763,27 +1772,45 @@ class PriceReaderService : AccessibilityService() {
         Log.i(TAG, "🚖 === END OF VISIBLE TEXT (${allText.size} items) ===")
 
         // STEP 1: Check if we're on Careem HOME screen (need to click "سيارة" first)
-        val hasCareemHomeIndicators = allText.any {
-            it.contains("Get more with Careem") ||
-            it.contains("أدخل كود الخصم") ||
-            it.contains("استمتع بعروض") ||
-            it.contains("مرحبا") ||
-            it.contains("أهلا") ||
-            it.contains("Super App") ||
-            it.contains("Careem+") ||
-            it.contains("كريم+") ||
-            it.contains("طعام") ||  // Food service
-            it.contains("Bike") ||  // Bike service
-            it.contains("توصيل")    // Delivery service
+        // Use normalized string matching to handle invisible Unicode characters (RTL marks, zero-width spaces)
+        val hasCareemHomeIndicators = allText.any { text ->
+            normalizedContains(text, "Get more with Careem") ||
+            normalizedContains(text, "أدخل كود الخصم") ||
+            normalizedContains(text, "استمتع بعروض") ||
+            normalizedContains(text, "مرحبا") ||
+            normalizedContains(text, "أهلا") ||
+            normalizedContains(text, "Super App") ||
+            normalizedContains(text, "Careem+") ||
+            normalizedContains(text, "كريم+") ||
+            normalizedContains(text, "طعام") ||  // Food service
+            normalizedContains(text, "Bike") ||  // Bike service
+            normalizedContains(text, "توصيل")    // Delivery service
         }
 
-        val hasCareemServiceButtons = allText.any { it.contains("سيارة") || it.contains("سياره") } &&
-            allText.any { t ->
-                t.contains("حول محليا") || t.contains("طلب المال") ||
-                t.contains("طعام") || t.contains("Bike") || t.contains("توصيل")
-            }
+        // Check for service buttons: سيارة + one of (حوّل محلياً, حول محليا, طلب المال, etc.)
+        val hasCarButton = allText.any { text ->
+            normalizedContains(text, "سيارة") || normalizedContains(text, "سياره")
+        }
+        val hasOtherServiceButtons = allText.any { text ->
+            normalizedContains(text, "حوّل محلياً") ||  // With diacritics
+            normalizedContains(text, "حول محليا") ||   // Without diacritics
+            normalizedContains(text, "طلب المال") ||
+            normalizedContains(text, "طعام") ||
+            normalizedContains(text, "Bike") ||
+            normalizedContains(text, "توصيل")
+        }
+        val hasCareemServiceButtons = hasCarButton && hasOtherServiceButtons
 
         val isOnHomeScreen = hasCareemHomeIndicators || hasCareemServiceButtons
+
+        // Debug: Log detection results for diagnosis
+        Log.i(TAG, "🚖 [PICKUP FIRST] Home screen detection:")
+        Log.i(TAG, "🚖   - hasCareemHomeIndicators=$hasCareemHomeIndicators")
+        Log.i(TAG, "🚖   - hasCarButton=$hasCarButton, hasOtherServiceButtons=$hasOtherServiceButtons")
+        Log.i(TAG, "🚖   - hasCareemServiceButtons=$hasCareemServiceButtons")
+        Log.i(TAG, "🚖   - isOnHomeScreen=$isOnHomeScreen")
+        Log.i(TAG, "🚖   - careemCarButtonClicked=$careemCarButtonClicked")
+        Log.i(TAG, "🚖   - careemCarButtonClickAttempts=$careemCarButtonClickAttempts")
 
         // STEP 1: If on home screen, click "سيارة" button first
         if (isOnHomeScreen && !careemCarButtonClicked) {
@@ -1799,6 +1826,7 @@ class PriceReaderService : AccessibilityService() {
                         if (smartClick(node)) {
                             Log.i(TAG, "🚖 [PICKUP FIRST] ✓ Clicked '$buttonText' button - waiting for ride screen...")
                             careemCarButtonClicked = true
+                            careemCarButtonClickAttempts = 0  // Reset attempts on success
                             nodes.forEach { it.recycle() }
                             Thread.sleep(TimingConfig.animationWait)
                             return false  // Return false to allow re-entry after screen loads
@@ -1807,6 +1835,7 @@ class PriceReaderService : AccessibilityService() {
                         if (careemGestureClick(node)) {
                             Log.i(TAG, "🚖 [PICKUP FIRST] ✓ Gesture clicked '$buttonText' button")
                             careemCarButtonClicked = true
+                            careemCarButtonClickAttempts = 0  // Reset attempts on success
                             nodes.forEach { it.recycle() }
                             Thread.sleep(TimingConfig.animationWait)
                             return false
@@ -1816,8 +1845,15 @@ class PriceReaderService : AccessibilityService() {
                 }
             }
 
-            Log.w(TAG, "🚖 [PICKUP FIRST] Could not find 'سيارة' button on home screen")
-            careemCarButtonClicked = true  // Mark to avoid infinite loop
+            // Failed to click - increment attempts counter
+            careemCarButtonClickAttempts++
+            Log.w(TAG, "🚖 [PICKUP FIRST] Could not click 'سيارة' button (attempt $careemCarButtonClickAttempts/5)")
+
+            // Only mark as clicked after 5 failed attempts to avoid infinite loop
+            if (careemCarButtonClickAttempts >= 5) {
+                Log.w(TAG, "🚖 [PICKUP FIRST] Max car button click attempts reached - marking as clicked to proceed")
+                careemCarButtonClicked = true
+            }
             return false
         }
 
@@ -2042,27 +2078,44 @@ class PriceReaderService : AccessibilityService() {
 
         // STEP 1: Check if we're on Careem HOME screen (need to click "سيارة" first)
         // Careem Super App shows various services: سيارة (Ride), طعام (Food), توصيل (Delivery), etc.
-        val hasCareemHomeIndicators = allText.any {
-            it.contains("Get more with Careem") ||
-            it.contains("أدخل كود الخصم") ||
-            it.contains("استمتع بعروض") ||
-            it.contains("مرحبا") ||
-            it.contains("أهلا") ||
-            it.contains("Super App") ||
-            it.contains("Careem+") ||
-            it.contains("كريم+") ||
-            it.contains("طعام") ||  // Food service
-            it.contains("Bike") ||  // Bike service
-            it.contains("توصيل")    // Delivery service
+        // Use normalized string matching to handle invisible Unicode characters (RTL marks, zero-width spaces)
+        val hasCareemHomeIndicators = allText.any { text ->
+            normalizedContains(text, "Get more with Careem") ||
+            normalizedContains(text, "أدخل كود الخصم") ||
+            normalizedContains(text, "استمتع بعروض") ||
+            normalizedContains(text, "مرحبا") ||
+            normalizedContains(text, "أهلا") ||
+            normalizedContains(text, "Super App") ||
+            normalizedContains(text, "Careem+") ||
+            normalizedContains(text, "كريم+") ||
+            normalizedContains(text, "طعام") ||  // Food service
+            normalizedContains(text, "Bike") ||  // Bike service
+            normalizedContains(text, "توصيل")    // Delivery service
         }
 
-        val hasCareemServiceButtons = allText.any { it.contains("سيارة") || it.contains("سياره") } &&
-            allText.any { t ->
-                t.contains("حول محليا") || t.contains("طلب المال") ||
-                t.contains("طعام") || t.contains("Bike") || t.contains("توصيل")
-            }
+        // Check for service buttons: سيارة + one of (حوّل محلياً, حول محليا, طلب المال, etc.)
+        val hasCarButton = allText.any { text ->
+            normalizedContains(text, "سيارة") || normalizedContains(text, "سياره")
+        }
+        val hasOtherServiceButtons = allText.any { text ->
+            normalizedContains(text, "حوّل محلياً") ||  // With diacritics
+            normalizedContains(text, "حول محليا") ||   // Without diacritics
+            normalizedContains(text, "طلب المال") ||
+            normalizedContains(text, "طعام") ||
+            normalizedContains(text, "Bike") ||
+            normalizedContains(text, "توصيل")
+        }
+        val hasCareemServiceButtons = hasCarButton && hasOtherServiceButtons
 
         val isOnHomeScreen = hasCareemHomeIndicators || hasCareemServiceButtons
+
+        // Debug: Log detection results for diagnosis
+        Log.i(TAG, "🚖 Home screen detection (destination flow):")
+        Log.i(TAG, "🚖   - hasCareemHomeIndicators=$hasCareemHomeIndicators")
+        Log.i(TAG, "🚖   - hasCarButton=$hasCarButton, hasOtherServiceButtons=$hasOtherServiceButtons")
+        Log.i(TAG, "🚖   - hasCareemServiceButtons=$hasCareemServiceButtons")
+        Log.i(TAG, "🚖   - isOnHomeScreen=$isOnHomeScreen")
+        Log.i(TAG, "🚖   - careemCarButtonClicked=$careemCarButtonClicked")
 
         if (isOnHomeScreen && !careemCarButtonClicked) {
             Log.i(TAG, "🚖 Detected Careem HOME screen - need to click 'سيارة' (Car) button first")
@@ -7450,6 +7503,35 @@ class PriceReaderService : AccessibilityService() {
             updatePrice(priceInfo)
             Log.d(TAG, "Bolt price: $bestPrice EGP")
         }
+    }
+
+    /**
+     * Normalize text by removing invisible Unicode characters that can break string matching.
+     * These characters are common in Arabic text and RTL layouts.
+     */
+    private fun normalizeText(text: String): String {
+        return text
+            .replace("\u200B", "")   // Zero-width space
+            .replace("\u200C", "")   // Zero-width non-joiner
+            .replace("\u200D", "")   // Zero-width joiner
+            .replace("\u200E", "")   // Left-to-right mark
+            .replace("\u200F", "")   // Right-to-left mark
+            .replace("\u202A", "")   // Left-to-right embedding
+            .replace("\u202B", "")   // Right-to-left embedding
+            .replace("\u202C", "")   // Pop directional formatting
+            .replace("\u202D", "")   // Left-to-right override
+            .replace("\u202E", "")   // Right-to-left override
+            .replace("\u2060", "")   // Word joiner
+            .replace("\uFEFF", "")   // Byte order mark
+            .trim()
+    }
+
+    /**
+     * Check if text contains substring with normalization applied to both sides.
+     * This handles cases where invisible Unicode characters break string matching.
+     */
+    private fun normalizedContains(text: String, substring: String): Boolean {
+        return normalizeText(text).contains(normalizeText(substring), ignoreCase = true)
     }
 
     /**
