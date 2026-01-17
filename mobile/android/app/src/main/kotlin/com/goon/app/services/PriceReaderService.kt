@@ -1022,9 +1022,12 @@ class PriceReaderService : AccessibilityService() {
                                     careemPickupClickAttempts = 0
                                 }
 
-                                // PRIORITY 4: Try selecting suggestion only if pickup NOT already in header
-                                if (hasSuggestionDistances && !pickupFilledInHeader && careemPickupClickAttempts < 5) {
-                                    Log.i(TAG, "🚖 On suggestion screen - trying to select suggestion (attempt ${careemPickupClickAttempts + 1})")
+                                // PRIORITY 4: Try selecting suggestion if on suggestion screen
+                                // Note: pickupFilledInHeader can be falsely true from suggestion addresses,
+                                // so also try if we haven't clicked suggestion yet AND dest is not filled
+                                val needToClickSuggestion = !pickupFilledInHeader || (!careemPickupSuggestionClicked && !destFilledInHeader)
+                                if (hasSuggestionDistances && needToClickSuggestion && careemPickupClickAttempts < 5) {
+                                    Log.i(TAG, "🚖 On suggestion screen - trying to select suggestion (attempt ${careemPickupClickAttempts + 1}, needClick=$needToClickSuggestion)")
                                     if (selectCareemPickupSuggestion(rootNode)) {
                                         careemPickupSuggestionClicked = true
                                         careemPickupClickAttempts++
