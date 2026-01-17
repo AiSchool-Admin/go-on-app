@@ -372,6 +372,8 @@ class PriceReaderService : AccessibilityService() {
         careemNoValidPickupSuggestionCount = 0  // Reset no valid pickup count
         careemPickupButtonFallbackAttempted = false  // Reset pickUp button fallback flag
         careemPickupPhaseComplete = false  // Reset Careem pickup phase complete flag
+        careemDestinationSuggestionClicked = false  // Reset destination suggestion flag
+        careemDestinationClickAttempts = 0  // Reset destination click attempts
         careemLoaderFirstSeenTime = 0L  // Reset Careem loader time
         inDriverDestinationEntered = false  // Reset InDriver destination flag
         inDriverDoneClickedTime = 0L  // Reset InDriver Done click time
@@ -864,6 +866,12 @@ class PriceReaderService : AccessibilityService() {
                             Log.i(TAG, "🚖 Marked pickup suggestion as clicked (via SELECTING_SUGGESTION state)")
                         }
 
+                        // Mark destination suggestion as clicked when in destination phase
+                        if (packageName == CAREEM_PACKAGE && careemPickupPhaseComplete) {
+                            careemDestinationSuggestionClicked = true
+                            Log.i(TAG, "🚖 Marked DESTINATION suggestion as clicked (pickup phase complete)")
+                        }
+
                         Log.i(TAG, "🤖 ✓ Transitioning to WAITING_FOR_PRICE...")
                         automationState = AutomationState.WAITING_FOR_PRICE
                         automationRetries = 0
@@ -1074,6 +1082,8 @@ class PriceReaderService : AccessibilityService() {
                             careemNoValidPickupSuggestionCount = 0
                             careemPickupButtonFallbackAttempted = false
                             careemPickupPhaseComplete = false  // Reset pickup phase for new attempt
+                            careemDestinationSuggestionClicked = false  // Reset destination suggestion flag
+                            careemDestinationClickAttempts = 0  // Reset destination click attempts
 
                             automationState = AutomationState.FINDING_PICKUP_FIELD  // Start from pickup first (PICKUP FIRST flow)
                             automationRetries = 0
@@ -1082,6 +1092,56 @@ class PriceReaderService : AccessibilityService() {
                         }
 
                         if (isOnPickupScreen || hasSuggestionDistances) {
+                            // CRITICAL FIX: Check if we're in DESTINATION phase first
+                            // If careemPickupPhaseComplete=true, we're past pickup and need to handle destination suggestions
+                            if (careemPickupPhaseComplete && hasSuggestionDistances) {
+                                Log.i(TAG, "🚖 Careem in DESTINATION phase - checking if suggestions are for destination")
+
+                                // Check if suggestions match destination keywords
+                                val destKeywords = destinationAddress.split(" ").filter { it.length > 2 }
+                                val suggestionsMatchDestination = allText.any { text ->
+                                    text.matches(Regex(".*\\d+\\.?\\d*\\s*كم.*")) && // Has distance indicator
+                                    destKeywords.any { text.contains(it) }
+                                }
+
+                                if (suggestionsMatchDestination && careemDestinationClickAttempts < 5) {
+                                    Log.i(TAG, "🚖 Destination suggestions visible - re-clicking destination (attempt ${careemDestinationClickAttempts + 1})")
+
+                                    // Use selectFirstSuggestion which will use destination address when careemPickupPhaseComplete=true
+                                    if (selectFirstSuggestion(rootNode, CAREEM_PACKAGE)) {
+                                        careemDestinationSuggestionClicked = true
+                                        careemDestinationClickAttempts++
+                                        Log.i(TAG, "🚖 ✓ Re-clicked destination suggestion (total attempts: $careemDestinationClickAttempts)")
+                                        return
+                                    } else {
+                                        careemDestinationClickAttempts++
+                                        Log.w(TAG, "🚖 ✗ Failed to click destination suggestion (attempt $careemDestinationClickAttempts)")
+
+                                        // After several failed attempts, try clicking the first suggestion directly
+                                        if (careemDestinationClickAttempts >= 3) {
+                                            Log.i(TAG, "🚖 Trying fallback: click first visible suggestion")
+                                            if (clickFirstCareemSuggestionGesture(rootNode)) {
+                                                Log.i(TAG, "🚖 ✓ Clicked first suggestion as fallback")
+                                                careemDestinationSuggestionClicked = true
+                                                return
+                                            }
+                                        }
+                                    }
+                                    return
+                                } else if (careemDestinationClickAttempts >= 5) {
+                                    Log.w(TAG, "🚖 Destination click attempts exhausted - proceeding to wait for price")
+                                    // Continue waiting - don't try to handle as pickup
+                                    onIntermediateScreen = true
+                                }
+                                // In destination phase, skip the pickup handling below
+                                // Fall through only when suggestionsMatchDestination=false (wrong suggestions showing)
+                            }
+
+                            // Skip pickup handling if we're in destination phase
+                            if (careemPickupPhaseComplete) {
+                                Log.i(TAG, "🚖 In destination phase - skipping pickup handling, waiting for price screen")
+                                onIntermediateScreen = true
+                            } else {
                             Log.i(TAG, "🚖 Careem is on PICKUP screen (not price screen) - need to enter pickup address")
                             Log.i(TAG, "🚖 State: pickupFieldClicked=$careemPickupFieldClicked, pickupEntered=$careemPickupEntered")
 
@@ -1320,6 +1380,7 @@ class PriceReaderService : AccessibilityService() {
                                     }
                                 }
                             }
+                            } // End of else block for !careemPickupPhaseComplete
 
                             onIntermediateScreen = true
                         }
@@ -1754,6 +1815,8 @@ class PriceReaderService : AccessibilityService() {
     private var careemNoValidPickupSuggestionCount = 0  // Count consecutive failures to find valid pickup suggestions
     private var careemPickupButtonFallbackAttempted = false  // Track if we tried clicking "pickUp" button fallback
     private var careemPickupPhaseComplete = false  // Track if Careem pickup entry is done (PICKUP FIRST flow)
+    private var careemDestinationSuggestionClicked = false  // Track if destination suggestion was clicked
+    private var careemDestinationClickAttempts = 0  // Count destination suggestion click attempts
 
     /**
      * Find and click Careem PICKUP field for PICKUP FIRST flow
