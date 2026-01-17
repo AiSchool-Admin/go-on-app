@@ -2411,11 +2411,14 @@ class PriceReaderService : AccessibilityService() {
     }
 
     /**
-     * Find and click EditText or input fields in Careem
+     * Find and click EditText or input fields in Careem for DESTINATION
+     * This function specifically looks for the destination field,
+     * skipping any field that already contains the pickup address text
      */
     private fun findAndClickCareemInputField(node: AccessibilityNodeInfo): Boolean {
         val className = node.className?.toString()?.lowercase() ?: ""
         val text = node.text?.toString()?.lowercase() ?: ""
+        val originalText = node.text?.toString() ?: ""
         val hint = node.hintText?.toString()?.lowercase() ?: ""
         val desc = node.contentDescription?.toString()?.lowercase() ?: ""
 
@@ -2428,10 +2431,21 @@ class PriceReaderService : AccessibilityService() {
                                     desc.contains("where") || desc.contains("destination")
 
         if (isInputField || isDestinationRelated) {
-            Log.i(TAG, "🚖   Found input field: class=$className, text='${text.take(30)}'")
-            if (smartClick(node)) {
-                Log.i(TAG, "🚖 ✓✓✓ SUCCESS: Clicked on input field")
-                return true
+            // Skip if this field contains the pickup address (we're looking for destination field)
+            val pickupKeywords = pickupAddress.split(" ").filter { it.length > 2 }
+            val containsPickupText = pickupKeywords.any { keyword ->
+                originalText.contains(keyword, ignoreCase = true)
+            }
+
+            if (containsPickupText && pickupAddress.isNotEmpty()) {
+                Log.i(TAG, "🚖   Skipping input field (contains pickup text): class=$className, text='${text.take(30)}'")
+                // Continue searching children for a different field
+            } else {
+                Log.i(TAG, "🚖   Found destination input field: class=$className, text='${text.take(30)}'")
+                if (smartClick(node)) {
+                    Log.i(TAG, "🚖 ✓✓✓ SUCCESS: Clicked on destination input field")
+                    return true
+                }
             }
         }
 
@@ -4599,6 +4613,20 @@ class PriceReaderService : AccessibilityService() {
             val focusedText = focusedNode.text?.toString() ?: ""
             Log.i(TAG, "🤖 Found focused node: [$focusedClass] text='$focusedText'")
 
+            // SAFETY CHECK: Make sure we're not entering destination into pickup field
+            // Check if the focused field contains pickup text (which would be wrong)
+            val pickupKeywords = pickupAddress.split(" ").filter { it.length > 2 }
+            val containsPickupText = pickupKeywords.isNotEmpty() && pickupKeywords.any { keyword ->
+                focusedText.contains(keyword, ignoreCase = true)
+            }
+
+            if (containsPickupText && pickupAddress.isNotEmpty() && packageName == CAREEM_PACKAGE) {
+                Log.w(TAG, "🤖 ⚠️ WRONG FIELD: Focused field contains pickup text! Looking for destination field...")
+                focusedNode.recycle()
+                // Try to find and click the correct destination field
+                return findAndEnterDestinationInCareem(rootNode, textToEnter)
+            }
+
             // Clear existing text and set new text
             val args = android.os.Bundle()
             args.putCharSequence(
@@ -4654,6 +4682,86 @@ class PriceReaderService : AccessibilityService() {
         // Fallback: find any editable field and enter text
         Log.i(TAG, "🤖 Fallback: searching for any EditText field...")
         return enterTextIntoAnyEditText(rootNode, textToEnter)
+    }
+
+    /**
+     * Careem-specific: Find the DESTINATION EditText field (not pickup) and enter text
+     * This is called when we detect the pickup field was accidentally focused instead of destination
+     */
+    private fun findAndEnterDestinationInCareem(rootNode: AccessibilityNodeInfo, destinationText: String): Boolean {
+        Log.i(TAG, "🚖 findAndEnterDestinationInCareem: Looking for destination field (avoiding pickup)...")
+
+        // Find all EditText fields
+        val editTexts = mutableListOf<AccessibilityNodeInfo>()
+        findAllEditTexts(rootNode, editTexts)
+
+        Log.i(TAG, "🚖 Found ${editTexts.size} EditText fields total")
+
+        // Sort by Y position - destination field is usually BELOW pickup field
+        val sortedEditTexts = editTexts.toMutableList()
+        sortedEditTexts.sortWith { a, b ->
+            val rectA = android.graphics.Rect()
+            val rectB = android.graphics.Rect()
+            a.getBoundsInScreen(rectA)
+            b.getBoundsInScreen(rectB)
+            rectA.top.compareTo(rectB.top)
+        }
+
+        // Extract pickup keywords to identify which field to skip
+        val pickupKeywords = pickupAddress.split(" ").filter { it.length > 2 }
+
+        // Log all EditTexts with their positions
+        sortedEditTexts.forEachIndexed { index, et ->
+            val rect = android.graphics.Rect()
+            et.getBoundsInScreen(rect)
+            val text = et.text?.toString() ?: ""
+            Log.i(TAG, "🚖 EditText[$index]: y=${rect.top}, text='$text'")
+        }
+
+        // Look for the SECOND/LOWER EditText (destination field), or an empty one
+        for (editText in sortedEditTexts) {
+            val currentText = editText.text?.toString() ?: ""
+            val rect = android.graphics.Rect()
+            editText.getBoundsInScreen(rect)
+
+            // Check if this field contains pickup text - if so, SKIP it
+            val containsPickupText = pickupKeywords.any { keyword ->
+                currentText.contains(keyword, ignoreCase = true)
+            }
+
+            if (containsPickupText) {
+                Log.i(TAG, "🚖 Skipping EditText at y=${rect.top} (contains pickup text): '$currentText'")
+                continue
+            }
+
+            Log.i(TAG, "🚖 Found DESTINATION EditText at y=${rect.top}: '$currentText'")
+
+            // Focus and click this field first
+            editText.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+            editText.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            Thread.sleep(100)
+
+            // Clear existing text first
+            val clearArgs = android.os.Bundle()
+            clearArgs.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "")
+            editText.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, clearArgs)
+            Thread.sleep(100)
+
+            // Enter the destination text
+            val arguments = android.os.Bundle()
+            arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, destinationText)
+
+            if (editText.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)) {
+                Log.i(TAG, "🚖 ✓ Entered destination text: $destinationText")
+                editTexts.forEach { try { it.recycle() } catch (e: Exception) {} }
+                Thread.sleep(TimingConfig.textInputDelay)
+                return true
+            }
+        }
+
+        editTexts.forEach { try { it.recycle() } catch (e: Exception) {} }
+        Log.w(TAG, "🚖 ✗ Could not find destination field")
+        return false
     }
 
     private fun enterTextIntoAnyEditText(node: AccessibilityNodeInfo, text: String): Boolean {
