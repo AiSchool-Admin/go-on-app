@@ -374,6 +374,7 @@ class PriceReaderService : AccessibilityService() {
         careemPickupPhaseComplete = false  // Reset Careem pickup phase complete flag
         careemDestinationSuggestionClicked = false  // Reset destination suggestion flag
         careemDestinationClickAttempts = 0  // Reset destination click attempts
+        careemDestinationMismatchRetries = 0  // Reset destination mismatch retries
         careemLoaderFirstSeenTime = 0L  // Reset Careem loader time
         inDriverDestinationEntered = false  // Reset InDriver destination flag
         inDriverDoneClickedTime = 0L  // Reset InDriver Done click time
@@ -863,6 +864,7 @@ class PriceReaderService : AccessibilityService() {
                         // mark it so WAITING_FOR_PRICE doesn't try to click it again
                         if (packageName == CAREEM_PACKAGE && careemPickupFieldClicked) {
                             careemPickupSuggestionClicked = true
+                            careemPickupFieldClicked = false  // BUG FIX: Reset flag to prevent wrong address matching in destination phase
                             Log.i(TAG, "🚖 Marked pickup suggestion as clicked (via SELECTING_SUGGESTION state)")
                         }
 
@@ -1084,6 +1086,7 @@ class PriceReaderService : AccessibilityService() {
                             careemPickupPhaseComplete = false  // Reset pickup phase for new attempt
                             careemDestinationSuggestionClicked = false  // Reset destination suggestion flag
                             careemDestinationClickAttempts = 0  // Reset destination click attempts
+                            careemDestinationMismatchRetries = 0  // Reset destination mismatch retries
 
                             automationState = AutomationState.FINDING_PICKUP_FIELD  // Start from pickup first (PICKUP FIRST flow)
                             automationRetries = 0
@@ -1141,9 +1144,26 @@ class PriceReaderService : AccessibilityService() {
                                     Log.w(TAG, "🚖 Destination click attempts exhausted - proceeding to wait for price")
                                     // Continue waiting - don't try to handle as pickup
                                     onIntermediateScreen = true
+                                } else if (!suggestionsMatchDestination) {
+                                    // BUG FIX: Handle case when visible suggestions don't match destination keywords
+                                    // This can happen if Careem is showing stale/cached suggestions
+                                    careemDestinationMismatchRetries++
+                                    Log.w(TAG, "🚖 Destination suggestions MISMATCH (retry $careemDestinationMismatchRetries/3)")
+
+                                    if (careemDestinationMismatchRetries < 3) {
+                                        // Try clicking first visible suggestion as fallback
+                                        Log.i(TAG, "🚖 Trying fallback: click first suggestion despite mismatch")
+                                        if (clickFirstCareemSuggestionGesture(rootNode)) {
+                                            Log.i(TAG, "🚖 ✓ Clicked first suggestion (mismatch fallback)")
+                                            careemDestinationSuggestionClicked = true
+                                            return
+                                        }
+                                    } else {
+                                        Log.w(TAG, "🚖 Destination mismatch retries exhausted - waiting for price screen")
+                                        onIntermediateScreen = true
+                                    }
                                 }
                                 // In destination phase, skip the pickup handling below
-                                // Fall through only when suggestionsMatchDestination=false (wrong suggestions showing)
                             }
 
                             // Skip pickup handling if we're in destination phase
@@ -1834,6 +1854,7 @@ class PriceReaderService : AccessibilityService() {
     private var careemPickupPhaseComplete = false  // Track if Careem pickup entry is done (PICKUP FIRST flow)
     private var careemDestinationSuggestionClicked = false  // Track if destination suggestion was clicked
     private var careemDestinationClickAttempts = 0  // Count destination suggestion click attempts
+    private var careemDestinationMismatchRetries = 0  // BUG FIX: Count retries when destination suggestions don't match
 
     /**
      * Find and click Careem PICKUP field for PICKUP FIRST flow
@@ -3080,19 +3101,20 @@ class PriceReaderService : AccessibilityService() {
      * Used when collectCareemSuggestions returns empty but suggestions are visible on screen
      * Searches for nodes with distance indicators (كم) which indicate suggestion rows
      *
-     * CRITICAL: When in pickup mode (careemPickupFieldClicked=true), skip suggestions
+     * CRITICAL: When in pickup mode (!careemPickupPhaseComplete), skip suggestions
      * that match destination keywords - these are stale suggestions from previous search
      */
     private fun clickFirstCareemSuggestionGesture(rootNode: AccessibilityNodeInfo): Boolean {
         Log.i(TAG, "🚖 clickFirstCareemSuggestionGesture: Looking for suggestion by distance indicator...")
-        Log.i(TAG, "🚖 Mode: pickupFieldClicked=$careemPickupFieldClicked")
+        Log.i(TAG, "🚖 Mode: pickupPhaseComplete=$careemPickupPhaseComplete")
 
         // Find nodes that contain distance indicator (suggests it's a suggestion row)
         val allText = getAllTextFromNode(rootNode)
         Log.i(TAG, "🚖 All text on screen (first 15): ${allText.take(15)}")
 
         // CRITICAL: When in pickup mode, prepare destination keywords to skip
-        val destKeywords = if (careemPickupFieldClicked) {
+        // BUG FIX: Use !careemPickupPhaseComplete instead of careemPickupFieldClicked for reliable phase detection
+        val destKeywords = if (!careemPickupPhaseComplete) {
             extractDestinationKeywords(destinationAddress)
         } else {
             emptyList()
@@ -3100,7 +3122,7 @@ class PriceReaderService : AccessibilityService() {
 
         // Helper function to check if text matches destination (stale suggestion)
         fun matchesDestination(text: String): Boolean {
-            if (!careemPickupFieldClicked) return false
+            if (careemPickupPhaseComplete) return false  // In destination phase, don't skip destination matches
             return destKeywords.any { keyword ->
                 text.lowercase().contains(keyword.lowercase())
             }
@@ -4883,8 +4905,9 @@ class PriceReaderService : AccessibilityService() {
      * For Careem pickup selection, uses pickupAddress instead of destinationAddress
      */
     private fun selectFirstSuggestion(rootNode: AccessibilityNodeInfo, packageName: String): Boolean {
-        // For Careem, if we're selecting pickup suggestions (after pickup was entered), use pickup address
-        val addressToMatch = if (packageName == CAREEM_PACKAGE && careemPickupFieldClicked) {
+        // For Careem, if we're selecting pickup suggestions (pickup phase not complete), use pickup address
+        // BUG FIX: Use careemPickupPhaseComplete instead of careemPickupFieldClicked for reliable phase detection
+        val addressToMatch = if (packageName == CAREEM_PACKAGE && !careemPickupPhaseComplete) {
             Log.i(TAG, "🚖 Using PICKUP address for suggestion matching: $pickupAddress")
             pickupAddress
         } else {
@@ -4977,7 +5000,8 @@ class PriceReaderService : AccessibilityService() {
         if (suggestions.isNotEmpty()) {
             // CRITICAL FIX: When in Careem PICKUP mode, don't click suggestions that match DESTINATION
             // This prevents clicking a destination suggestion when we need a pickup suggestion
-            if (packageName == CAREEM_PACKAGE && careemPickupFieldClicked) {
+            // BUG FIX: Use !careemPickupPhaseComplete instead of careemPickupFieldClicked for reliable phase detection
+            if (packageName == CAREEM_PACKAGE && !careemPickupPhaseComplete) {
                 val firstSuggestionText = suggestions[0].second
                 val destKeywordsCheck = extractDestinationKeywords(destinationAddress)
                 val matchesDestination = destKeywordsCheck.any { keyword ->
