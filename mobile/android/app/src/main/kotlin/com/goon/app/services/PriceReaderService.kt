@@ -744,6 +744,14 @@ class PriceReaderService : AccessibilityService() {
                     val selected = selectFirstSuggestion(rootNode, packageName)
                     if (selected) {
                         Log.i(TAG, "🤖 ✓ Selected suggestion, transitioning to WAITING_FOR_PRICE...")
+
+                        // CRITICAL FIX: If this was a Careem PICKUP suggestion selection,
+                        // mark it so WAITING_FOR_PRICE doesn't try to click it again
+                        if (packageName == CAREEM_PACKAGE && careemPickupFieldClicked) {
+                            careemPickupSuggestionClicked = true
+                            Log.i(TAG, "🚖 Marked pickup suggestion as clicked (via SELECTING_SUGGESTION state)")
+                        }
+
                         automationState = AutomationState.WAITING_FOR_PRICE
                         automationRetries = 0
                         automationStep = 0
@@ -889,9 +897,13 @@ class PriceReaderService : AccessibilityService() {
                             Log.w(TAG, "🚖 Detected: homeIndicators=$hasCareemHomeIndicators, serviceButtons=$hasCareemServiceButtons")
                             Log.w(TAG, "🚖 Restarting automation from FINDING_DESTINATION_FIELD to click 'سيارة' button...")
 
-                            // Reset Careem-specific flags so the car button click will be attempted again
+                            // Reset ALL Careem-specific flags so the full flow will be attempted again
                             careemCarButtonClicked = false
                             careemCarButtonClickAttempts = 0
+                            careemPickupFieldClicked = false
+                            careemPickupEntered = false
+                            careemPickupSuggestionClicked = false
+                            careemPickupClickAttempts = 0
 
                             automationState = AutomationState.FINDING_DESTINATION_FIELD
                             automationRetries = 0
