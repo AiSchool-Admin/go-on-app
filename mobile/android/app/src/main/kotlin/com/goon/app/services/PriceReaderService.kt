@@ -1202,6 +1202,7 @@ class PriceReaderService : AccessibilityService() {
                                         // Try clicking first suggestion directly
                                         if (selectCareemPickupSuggestion(rootNode)) {
                                             careemPickupEntered = true
+                                            careemPickupFieldClicked = false  // BUG FIX: Reset flag in legacy path
                                             Log.i(TAG, "🚖 ✓ Selected pickup suggestion directly")
                                             return
                                         }
@@ -1301,6 +1302,7 @@ class PriceReaderService : AccessibilityService() {
                                     Log.i(TAG, "🚖 On suggestion screen - trying to select suggestion (attempt ${careemPickupClickAttempts + 1}, needClick=$needToClickSuggestion)")
                                     if (selectCareemPickupSuggestion(rootNode)) {
                                         careemPickupSuggestionClicked = true
+                                        careemPickupFieldClicked = false  // BUG FIX: Reset flag in legacy path
                                         careemPickupClickAttempts++
                                         Log.i(TAG, "🚖 ✓ Clicked pickup suggestion (total attempts: $careemPickupClickAttempts)")
                                         return
@@ -1337,6 +1339,7 @@ class PriceReaderService : AccessibilityService() {
                                                             Log.i(TAG, "🚖 ✓ Clicked '$locText' - using current location as pickup!")
                                                             careemUseCurrentLocationAttempted = true
                                                             careemPickupSuggestionClicked = true
+                                                            careemPickupFieldClicked = false  // BUG FIX: Reset flag in legacy path
                                                             locNode.recycle()
                                                             Thread.sleep(1000)
                                                             return
@@ -1345,6 +1348,7 @@ class PriceReaderService : AccessibilityService() {
                                                             Log.i(TAG, "🚖 ✓ Clicked '$locText' via parent - using current location!")
                                                             careemUseCurrentLocationAttempted = true
                                                             careemPickupSuggestionClicked = true
+                                                            careemPickupFieldClicked = false  // BUG FIX: Reset flag in legacy path
                                                             locNode.recycle()
                                                             Thread.sleep(1000)
                                                             return
@@ -1385,6 +1389,7 @@ class PriceReaderService : AccessibilityService() {
                                                 if (clickCareemMapForPickup(rootNode)) {
                                                     Log.i(TAG, "🚖 ✓ Clicked on map - should use current GPS location as pickup")
                                                     careemPickupSuggestionClicked = true
+                                                    careemPickupFieldClicked = false  // BUG FIX: Reset flag in legacy path
                                                     Thread.sleep(1000)
                                                     // After clicking map, look for confirm button
                                                     if (clickCareemConfirmButton(rootNode)) {
@@ -1400,6 +1405,7 @@ class PriceReaderService : AccessibilityService() {
                                                 if (clickFirstCareemSuggestionGesture(rootNode)) {
                                                     Log.i(TAG, "🚖 ✓ Clicked first suggestion as last resort")
                                                     careemPickupSuggestionClicked = true
+                                                    careemPickupFieldClicked = false  // BUG FIX: Reset flag in legacy path
                                                     return
                                                 }
                                             }
