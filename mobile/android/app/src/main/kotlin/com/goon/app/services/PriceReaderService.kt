@@ -862,9 +862,10 @@ class PriceReaderService : AccessibilityService() {
 
                         // CRITICAL FIX: If this was a Careem PICKUP suggestion selection (legacy path),
                         // mark it so WAITING_FOR_PRICE doesn't try to click it again
-                        if (packageName == CAREEM_PACKAGE && careemPickupFieldClicked) {
+                        // BUG FIX: Use !careemPickupPhaseComplete instead of careemPickupFieldClicked for reliable phase detection
+                        if (packageName == CAREEM_PACKAGE && !careemPickupPhaseComplete) {
                             careemPickupSuggestionClicked = true
-                            careemPickupFieldClicked = false  // BUG FIX: Reset flag to prevent wrong address matching in destination phase
+                            careemPickupFieldClicked = false  // Reset flag to prevent wrong address matching in destination phase
                             Log.i(TAG, "🚖 Marked pickup suggestion as clicked (via SELECTING_SUGGESTION state)")
                         }
 
