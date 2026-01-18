@@ -384,6 +384,7 @@ class PriceReaderService : AccessibilityService() {
         careemDestinationClickAttempts = 0  // Reset destination click attempts
         careemDestinationMismatchRetries = 0  // Reset destination mismatch retries
         careemPositionBasedClickAttempt = 0  // Reset position-based click attempts
+        careemGestureClickAttempt = 0  // Reset gesture click attempts
         careemLoaderFirstSeenTime = 0L  // Reset Careem loader time
         inDriverDestinationEntered = false  // Reset InDriver destination flag
         inDriverDoneClickedTime = 0L  // Reset InDriver Done click time
@@ -908,6 +909,7 @@ class PriceReaderService : AccessibilityService() {
                             careemPickupPhaseComplete = true  // Mark pickup phase as done
                             careemPickupFieldClicked = false  // Reset so next selectFirstSuggestion uses destination address
                             careemPositionBasedClickAttempt = 0  // Reset position-based clicks for destination phase
+                            careemGestureClickAttempt = 0  // Reset gesture click attempts for destination phase
 
                             // Go to FINDING_DESTINATION_FIELD for destination entry
                             automationState = AutomationState.FINDING_DESTINATION_FIELD
@@ -992,6 +994,7 @@ class PriceReaderService : AccessibilityService() {
                                 careemPickupPhaseComplete = true  // Mark pickup phase as done
                                 careemPickupFieldClicked = false
                                 careemPositionBasedClickAttempt = 0  // Reset position-based clicks for destination phase
+                                careemGestureClickAttempt = 0  // Reset gesture click attempts for destination phase
                                 automationState = AutomationState.FINDING_DESTINATION_FIELD
                                 automationRetries = 0
                                 automationStep = 0
@@ -1160,6 +1163,7 @@ class PriceReaderService : AccessibilityService() {
                             careemDestinationClickAttempts = 0  // Reset destination click attempts
                             careemDestinationMismatchRetries = 0  // Reset destination mismatch retries
                             careemPositionBasedClickAttempt = 0  // Reset position-based click attempts
+                            careemGestureClickAttempt = 0  // Reset gesture click attempts
 
                             automationState = AutomationState.FINDING_PICKUP_FIELD  // Start from pickup first (PICKUP FIRST flow)
                             automationRetries = 0
@@ -2141,6 +2145,7 @@ class PriceReaderService : AccessibilityService() {
     private var careemDestinationClickAttempts = 0  // Count destination suggestion click attempts
     private var careemDestinationMismatchRetries = 0  // BUG FIX: Count retries when destination suggestions don't match
     private var careemPositionBasedClickAttempt = 0  // Track position-based click attempts for suggestions
+    private var careemGestureClickAttempt = 0  // Track gesture click attempts for cycling through positions
 
     /**
      * Find and click Careem PICKUP field for PICKUP FIRST flow
@@ -7099,12 +7104,20 @@ class PriceReaderService : AccessibilityService() {
     /**
      * Special click for Careem suggestions - uses ONLY gesture tap
      * ACTION_CLICK doesn't work on Careem suggestion rows
+     *
+     * ENHANCED: Uses longer gesture duration (350ms) and clicks at left side
+     * where the icon/interactive area typically is, not just center
      */
     private fun careemGestureClick(node: AccessibilityNodeInfo): Boolean {
         val rect = android.graphics.Rect()
         node.getBoundsInScreen(rect)
         val centerX = rect.centerX()
         val centerY = rect.centerY()
+
+        // Click at the left side of the suggestion (where icon usually is)
+        // This is often more reliable than center for Careem's Flutter UI
+        val leftX = rect.left + (rect.width() * 0.15).toInt()  // 15% from left edge
+        val rightX = rect.left + (rect.width() * 0.85).toInt() // 85% from left (for fallback)
 
         Log.i(TAG, "🚖 Careem gesture click at ($centerX, $centerY), bounds=$rect, size=${rect.width()}x${rect.height()}")
 
@@ -7119,21 +7132,38 @@ class PriceReaderService : AccessibilityService() {
             Log.w(TAG, "🚖 WARNING: Bounds height ${rect.height()} is large - might be clicking container instead of suggestion row")
         }
 
+        // Determine click position based on attempt count
+        // Alternate between: left side (icon area), center, right side
+        val attemptPositions = listOf(
+            Pair(leftX, centerY),   // Try left side first (icon area)
+            Pair(centerX, centerY), // Then center
+            Pair(rightX, centerY),  // Then right side
+            Pair(centerX, rect.top + (rect.height() * 0.3).toInt()), // Upper area
+            Pair(centerX, rect.top + (rect.height() * 0.7).toInt())  // Lower area
+        )
+
+        val positionIndex = careemGestureClickAttempt % attemptPositions.size
+        val (clickX, clickY) = attemptPositions[positionIndex]
+        careemGestureClickAttempt++
+
+        Log.i(TAG, "🚖 Click position #$positionIndex: ($clickX, $clickY) [attempt $careemGestureClickAttempt]")
+
         // Use gesture tap directly (ACTION_CLICK doesn't work on Careem)
         try {
             val path = android.graphics.Path()
-            path.moveTo(centerX.toFloat(), centerY.toFloat())
+            path.moveTo(clickX.toFloat(), clickY.toFloat())
 
+            // Use 350ms duration - longer tap for better recognition by Careem's Flutter gestures
             val gesture = android.accessibilityservice.GestureDescription.Builder()
-                .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 150))
+                .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 350))
                 .build()
 
             // Use null callback to avoid anonymous class compilation issues
             dispatchGesture(gesture, null, null)
-            Log.i(TAG, "🚖 Careem gesture tap dispatched at ($centerX, $centerY)")
+            Log.i(TAG, "🚖 Careem gesture tap dispatched at ($clickX, $clickY) with 350ms duration")
 
             // Wait longer for Careem to process the tap
-            Thread.sleep(800)
+            Thread.sleep(1000)
             Log.i(TAG, "🚖 Careem click attempted, waiting for screen change...")
             return true
         } catch (e: Exception) {
