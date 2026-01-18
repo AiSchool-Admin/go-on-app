@@ -385,6 +385,8 @@ class PriceReaderService : AccessibilityService() {
         careemDestinationMismatchRetries = 0  // Reset destination mismatch retries
         careemPositionBasedClickAttempt = 0  // Reset position-based click attempts
         careemGestureClickAttempt = 0  // Reset gesture click attempts
+        careemDestMapIconFallbackAttempted = false  // Reset Map icon fallback flag
+        careemDestQuickTapAttempted = false  // Reset quick tap fallback flag
         careemLoaderFirstSeenTime = 0L  // Reset Careem loader time
         inDriverDestinationEntered = false  // Reset InDriver destination flag
         inDriverDoneClickedTime = 0L  // Reset InDriver Done click time
@@ -1164,6 +1166,8 @@ class PriceReaderService : AccessibilityService() {
                             careemDestinationMismatchRetries = 0  // Reset destination mismatch retries
                             careemPositionBasedClickAttempt = 0  // Reset position-based click attempts
                             careemGestureClickAttempt = 0  // Reset gesture click attempts
+                            careemDestMapIconFallbackAttempted = false  // Reset Map icon fallback flag
+                            careemDestQuickTapAttempted = false  // Reset quick tap fallback flag
 
                             automationState = AutomationState.FINDING_PICKUP_FIELD  // Start from pickup first (PICKUP FIRST flow)
                             automationRetries = 0
@@ -1218,8 +1222,42 @@ class PriceReaderService : AccessibilityService() {
                                     }
                                     return
                                 } else if (careemDestinationClickAttempts >= 5) {
-                                    Log.w(TAG, "🚖 Destination click attempts exhausted - proceeding to wait for price")
-                                    // Continue waiting - don't try to handle as pickup
+                                    Log.w(TAG, "🚖 Destination click attempts exhausted (5+) - trying fallbacks...")
+
+                                    // FALLBACK 1: Try clicking "Map icon" or "crossedFlagsFilled" to set location on map
+                                    if (!careemDestMapIconFallbackAttempted) {
+                                        Log.i(TAG, "🚖 Fallback 1: Trying to click Map icon to set location on map...")
+                                        val mapIconTexts = listOf("Map icon", "crossedFlagsFilled", "على الخريطة", "Set on map")
+                                        for (buttonText in mapIconTexts) {
+                                            val buttonNode = findNodeWithText(rootNode, buttonText)
+                                            if (buttonNode != null) {
+                                                Log.i(TAG, "🚖 Found Map icon button: '$buttonText'")
+                                                if (careemGestureClick(buttonNode)) {
+                                                    Log.i(TAG, "🚖 ✓ Clicked '$buttonText' - may navigate to map screen")
+                                                    careemDestMapIconFallbackAttempted = true
+                                                    buttonNode.recycle()
+                                                    return
+                                                }
+                                                buttonNode.recycle()
+                                            }
+                                        }
+                                        careemDestMapIconFallbackAttempted = true  // Mark as attempted even if not found
+                                        Log.w(TAG, "🚖 Map icon not found or click failed")
+                                    }
+
+                                    // FALLBACK 2: Try a quick double-tap on the first suggestion (some Flutter apps respond better)
+                                    if (!careemDestQuickTapAttempted) {
+                                        Log.i(TAG, "🚖 Fallback 2: Trying quick double-tap on suggestion...")
+                                        if (performCareemQuickDoubleTap(rootNode)) {
+                                            Log.i(TAG, "🚖 ✓ Quick double-tap performed")
+                                            careemDestQuickTapAttempted = true
+                                            return
+                                        }
+                                        careemDestQuickTapAttempted = true
+                                    }
+
+                                    // All fallbacks exhausted, just wait
+                                    Log.w(TAG, "🚖 All destination fallbacks exhausted - waiting for price screen")
                                     onIntermediateScreen = true
                                 } else if (!suggestionsMatchDestination) {
                                     // BUG FIX: Handle case when visible suggestions don't match destination keywords
@@ -2146,6 +2184,8 @@ class PriceReaderService : AccessibilityService() {
     private var careemDestinationMismatchRetries = 0  // BUG FIX: Count retries when destination suggestions don't match
     private var careemPositionBasedClickAttempt = 0  // Track position-based click attempts for suggestions
     private var careemGestureClickAttempt = 0  // Track gesture click attempts for cycling through positions
+    private var careemDestMapIconFallbackAttempted = false  // Track if we tried Map icon fallback for destination
+    private var careemDestQuickTapAttempted = false  // Track if we tried quick tap (shorter duration) for destination
 
     /**
      * Find and click Careem PICKUP field for PICKUP FIRST flow
@@ -3418,6 +3458,86 @@ class PriceReaderService : AccessibilityService() {
 
         Thread.sleep(1200) // Wait longer for Careem to respond
         return result
+    }
+
+    /**
+     * Careem quick double-tap fallback for destination suggestions
+     * Some Flutter apps respond better to quick taps than long taps
+     * This performs two quick taps in succession on the first visible suggestion
+     */
+    private fun performCareemQuickDoubleTap(rootNode: AccessibilityNodeInfo): Boolean {
+        Log.i(TAG, "🚖 performCareemQuickDoubleTap: Looking for first destination suggestion...")
+
+        // Find the first suggestion with distance indicator
+        val allText = getAllTextFromNode(rootNode)
+        var suggestionText: String? = null
+
+        for (text in allText) {
+            // Look for text after distance indicators that looks like an address
+            if (text.length > 10 &&
+                !text.lowercase().contains("google") &&
+                !text.lowercase().contains("navigation") &&
+                !text.lowercase().contains("pickup") &&
+                !text.lowercase().contains("morevertical") &&
+                (text.contains("،") || text.contains(",") || text.contains("-") ||
+                 text.contains("شارع") || text.contains("Street") || text.contains("Egypt") || text.contains("مصر"))) {
+                suggestionText = text
+                Log.i(TAG, "🚖 Found suggestion for double-tap: '$text'")
+                break
+            }
+        }
+
+        if (suggestionText == null) {
+            Log.w(TAG, "🚖 No suitable suggestion found for double-tap")
+            return false
+        }
+
+        val node = findNodeWithText(rootNode, suggestionText)
+        if (node == null) {
+            Log.w(TAG, "🚖 Could not find node for suggestion: '$suggestionText'")
+            return false
+        }
+
+        val rect = android.graphics.Rect()
+        node.getBoundsInScreen(rect)
+        val centerX = rect.centerX().toFloat()
+        val centerY = rect.centerY().toFloat()
+
+        // Click at left 1/3 of the row (avoid the moreVertical menu icon on the right)
+        val clickX = (rect.left + rect.width() * 0.33f)
+        val clickY = centerY
+
+        Log.i(TAG, "🚖 Double-tap at ($clickX, $clickY), bounds=$rect")
+
+        try {
+            // First quick tap (100ms duration)
+            val path1 = android.graphics.Path()
+            path1.moveTo(clickX, clickY)
+            val gesture1 = android.accessibilityservice.GestureDescription.Builder()
+                .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path1, 0, 100))
+                .build()
+            dispatchGesture(gesture1, null, null)
+            Log.i(TAG, "🚖 First quick tap dispatched")
+
+            Thread.sleep(150) // Brief pause between taps
+
+            // Second quick tap at same position
+            val path2 = android.graphics.Path()
+            path2.moveTo(clickX, clickY)
+            val gesture2 = android.accessibilityservice.GestureDescription.Builder()
+                .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path2, 0, 100))
+                .build()
+            dispatchGesture(gesture2, null, null)
+            Log.i(TAG, "🚖 Second quick tap dispatched")
+
+            node.recycle()
+            Thread.sleep(1000) // Wait for response
+            return true
+        } catch (e: Exception) {
+            Log.e(TAG, "🚖 Quick double-tap failed: ${e.message}")
+            try { node.recycle() } catch (ex: Exception) {}
+            return false
+        }
     }
 
     /**
@@ -7153,14 +7273,23 @@ class PriceReaderService : AccessibilityService() {
             val path = android.graphics.Path()
             path.moveTo(clickX.toFloat(), clickY.toFloat())
 
-            // Use 350ms duration - longer tap for better recognition by Careem's Flutter gestures
+            // Vary tap duration based on attempt count:
+            // - First 5 attempts: 350ms (longer tap)
+            // - Attempts 6-10: 100ms (medium tap)
+            // - Attempts 11+: 50ms (quick tap - some Flutter UIs respond better to this)
+            val tapDuration = when {
+                careemGestureClickAttempt <= 5 -> 350L
+                careemGestureClickAttempt <= 10 -> 100L
+                else -> 50L
+            }
+
             val gesture = android.accessibilityservice.GestureDescription.Builder()
-                .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 350))
+                .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, tapDuration))
                 .build()
 
             // Use null callback to avoid anonymous class compilation issues
             dispatchGesture(gesture, null, null)
-            Log.i(TAG, "🚖 Careem gesture tap dispatched at ($clickX, $clickY) with 350ms duration")
+            Log.i(TAG, "🚖 Careem gesture tap dispatched at ($clickX, $clickY) with ${tapDuration}ms duration")
 
             // Wait longer for Careem to process the tap
             Thread.sleep(1000)
