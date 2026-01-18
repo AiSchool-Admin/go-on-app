@@ -2411,12 +2411,16 @@ class PriceReaderService : AccessibilityService() {
     }
 
     /**
-     * Enter Careem pickup address text for PICKUP FIRST flow
-     * Called after clickingthe pickup field in PICKUP FIRST flow
+     * Enter Careem pickup coordinates for PICKUP FIRST flow
+     * IMPROVED: Uses coordinates directly since Careem accepts "lat, lng" format
+     * Called after clicking the pickup field in PICKUP FIRST flow
      */
     private fun enterCareemPickupTextFirst(rootNode: AccessibilityNodeInfo): Boolean {
         Log.i(TAG, "🚖 ========== CAREEM PICKUP TEXT ENTRY (PICKUP FIRST) ==========")
-        Log.i(TAG, "🚖 Pickup to enter: $pickupAddress")
+
+        // IMPROVED: Use coordinates format - Careem accepts "lat, lng" directly
+        val textToEnter = "$pickupLat, $pickupLng"
+        Log.i(TAG, "🚖 Using COORDINATES for Careem pickup: $textToEnter (address: $pickupAddress)")
 
         // Find ALL EditText fields
         val editTexts = mutableListOf<AccessibilityNodeInfo>()
@@ -2449,12 +2453,11 @@ class PriceReaderService : AccessibilityService() {
             val rect = android.graphics.Rect()
             editText.getBoundsInScreen(rect)
 
-            // Skip if this field contains destination-related text
-            val destKeywords = destinationAddress.split(" ").filter { it.length > 3 }
-            val hasDestination = destKeywords.any { currentText.contains(it) }
+            // Skip if this field already contains destination coordinates
+            val hasDestCoords = currentText.contains(destLat.toString().take(6))
 
-            if (hasDestination) {
-                Log.i(TAG, "🚖 [PICKUP FIRST] Skipping field with destination text: '$currentText'")
+            if (hasDestCoords) {
+                Log.i(TAG, "🚖 [PICKUP FIRST] Skipping field with destination coords: '$currentText'")
                 continue
             }
 
@@ -2466,15 +2469,15 @@ class PriceReaderService : AccessibilityService() {
             editText.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, clearArgs)
             Thread.sleep(100)
 
-            // Enter the pickup address
+            // Enter the pickup coordinates
             val arguments = android.os.Bundle()
-            arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, pickupAddress)
+            arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, textToEnter)
 
             if (editText.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)) {
-                Log.i(TAG, "🚖 [PICKUP FIRST] ✓ Entered pickup address: $pickupAddress")
+                Log.i(TAG, "🚖 [PICKUP FIRST] ✓ Entered pickup coordinates: $textToEnter")
 
-                // CRITICAL FIX: Multiple attempts to trigger search
-                Thread.sleep(500)
+                // Wait for Careem to process coordinates
+                Thread.sleep(800)
 
                 // Method 1: Try IME_ACTION_SEARCH to trigger the search
                 val imeArgs = android.os.Bundle()
@@ -2483,7 +2486,7 @@ class PriceReaderService : AccessibilityService() {
                 editText.performAction(AccessibilityNodeInfo.ACTION_NEXT_AT_MOVEMENT_GRANULARITY, imeArgs)
                 Log.i(TAG, "🚖 [PICKUP FIRST] Method 1: Sent IME_ACTION_SEARCH")
 
-                Thread.sleep(300)
+                Thread.sleep(500)
 
                 // Method 2: Click below the input field to dismiss keyboard and show suggestions
                 try {
@@ -2495,7 +2498,7 @@ class PriceReaderService : AccessibilityService() {
                     val path = android.graphics.Path()
                     path.moveTo(tapX, tapY)
                     val gesture = android.accessibilityservice.GestureDescription.Builder()
-                        .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 50))
+                        .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 100))
                         .build()
                     dispatchGesture(gesture, null, null)
                     Log.i(TAG, "🚖 [PICKUP FIRST] Method 2: Tapped below input at ($tapX, $tapY) to show suggestions")
@@ -2517,10 +2520,10 @@ class PriceReaderService : AccessibilityService() {
             Log.i(TAG, "🚖 [PICKUP FIRST] Fallback: Using focused input field")
 
             val arguments = android.os.Bundle()
-            arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, pickupAddress)
+            arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, textToEnter)
 
             if (focusedInput.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)) {
-                Log.i(TAG, "🚖 [PICKUP FIRST] ✓ Entered pickup address via focused field: $pickupAddress")
+                Log.i(TAG, "🚖 [PICKUP FIRST] ✓ Entered pickup coordinates via focused field: $textToEnter")
                 focusedInput.recycle()
                 Thread.sleep(TimingConfig.textInputDelay)
                 return true
@@ -2528,7 +2531,7 @@ class PriceReaderService : AccessibilityService() {
             focusedInput.recycle()
         }
 
-        Log.w(TAG, "🚖 [PICKUP FIRST] ✗ Could not enter pickup address")
+        Log.w(TAG, "🚖 [PICKUP FIRST] ✗ Could not enter pickup coordinates")
         return false
     }
 
@@ -5215,15 +5218,15 @@ class PriceReaderService : AccessibilityService() {
 
         // Determine what to enter:
         // - InDriver: Use TEXT address so suggestions appear (user clicks first suggestion)
-        // - DiDi: Use COORDINATES to avoid multiple results
+        // - DiDi, Careem: Use COORDINATES - both apps accept "lat, lng" format directly
         val textToEnter = when (packageName) {
             INDRIVER_PACKAGE -> {
                 // Use the destination NAME so InDriver shows suggestions
                 Log.i(TAG, "🤖 Using TEXT address for InDriver: $destinationAddress")
                 destinationAddress
             }
-            DIDI_PACKAGE -> {
-                // Use coordinates format that DiDi recognizes
+            DIDI_PACKAGE, CAREEM_PACKAGE -> {
+                // Use coordinates format - both DiDi and Careem accept this directly
                 val coordText = "$destLat, $destLng"
                 Log.i(TAG, "🤖 Using COORDINATES for $packageName: $coordText")
                 coordText
@@ -5339,11 +5342,13 @@ class PriceReaderService : AccessibilityService() {
     }
 
     /**
-     * Careem-specific: Find the DESTINATION EditText field (not pickup) and enter text
+     * Careem-specific: Find the DESTINATION EditText field (not pickup) and enter coordinates
      * This is called when we detect the pickup field was accidentally focused instead of destination
+     * IMPROVED: Uses pickup coordinates to identify pickup field instead of text keywords
      */
     private fun findAndEnterDestinationInCareem(rootNode: AccessibilityNodeInfo, destinationText: String): Boolean {
         Log.i(TAG, "🚖 findAndEnterDestinationInCareem: Looking for destination field (avoiding pickup)...")
+        Log.i(TAG, "🚖 Will enter: $destinationText")
 
         // Find all EditText fields
         val editTexts = mutableListOf<AccessibilityNodeInfo>()
@@ -5361,8 +5366,8 @@ class PriceReaderService : AccessibilityService() {
             rectA.top.compareTo(rectB.top)
         }
 
-        // Extract pickup keywords to identify which field to skip
-        val pickupKeywords = pickupAddress.split(" ").filter { it.length > 2 }
+        // Use pickup coordinates to identify which field to skip (pickup field contains pickup coords)
+        val pickupCoordPrefix = pickupLat.toString().take(6)  // First 6 chars of pickup lat
 
         // Log all EditTexts with their positions
         sortedEditTexts.forEachIndexed { index, et ->
@@ -5378,13 +5383,11 @@ class PriceReaderService : AccessibilityService() {
             val rect = android.graphics.Rect()
             editText.getBoundsInScreen(rect)
 
-            // Check if this field contains pickup text - if so, SKIP it
-            val containsPickupText = pickupKeywords.any { keyword ->
-                currentText.contains(keyword, ignoreCase = true)
-            }
+            // Check if this field contains pickup coordinates - if so, SKIP it
+            val containsPickupCoords = currentText.contains(pickupCoordPrefix)
 
-            if (containsPickupText) {
-                Log.i(TAG, "🚖 Skipping EditText at y=${rect.top} (contains pickup text): '$currentText'")
+            if (containsPickupCoords) {
+                Log.i(TAG, "🚖 Skipping EditText at y=${rect.top} (contains pickup coords): '$currentText'")
                 continue
             }
 
@@ -5401,12 +5404,32 @@ class PriceReaderService : AccessibilityService() {
             editText.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, clearArgs)
             Thread.sleep(100)
 
-            // Enter the destination text
+            // Enter the destination coordinates
             val arguments = android.os.Bundle()
             arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, destinationText)
 
             if (editText.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)) {
-                Log.i(TAG, "🚖 ✓ Entered destination text: $destinationText")
+                Log.i(TAG, "🚖 ✓ Entered destination coordinates: $destinationText")
+
+                // Trigger search after entering coordinates
+                Thread.sleep(500)
+                try {
+                    val displayMetrics = resources.displayMetrics
+                    val screenWidth = displayMetrics.widthPixels
+                    val tapX = screenWidth / 2f
+                    val tapY = (rect.bottom + 200).toFloat()
+
+                    val path = android.graphics.Path()
+                    path.moveTo(tapX, tapY)
+                    val gesture = android.accessibilityservice.GestureDescription.Builder()
+                        .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 100))
+                        .build()
+                    dispatchGesture(gesture, null, null)
+                    Log.i(TAG, "🚖 Tapped below input to show suggestions")
+                } catch (e: Exception) {
+                    Log.w(TAG, "🚖 Tap to trigger search failed: ${e.message}")
+                }
+
                 editTexts.forEach { try { it.recycle() } catch (e: Exception) {} }
                 Thread.sleep(TimingConfig.textInputDelay)
                 return true
@@ -5454,17 +5477,45 @@ class PriceReaderService : AccessibilityService() {
 
     /**
      * Select a suggestion that MATCHES the destination, not just the first one
-     * For Careem pickup selection, uses pickupAddress instead of destinationAddress
+     * For Careem: Uses coordinates mode - just click first suggestion since coordinates are precise
+     * For other apps: Uses keyword matching from text address
      */
     private fun selectFirstSuggestion(rootNode: AccessibilityNodeInfo, packageName: String): Boolean {
-        // For Careem, if we're selecting pickup suggestions (pickup phase not complete), use pickup address
-        // BUG FIX: Use careemPickupPhaseComplete instead of careemPickupFieldClicked for reliable phase detection
-        val addressToMatch = if (packageName == CAREEM_PACKAGE && !careemPickupPhaseComplete) {
-            Log.i(TAG, "🚖 Using PICKUP address for suggestion matching: $pickupAddress")
-            pickupAddress
-        } else {
-            destinationAddress
+        // CAREEM COORDINATES MODE: When using coordinates, Careem shows precise location
+        // We can click the first suggestion directly without keyword matching
+        if (packageName == CAREEM_PACKAGE) {
+            val coordsUsed = if (!careemPickupPhaseComplete) "$pickupLat, $pickupLng" else "$destLat, $destLng"
+            Log.i(TAG, "🚖 CAREEM COORDS MODE: Coordinates entered ($coordsUsed) - clicking first suggestion directly")
+
+            // Collect suggestions
+            val suggestions = mutableListOf<Pair<AccessibilityNodeInfo, String>>()
+            collectSuggestions(rootNode, suggestions)
+            if (suggestions.isEmpty()) {
+                collectCareemSuggestions(rootNode, suggestions)
+            }
+
+            Log.i(TAG, "🚖 Found ${suggestions.size} Careem suggestions:")
+            suggestions.forEachIndexed { index, (_, text) ->
+                Log.i(TAG, "   [$index] '$text'")
+            }
+
+            if (suggestions.isNotEmpty()) {
+                val (firstNode, firstText) = suggestions[0]
+                Log.i(TAG, "🚖 CAREEM: Clicking first suggestion: '$firstText'")
+                val clicked = careemGestureClick(firstNode)
+                suggestions.forEach { (node, _) ->
+                    try { node.recycle() } catch (e: Exception) {}
+                }
+                return clicked
+            } else {
+                // Fallback: try gesture-based fallback
+                Log.i(TAG, "🚖 No Careem suggestions found, trying gesture fallback...")
+                return clickFirstCareemSuggestionGesture(rootNode)
+            }
         }
+
+        // For other apps: Use keyword matching from text address
+        val addressToMatch = destinationAddress
 
         // Extract keywords from the appropriate address (remove Plus Codes and numbers)
         val destKeywords = extractDestinationKeywords(addressToMatch)
