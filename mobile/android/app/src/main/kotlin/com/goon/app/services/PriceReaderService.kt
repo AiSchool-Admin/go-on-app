@@ -1151,17 +1151,31 @@ class PriceReaderService : AccessibilityService() {
                                     careemDestinationMismatchRetries++
                                     Log.w(TAG, "🚖 Destination suggestions MISMATCH (retry $careemDestinationMismatchRetries/3)")
 
-                                    if (careemDestinationMismatchRetries < 3) {
-                                        // Try clicking first visible suggestion as fallback
-                                        Log.i(TAG, "🚖 Trying fallback: click first suggestion despite mismatch")
-                                        if (clickFirstCareemSuggestionGesture(rootNode)) {
-                                            Log.i(TAG, "🚖 ✓ Clicked first suggestion (mismatch fallback)")
-                                            careemDestinationSuggestionClicked = true
+                                    when {
+                                        careemDestinationMismatchRetries == 1 -> {
+                                            // RETRY STRATEGY 1: Re-enter destination text
+                                            // Go back to FINDING_DESTINATION_FIELD to re-enter the text
+                                            Log.i(TAG, "🚖 Mismatch retry 1: Re-entering destination text...")
+                                            automationState = AutomationState.FINDING_DESTINATION_FIELD
+                                            automationRetries = 0
+                                            automationStep = 0
                                             return
                                         }
-                                    } else {
-                                        Log.w(TAG, "🚖 Destination mismatch retries exhausted - waiting for price screen")
-                                        onIntermediateScreen = true
+                                        careemDestinationMismatchRetries == 2 -> {
+                                            // RETRY STRATEGY 2: Try clicking first visible suggestion as fallback
+                                            Log.i(TAG, "🚖 Mismatch retry 2: Trying to click first suggestion despite mismatch")
+                                            if (clickFirstCareemSuggestionGesture(rootNode)) {
+                                                Log.i(TAG, "🚖 ✓ Clicked first suggestion (mismatch fallback)")
+                                                careemDestinationSuggestionClicked = true
+                                                return
+                                            }
+                                            // If click failed, wait and try again
+                                        }
+                                        else -> {
+                                            // RETRY STRATEGY 3: Give up and wait for price screen
+                                            Log.w(TAG, "🚖 Destination mismatch retries exhausted - waiting for price screen")
+                                            onIntermediateScreen = true
+                                        }
                                     }
                                 }
                                 // In destination phase, skip the pickup handling below
@@ -1313,10 +1327,19 @@ class PriceReaderService : AccessibilityService() {
                                         careemPickupClickAttempts++
                                         Log.w(TAG, "🚖 ✗ No valid pickup suggestion found (attempt $careemPickupClickAttempts)")
 
-                                        // FALLBACK: After 2 failed attempts, try alternative methods
+                                        // FALLBACK: Try alternative methods when suggestions don't match
                                         // This handles cases where Careem shows cached destination suggestions
                                         // instead of actual pickup suggestions
                                         careemNoValidPickupSuggestionCount++
+
+                                        // RETRY STRATEGY: On first mismatch, try re-entering pickup text
+                                        if (careemNoValidPickupSuggestionCount == 1 && careemPickupClickAttempts == 1) {
+                                            Log.i(TAG, "🚖 Pickup mismatch retry 1: Re-entering pickup text...")
+                                            careemPickupEntered = false  // Reset to allow re-entering
+                                            careemPickupFieldClicked = false
+                                            // Stay in current state to retry pickup entry
+                                            return
+                                        }
 
                                         if (careemPickupClickAttempts >= 2) {
                                             Log.i(TAG, "🚖 Trying fallback: no pickup suggestions found (consecutive failures: $careemNoValidPickupSuggestionCount)")
