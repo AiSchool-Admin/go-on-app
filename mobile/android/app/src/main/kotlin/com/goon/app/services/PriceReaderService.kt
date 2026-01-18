@@ -387,6 +387,7 @@ class PriceReaderService : AccessibilityService() {
         careemGestureClickAttempt = 0  // Reset gesture click attempts
         careemDestMapIconFallbackAttempted = false  // Reset Map icon fallback flag
         careemDestQuickTapAttempted = false  // Reset quick tap fallback flag
+        careemPickupTextRetryCount = 0  // Reset pickup text retry count
         careemLoaderFirstSeenTime = 0L  // Reset Careem loader time
         inDriverDestinationEntered = false  // Reset InDriver destination flag
         inDriverDoneClickedTime = 0L  // Reset InDriver Done click time
@@ -784,9 +785,9 @@ class PriceReaderService : AccessibilityService() {
                     }
 
                     // After enough time, transition to SELECTING_SUGGESTION or WAITING_FOR_PRICE
-                    // For Careem PICKUP phase, wait a bit longer for suggestions to refresh
+                    // For Careem PICKUP phase, wait LONGER for suggestions to refresh (search takes time)
                     val waitSteps = if (packageName == CAREEM_PACKAGE && careemPickupEntered && !careemPickupPhaseComplete) {
-                        5 // Wait ~6 seconds for Careem pickup suggestions
+                        8 // Wait ~10 seconds for Careem pickup suggestions (increased from 5)
                     } else {
                         3 // Default ~3.6 seconds
                     }
@@ -805,19 +806,29 @@ class PriceReaderService : AccessibilityService() {
                                 containsPickupKeyword && !containsDestKeyword
                             }
 
-                            // Check if suggestions still show destination
-                            val stillShowsDestination = allText.any { text ->
+                            // Check if suggestions still show random/generic places (not matching pickup)
+                            val hasGenericSuggestions = allText.any { text ->
                                 val isDistanceLine = text.matches(Regex(".*\\d+\\.?\\d*\\s*كم.*"))
-                                val containsDestKeyword = destKeywords.any { keyword -> text.contains(keyword, ignoreCase = true) }
-                                isDistanceLine || containsDestKeyword
+                                isDistanceLine
                             }
+                            val noMatchingPickupSuggestions = hasGenericSuggestions && !hasSuggestionsForPickup
 
-                            if (!hasSuggestionsForPickup && stillShowsDestination) {
-                                Log.w(TAG, "🚖 Careem pickup suggestions NOT refreshed yet (still showing destination)")
-                                // Continue waiting a few more steps
-                                if (automationStep <= waitSteps + 3) {
-                                    Log.i(TAG, "🚖 Waiting more for Careem pickup suggestions to refresh...")
+                            if (noMatchingPickupSuggestions) {
+                                Log.w(TAG, "🚖 Careem pickup suggestions don't match '$pickupAddress'")
+                                Log.w(TAG, "🚖 pickupRetryCount=$careemPickupTextRetryCount, hasSuggestionsForPickup=$hasSuggestionsForPickup")
+
+                                // If suggestions don't match after waiting, try re-entering the text
+                                if (careemPickupTextRetryCount < 2) {
+                                    careemPickupTextRetryCount++
+                                    Log.i(TAG, "🚖 Retry ${careemPickupTextRetryCount}: Re-entering pickup text to trigger search...")
+                                    careemPickupEntered = false  // Reset to re-enter
+                                    automationState = AutomationState.ENTERING_PICKUP
+                                    automationRetries = 0
+                                    automationStep = 0
                                     return
+                                } else {
+                                    // After 2 retries, proceed anyway (use first suggestion as fallback)
+                                    Log.w(TAG, "🚖 Pickup text retry limit reached - proceeding with available suggestions")
                                 }
                             }
                         }
@@ -1168,6 +1179,7 @@ class PriceReaderService : AccessibilityService() {
                             careemGestureClickAttempt = 0  // Reset gesture click attempts
                             careemDestMapIconFallbackAttempted = false  // Reset Map icon fallback flag
                             careemDestQuickTapAttempted = false  // Reset quick tap fallback flag
+                            careemPickupTextRetryCount = 0  // Reset pickup text retry count
 
                             automationState = AutomationState.FINDING_PICKUP_FIELD  // Start from pickup first (PICKUP FIRST flow)
                             automationRetries = 0
@@ -2186,6 +2198,7 @@ class PriceReaderService : AccessibilityService() {
     private var careemGestureClickAttempt = 0  // Track gesture click attempts for cycling through positions
     private var careemDestMapIconFallbackAttempted = false  // Track if we tried Map icon fallback for destination
     private var careemDestQuickTapAttempted = false  // Track if we tried quick tap (shorter duration) for destination
+    private var careemPickupTextRetryCount = 0  // Track how many times we retried entering pickup text
 
     /**
      * Find and click Careem PICKUP field for PICKUP FIRST flow
@@ -2459,6 +2472,37 @@ class PriceReaderService : AccessibilityService() {
 
             if (editText.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)) {
                 Log.i(TAG, "🚖 [PICKUP FIRST] ✓ Entered pickup address: $pickupAddress")
+
+                // CRITICAL FIX: Multiple attempts to trigger search
+                Thread.sleep(500)
+
+                // Method 1: Try IME_ACTION_SEARCH to trigger the search
+                val imeArgs = android.os.Bundle()
+                imeArgs.putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_MOVEMENT_GRANULARITY_INT,
+                    android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH)
+                editText.performAction(AccessibilityNodeInfo.ACTION_NEXT_AT_MOVEMENT_GRANULARITY, imeArgs)
+                Log.i(TAG, "🚖 [PICKUP FIRST] Method 1: Sent IME_ACTION_SEARCH")
+
+                Thread.sleep(300)
+
+                // Method 2: Click below the input field to dismiss keyboard and show suggestions
+                try {
+                    val displayMetrics = resources.displayMetrics
+                    val screenWidth = displayMetrics.widthPixels
+                    val tapX = screenWidth / 2f
+                    val tapY = (rect.bottom + 200).toFloat()  // Tap below the input field
+
+                    val path = android.graphics.Path()
+                    path.moveTo(tapX, tapY)
+                    val gesture = android.accessibilityservice.GestureDescription.Builder()
+                        .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 50))
+                        .build()
+                    dispatchGesture(gesture, null, null)
+                    Log.i(TAG, "🚖 [PICKUP FIRST] Method 2: Tapped below input at ($tapX, $tapY) to show suggestions")
+                } catch (e: Exception) {
+                    Log.w(TAG, "🚖 [PICKUP FIRST] Method 2 failed: ${e.message}")
+                }
+
                 editTexts.forEach { try { it.recycle() } catch (e: Exception) {} }
                 Thread.sleep(TimingConfig.textInputDelay)
                 return true
@@ -5220,6 +5264,33 @@ class PriceReaderService : AccessibilityService() {
 
             if (result) {
                 Log.i(TAG, "🤖 ✓ Successfully entered destination: $textToEnter")
+
+                // CRITICAL FOR CAREEM: After entering destination, tap below to trigger search/show suggestions
+                if (packageName == CAREEM_PACKAGE) {
+                    Log.i(TAG, "🚖 [Careem] Triggering search for destination...")
+                    Thread.sleep(500)
+
+                    try {
+                        // Get focused node bounds to tap below it
+                        val rect = android.graphics.Rect()
+                        focusedNode.getBoundsInScreen(rect)
+
+                        val displayMetrics = resources.displayMetrics
+                        val screenWidth = displayMetrics.widthPixels
+                        val tapX = screenWidth / 2f
+                        val tapY = (rect.bottom + 200).toFloat()  // Tap below the input field
+
+                        val path = android.graphics.Path()
+                        path.moveTo(tapX, tapY)
+                        val gesture = android.accessibilityservice.GestureDescription.Builder()
+                            .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 50))
+                            .build()
+                        dispatchGesture(gesture, null, null)
+                        Log.i(TAG, "🚖 [Careem] Tapped below input at ($tapX, $tapY) to show suggestions")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "🚖 [Careem] Tap to trigger search failed: ${e.message}")
+                    }
+                }
 
                 // CRITICAL FOR INDRIVER: After entering destination, press Enter to submit
                 // This should trigger navigation to the price screen
