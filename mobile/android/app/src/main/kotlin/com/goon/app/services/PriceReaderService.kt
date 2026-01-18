@@ -325,6 +325,11 @@ class PriceReaderService : AccessibilityService() {
     // Track DiDi suggestion retry from WAITING_FOR_PRICE (to prevent infinite loops)
     private var didiSuggestionRetryCount = 0
 
+    // Track DiDi pickup entry state (PICKUP FIRST flow - like InDriver and Careem)
+    private var didiPickupEntered = false
+    private var didiPickupPhaseComplete = false
+    private var didiPickupFieldClicked = false
+
     /**
      * FULLY AUTOMATED PRICE FETCH
      * Opens app, enters destination, captures price, returns to GO-ON
@@ -360,6 +365,9 @@ class PriceReaderService : AccessibilityService() {
         inDriverPickupEntered = false  // Reset InDriver pickup flag
         didiDestinationClickAttempts = 0  // Reset DiDi destination click attempts
         didiSuggestionRetryCount = 0  // Reset DiDi suggestion retry counter
+        didiPickupEntered = false  // Reset DiDi pickup flag (PICKUP FIRST flow)
+        didiPickupPhaseComplete = false  // Reset DiDi pickup phase complete flag
+        didiPickupFieldClicked = false  // Reset DiDi pickup field click flag
         careemCarButtonClicked = false  // Reset Careem car button flag
         careemCarButtonClickAttempts = 0  // Reset Careem car button click attempts
         careemSearchBarClicked = false  // Reset Careem search bar click flag
@@ -448,13 +456,16 @@ class PriceReaderService : AccessibilityService() {
 
             when (automationState) {
                 AutomationState.WAITING_FOR_APP -> {
-                    // For InDriver and Careem: enter PICKUP first, then destination
-                    // Careem has issues with suggestions not refreshing when pickup is entered after destination
+                    // For InDriver, Careem, and DiDi: enter PICKUP first, then destination
+                    // This ensures the custom pickup location from GO-ON is used, not the current GPS location
                     if (packageName == INDRIVER_PACKAGE) {
                         Log.i(TAG, "🤖 ✓ InDriver active, transitioning to FINDING_PICKUP_FIELD...")
                         automationState = AutomationState.FINDING_PICKUP_FIELD
                     } else if (packageName == CAREEM_PACKAGE) {
                         Log.i(TAG, "🤖 ✓ Careem active, transitioning to FINDING_PICKUP_FIELD (PICKUP FIRST flow)...")
+                        automationState = AutomationState.FINDING_PICKUP_FIELD
+                    } else if (packageName == DIDI_PACKAGE) {
+                        Log.i(TAG, "🤖 ✓ DiDi active, transitioning to FINDING_PICKUP_FIELD (PICKUP FIRST flow)...")
                         automationState = AutomationState.FINDING_PICKUP_FIELD
                     } else {
                         Log.i(TAG, "🤖 ✓ App is active, transitioning to FINDING_DESTINATION_FIELD...")
@@ -463,7 +474,7 @@ class PriceReaderService : AccessibilityService() {
                 }
 
                 // ============================================================
-                // InDriver and Careem: Enter PICKUP first
+                // InDriver, Careem, and DiDi: Enter PICKUP first
                 // ============================================================
                 AutomationState.FINDING_PICKUP_FIELD -> {
                     if (packageName == CAREEM_PACKAGE) {
@@ -480,6 +491,24 @@ class PriceReaderService : AccessibilityService() {
                             Log.w(TAG, "🤖 ✗ [Careem] Pickup field not found (attempt $automationRetries/${TimingConfig.MAX_RETRIES})")
                             if (automationRetries > TimingConfig.MAX_RETRIES) {
                                 Log.e(TAG, "🤖 ✗✗✗ [Careem] FAILED: Max retries exceeded for finding pickup field")
+                                automationState = AutomationState.FAILED
+                            }
+                        }
+                    } else if (packageName == DIDI_PACKAGE) {
+                        // DiDi PICKUP FIRST flow
+                        Log.i(TAG, "🚕 [DiDi] Searching for PICKUP field (PICKUP FIRST flow)...")
+
+                        val found = findAndClickDiDiPickupField(rootNode)
+                        if (found) {
+                            Log.i(TAG, "🚕 ✓✓✓ [DiDi] Found pickup field! Transitioning to ENTERING_PICKUP...")
+                            didiPickupFieldClicked = true
+                            automationState = AutomationState.ENTERING_PICKUP
+                            automationRetries = 0
+                        } else {
+                            automationRetries++
+                            Log.w(TAG, "🚕 ✗ [DiDi] Pickup field not found (attempt $automationRetries/${TimingConfig.MAX_RETRIES})")
+                            if (automationRetries > TimingConfig.MAX_RETRIES) {
+                                Log.e(TAG, "🚕 ✗✗✗ [DiDi] FAILED: Max retries exceeded for finding pickup field")
                                 automationState = AutomationState.FAILED
                             }
                         }
@@ -525,6 +554,29 @@ class PriceReaderService : AccessibilityService() {
                             automationRetries++
                             if (automationRetries > 3) {
                                 Log.e(TAG, "🤖 ✗✗✗ [Careem] Pickup entry FAILED")
+                                automationState = AutomationState.FAILED
+                            }
+                        }
+                    } else if (packageName == DIDI_PACKAGE) {
+                        // DiDi PICKUP FIRST flow
+                        Log.i(TAG, "🚕 [DiDi] Entering pickup text: '$pickupAddress' (coords: $pickupLat, $pickupLng)")
+
+                        val entered = enterDiDiPickupText(rootNode)
+                        if (entered) {
+                            Log.i(TAG, "🚕 ✓ [DiDi] Entered pickup!")
+                            didiPickupEntered = true
+                            latestPrices.remove(packageName)  // Clear any cached price
+
+                            // For DiDi: Go to WAITING_FOR_SUGGESTIONS to wait for pickup suggestion selection
+                            Log.i(TAG, "🚕 ✓ [DiDi] Now going to WAITING_FOR_SUGGESTIONS for pickup...")
+                            automationState = AutomationState.WAITING_FOR_SUGGESTIONS
+                            automationRetries = 0
+                            automationStep = 0
+                        } else {
+                            Log.w(TAG, "🚕 ✗ [DiDi] Failed to enter pickup text")
+                            automationRetries++
+                            if (automationRetries > 3) {
+                                Log.e(TAG, "🚕 ✗✗✗ [DiDi] Pickup entry FAILED")
                                 automationState = AutomationState.FAILED
                             }
                         }
@@ -585,6 +637,8 @@ class PriceReaderService : AccessibilityService() {
                     // Log additional info for Careem PICKUP FIRST flow
                     if (packageName == CAREEM_PACKAGE && careemPickupPhaseComplete) {
                         Log.i(TAG, "🤖 [Careem PICKUP FIRST] Searching for DESTINATION field (pickup already done)...")
+                    } else if (packageName == DIDI_PACKAGE && didiPickupPhaseComplete) {
+                        Log.i(TAG, "🚕 [DiDi PICKUP FIRST] Searching for DESTINATION field (pickup already done)...")
                     } else {
                         Log.i(TAG, "🤖 Searching for destination field...")
                     }
@@ -852,6 +906,20 @@ class PriceReaderService : AccessibilityService() {
                             careemPickupSuggestionClicked = true
                             careemPickupPhaseComplete = true  // Mark pickup phase as done
                             careemPickupFieldClicked = false  // Reset so next selectFirstSuggestion uses destination address
+
+                            // Go to FINDING_DESTINATION_FIELD for destination entry
+                            automationState = AutomationState.FINDING_DESTINATION_FIELD
+                            automationRetries = 0
+                            automationStep = 0
+                            return
+                        }
+
+                        // CRITICAL: For DiDi PICKUP FIRST flow
+                        // If we just selected PICKUP suggestion (pickup phase not complete), go to destination entry
+                        if (packageName == DIDI_PACKAGE && didiPickupEntered && !didiPickupPhaseComplete) {
+                            Log.i(TAG, "🚕 [DiDi] PICKUP suggestion selected! Now moving to DESTINATION entry...")
+                            didiPickupPhaseComplete = true  // Mark pickup phase as done
+                            didiPickupFieldClicked = false  // Reset for destination phase
 
                             // Go to FINDING_DESTINATION_FIELD for destination entry
                             automationState = AutomationState.FINDING_DESTINATION_FIELD
@@ -1684,6 +1752,189 @@ class PriceReaderService : AccessibilityService() {
 
         // Strategy 3: Try to find EditText fields directly
         return findAndClickEditText(rootNode)
+    }
+
+    /**
+     * Find and click DiDi's PICKUP field for PICKUP FIRST flow
+     * DiDi needs to first click "Where to?" to open the search screen,
+     * then click the pickup field (usually shows current location) to edit it
+     */
+    private fun findAndClickDiDiPickupField(rootNode: AccessibilityNodeInfo): Boolean {
+        Log.i(TAG, "🚕 ========== DIDI PICKUP FIELD SEARCH (PICKUP FIRST) ==========")
+        Log.i(TAG, "🚕 Pickup to enter: $pickupAddress (coords: $pickupLat, $pickupLng)")
+
+        // Debug: Log ALL visible text on screen
+        val allText = getAllTextFromNode(rootNode)
+        Log.i(TAG, "🚕 === ALL VISIBLE TEXT ON SCREEN ===")
+        allText.take(20).forEachIndexed { index, text ->
+            Log.i(TAG, "🚕 [$index] '$text'")
+        }
+        Log.i(TAG, "🚕 === END OF VISIBLE TEXT ===")
+
+        // Check if we're on the HOME screen (need to click "Where to?" first)
+        val isOnHomeScreen = allText.any { text ->
+            val lower = text.lowercase()
+            lower.contains("tap to enter your destination") ||
+            lower.contains("where to?") ||
+            lower.contains("إلى أين")
+        }
+
+        if (isOnHomeScreen) {
+            Log.i(TAG, "🚕 [DiDi] On HOME screen - clicking 'Where to?' to open search...")
+
+            // Click "Where to?" to open the search screen
+            val whereToTexts = listOf("Where to?", "Where to", "إلى أين", "إلى أين؟", "Tap to enter your destination")
+            for (searchText in whereToTexts) {
+                val nodes = rootNode.findAccessibilityNodeInfosByText(searchText)
+                if (nodes.isNotEmpty()) {
+                    val node = nodes[0]
+                    val rect = android.graphics.Rect()
+                    node.getBoundsInScreen(rect)
+                    Log.i(TAG, "🚕 Found '$searchText' at $rect - clicking...")
+                    clickAtPosition(rect.centerX().toFloat(), rect.centerY().toFloat())
+                    Thread.sleep(TimingConfig.animationWait)
+                    nodes.forEach { it.recycle() }
+                    return true  // Return true, will come back to find pickup field
+                }
+            }
+            return false
+        }
+
+        // Check if we're on the SEARCH screen (has "Where to?" field for destination)
+        val isOnSearchScreen = allText.any { text ->
+            val lower = text.lowercase()
+            lower.contains("where to?") ||
+            lower.contains("pickup point") ||
+            lower.contains("your location") ||
+            lower.contains("موقعك") ||
+            lower.contains("نقطة الاقلال") ||
+            lower.contains("من أين")
+        }
+
+        if (isOnSearchScreen) {
+            Log.i(TAG, "🚕 [DiDi] On SEARCH screen - looking for pickup field...")
+
+            // DiDi search screen has:
+            // - Top: Pickup field (shows current location or "Your location")
+            // - Bottom: Destination field (shows "Where to?")
+            // We need to click the PICKUP field (top one)
+
+            // Strategy 1: Find by "Your location" or similar text
+            val pickupTexts = listOf(
+                "Your location", "Pickup point", "موقعك", "موقعك الحالي",
+                "نقطة الاقلال", "نقطة الإقلال", "من أين", "Current location"
+            )
+
+            for (pickupText in pickupTexts) {
+                val nodes = rootNode.findAccessibilityNodeInfosByText(pickupText)
+                if (nodes.isNotEmpty()) {
+                    val node = nodes[0]
+                    val rect = android.graphics.Rect()
+                    node.getBoundsInScreen(rect)
+                    Log.i(TAG, "🚕 Found pickup field '$pickupText' at $rect - clicking...")
+
+                    // Try clicking the node or its parent
+                    if (smartClick(node)) {
+                        Log.i(TAG, "🚕 ✓ Clicked pickup field via smartClick!")
+                        nodes.forEach { it.recycle() }
+                        Thread.sleep(TimingConfig.clickDelay)
+                        return true
+                    }
+
+                    // Fallback: gesture tap
+                    clickAtPosition(rect.centerX().toFloat(), rect.centerY().toFloat())
+                    Log.i(TAG, "🚕 ✓ Clicked pickup field via gesture tap!")
+                    nodes.forEach { it.recycle() }
+                    Thread.sleep(TimingConfig.clickDelay)
+                    return true
+                }
+            }
+
+            // Strategy 2: Find the UPPER EditText field (pickup is usually above destination)
+            Log.i(TAG, "🚕 Strategy 2: Finding upper EditText field...")
+            val editTexts = mutableListOf<AccessibilityNodeInfo>()
+            findAllEditTexts(rootNode, editTexts)
+
+            if (editTexts.size >= 1) {
+                // Sort by Y position - pickup field is usually at the TOP
+                editTexts.sortWith { a, b ->
+                    val rectA = android.graphics.Rect()
+                    val rectB = android.graphics.Rect()
+                    a.getBoundsInScreen(rectA)
+                    b.getBoundsInScreen(rectB)
+                    rectA.top.compareTo(rectB.top)
+                }
+
+                // Click the FIRST (topmost) EditText - should be pickup field
+                val pickupEditText = editTexts[0]
+                val rect = android.graphics.Rect()
+                pickupEditText.getBoundsInScreen(rect)
+                val currentText = pickupEditText.text?.toString() ?: ""
+                Log.i(TAG, "🚕 Found upper EditText at y=${rect.top} with text='$currentText' - clicking...")
+
+                if (pickupEditText.isClickable || pickupEditText.isFocusable) {
+                    pickupEditText.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+                    pickupEditText.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    Log.i(TAG, "🚕 ✓ Clicked/focused pickup EditText!")
+                    editTexts.forEach { it.recycle() }
+                    return true
+                }
+
+                // Fallback: gesture tap
+                clickAtPosition(rect.centerX().toFloat(), rect.centerY().toFloat())
+                Log.i(TAG, "🚕 ✓ Gesture tapped pickup EditText!")
+                editTexts.forEach { it.recycle() }
+                return true
+            }
+        }
+
+        Log.w(TAG, "🚕 Could not find DiDi pickup field")
+        return false
+    }
+
+    /**
+     * Enter pickup address text into DiDi's pickup field
+     * Uses coordinates format that DiDi recognizes well
+     */
+    private fun enterDiDiPickupText(rootNode: AccessibilityNodeInfo): Boolean {
+        Log.i(TAG, "🚕 enterDiDiPickupText: Looking for focused input...")
+
+        // Use coordinates format for DiDi - it handles this well
+        val textToEnter = "$pickupLat, $pickupLng"
+        Log.i(TAG, "🚕 Using COORDINATES for DiDi pickup: $textToEnter")
+
+        // Try to find focused input first
+        val focusedNode = rootNode.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        if (focusedNode != null) {
+            val focusedClass = focusedNode.className?.toString()?.substringAfterLast(".") ?: ""
+            val focusedText = focusedNode.text?.toString() ?: ""
+            Log.i(TAG, "🚕 Found focused node: [$focusedClass] text='$focusedText'")
+
+            // Enter the text
+            val args = android.os.Bundle()
+            args.putCharSequence(
+                AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                textToEnter
+            )
+            val result = focusedNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+
+            if (result) {
+                Log.i(TAG, "🚕 ✓ Successfully entered pickup: $textToEnter")
+                focusedNode.recycle()
+                // Wait a moment for suggestions to appear
+                Thread.sleep(TimingConfig.textInputDelay * 2)
+                return true
+            } else {
+                Log.w(TAG, "🚕 ✗ ACTION_SET_TEXT failed on focused node")
+            }
+            focusedNode.recycle()
+        } else {
+            Log.w(TAG, "🚕 No focused input node found")
+        }
+
+        // Fallback: find any editable field and enter text
+        Log.i(TAG, "🚕 Fallback: searching for any EditText field...")
+        return enterTextIntoAnyEditText(rootNode, textToEnter)
     }
 
     /**
