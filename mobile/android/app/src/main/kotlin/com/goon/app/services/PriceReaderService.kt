@@ -383,6 +383,7 @@ class PriceReaderService : AccessibilityService() {
         careemDestinationSuggestionClicked = false  // Reset destination suggestion flag
         careemDestinationClickAttempts = 0  // Reset destination click attempts
         careemDestinationMismatchRetries = 0  // Reset destination mismatch retries
+        careemPositionBasedClickAttempt = 0  // Reset position-based click attempts
         careemLoaderFirstSeenTime = 0L  // Reset Careem loader time
         inDriverDestinationEntered = false  // Reset InDriver destination flag
         inDriverDoneClickedTime = 0L  // Reset InDriver Done click time
@@ -906,6 +907,7 @@ class PriceReaderService : AccessibilityService() {
                             careemPickupSuggestionClicked = true
                             careemPickupPhaseComplete = true  // Mark pickup phase as done
                             careemPickupFieldClicked = false  // Reset so next selectFirstSuggestion uses destination address
+                            careemPositionBasedClickAttempt = 0  // Reset position-based clicks for destination phase
 
                             // Go to FINDING_DESTINATION_FIELD for destination entry
                             automationState = AutomationState.FINDING_DESTINATION_FIELD
@@ -989,6 +991,7 @@ class PriceReaderService : AccessibilityService() {
                                 Log.w(TAG, "🚖 [Careem] Pickup suggestion selection failed - trying to proceed to destination entry anyway")
                                 careemPickupPhaseComplete = true  // Mark pickup phase as done
                                 careemPickupFieldClicked = false
+                                careemPositionBasedClickAttempt = 0  // Reset position-based clicks for destination phase
                                 automationState = AutomationState.FINDING_DESTINATION_FIELD
                                 automationRetries = 0
                                 automationStep = 0
@@ -1156,6 +1159,7 @@ class PriceReaderService : AccessibilityService() {
                             careemDestinationSuggestionClicked = false  // Reset destination suggestion flag
                             careemDestinationClickAttempts = 0  // Reset destination click attempts
                             careemDestinationMismatchRetries = 0  // Reset destination mismatch retries
+                            careemPositionBasedClickAttempt = 0  // Reset position-based click attempts
 
                             automationState = AutomationState.FINDING_PICKUP_FIELD  // Start from pickup first (PICKUP FIRST flow)
                             automationRetries = 0
@@ -2136,6 +2140,7 @@ class PriceReaderService : AccessibilityService() {
     private var careemDestinationSuggestionClicked = false  // Track if destination suggestion was clicked
     private var careemDestinationClickAttempts = 0  // Count destination suggestion click attempts
     private var careemDestinationMismatchRetries = 0  // BUG FIX: Count retries when destination suggestions don't match
+    private var careemPositionBasedClickAttempt = 0  // Track position-based click attempts for suggestions
 
     /**
      * Find and click Careem PICKUP field for PICKUP FIRST flow
@@ -3344,8 +3349,41 @@ class PriceReaderService : AccessibilityService() {
             }
         }
 
-        // If no filtered suggestions, recycle all and return false
+        // If no filtered suggestions, recycle all
         allSuggestions.forEach { (node, _) -> try { node.recycle() } catch (e: Exception) {} }
+
+        // POSITION-BASED FALLBACK: Click at fixed screen positions where suggestions typically appear
+        Log.w(TAG, "🚖 No filtered suggestions - trying position-based fallback")
+        if (careemPositionBasedClickAttempt < 3) {
+            try {
+                val displayMetrics = resources.displayMetrics
+                val screenWidth = displayMetrics.widthPixels
+                val screenHeight = displayMetrics.heightPixels
+
+                // Try different Y positions for suggestions
+                val yPositions = listOf(0.35f, 0.42f, 0.28f)
+                val targetX = (screenWidth * 0.5f).toInt()
+                val targetY = (screenHeight * yPositions[careemPositionBasedClickAttempt]).toInt()
+
+                Log.i(TAG, "🚖 Position-based click attempt ${careemPositionBasedClickAttempt + 1}/3 at ($targetX, $targetY)")
+
+                val path = android.graphics.Path()
+                path.moveTo(targetX.toFloat(), targetY.toFloat())
+
+                val gesture = android.accessibilityservice.GestureDescription.Builder()
+                    .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 350))
+                    .build()
+
+                dispatchGesture(gesture, null, null)
+                Log.i(TAG, "🚖 ✓ Position-based gesture click dispatched (selectCareemPickupSuggestion)")
+
+                careemPositionBasedClickAttempt++
+                Thread.sleep(1200)
+                return true
+            } catch (e: Exception) {
+                Log.e(TAG, "🚖 Position-based click failed: ${e.message}")
+            }
+        }
 
         return false
     }
@@ -3495,7 +3533,44 @@ class PriceReaderService : AccessibilityService() {
             }
         }
 
-        Log.w(TAG, "🚖 ✗ No suggestion found for gesture click")
+        Log.w(TAG, "🚖 ✗ No suggestion found for gesture click - trying position-based fallback")
+
+        // POSITION-BASED FALLBACK: Click at fixed screen positions where suggestions typically appear
+        // Careem suggestions appear below the search field, typically at 30-50% from screen top
+        if (careemPositionBasedClickAttempt < 3) {
+            try {
+                val displayMetrics = resources.displayMetrics
+                val screenWidth = displayMetrics.widthPixels
+                val screenHeight = displayMetrics.heightPixels
+
+                // Try different Y positions for suggestions
+                // Attempt 0: 35% from top (first suggestion row)
+                // Attempt 1: 42% from top (second suggestion row)
+                // Attempt 2: 28% from top (might be closer to search field)
+                val yPositions = listOf(0.35f, 0.42f, 0.28f)
+                val targetX = (screenWidth * 0.5f).toInt()
+                val targetY = (screenHeight * yPositions[careemPositionBasedClickAttempt]).toInt()
+
+                Log.i(TAG, "🚖 Position-based click attempt ${careemPositionBasedClickAttempt + 1}/3 at ($targetX, $targetY)")
+
+                val path = android.graphics.Path()
+                path.moveTo(targetX.toFloat(), targetY.toFloat())
+
+                val gesture = android.accessibilityservice.GestureDescription.Builder()
+                    .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 350))
+                    .build()
+
+                dispatchGesture(gesture, null, null)
+                Log.i(TAG, "🚖 ✓ Position-based gesture click dispatched")
+
+                careemPositionBasedClickAttempt++
+                Thread.sleep(1200)
+                return true
+            } catch (e: Exception) {
+                Log.e(TAG, "🚖 Position-based click failed: ${e.message}")
+            }
+        }
+
         return false
     }
 
