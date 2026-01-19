@@ -388,6 +388,7 @@ class PriceReaderService : AccessibilityService() {
         careemDestMapIconFallbackAttempted = false  // Reset Map icon fallback flag
         careemDestQuickTapAttempted = false  // Reset quick tap fallback flag
         careemPickupTextRetryCount = 0  // Reset pickup text retry count
+        careemMapConfirmAttempts = 0  // Reset map confirm attempts
         careemLoaderFirstSeenTime = 0L  // Reset Careem loader time
         inDriverDestinationEntered = false  // Reset InDriver destination flag
         inDriverDoneClickedTime = 0L  // Reset InDriver Done click time
@@ -1180,6 +1181,7 @@ class PriceReaderService : AccessibilityService() {
                             careemDestMapIconFallbackAttempted = false  // Reset Map icon fallback flag
                             careemDestQuickTapAttempted = false  // Reset quick tap fallback flag
                             careemPickupTextRetryCount = 0  // Reset pickup text retry count
+                            careemMapConfirmAttempts = 0  // Reset map confirm attempts
 
                             automationState = AutomationState.FINDING_PICKUP_FIELD  // Start from pickup first (PICKUP FIRST flow)
                             automationRetries = 0
@@ -1309,7 +1311,98 @@ class PriceReaderService : AccessibilityService() {
 
                             // Skip pickup handling if we're in destination phase
                             if (careemPickupPhaseComplete) {
-                                Log.i(TAG, "🚖 In destination phase - skipping pickup handling, waiting for price screen")
+                                // BUG FIX: Handle map confirmation screen when stuck without suggestions
+                                // This happens when coordinates are entered but app shows map view to confirm
+                                val hasMapConfirmElements = allText.any { text ->
+                                    text == "crossedFlagsFilled" || text == "Map icon" ||
+                                    text.contains("على الخريطة") || text == "pickUp"
+                                }
+
+                                // Check if destination address is visible on this screen
+                                val destKeywords = destinationAddress.split(" ").filter { it.length > 2 }
+                                val destVisibleOnScreen = destKeywords.isNotEmpty() && allText.any { text ->
+                                    destKeywords.any { keyword -> text.contains(keyword) }
+                                }
+
+                                Log.i(TAG, "🚖 In destination phase - hasMapConfirmElements=$hasMapConfirmElements, destVisible=$destVisibleOnScreen, confirmAttempts=$careemMapConfirmAttempts")
+
+                                if (hasMapConfirmElements && destVisibleOnScreen && careemMapConfirmAttempts < 5) {
+                                    Log.i(TAG, "🚖 Detected MAP CONFIRMATION screen - trying to click to proceed (attempt ${careemMapConfirmAttempts + 1})")
+                                    careemMapConfirmAttempts++
+
+                                    // Strategy 1: Click on crossedFlagsFilled (destination flag icon)
+                                    val flagNode = findNodeWithText(rootNode, "crossedFlagsFilled")
+                                    if (flagNode != null) {
+                                        Log.i(TAG, "🚖 Found crossedFlagsFilled - clicking to confirm destination")
+                                        if (careemGestureClick(flagNode)) {
+                                            Log.i(TAG, "🚖 ✓ Clicked crossedFlagsFilled")
+                                            flagNode.recycle()
+                                            return
+                                        }
+                                        flagNode.recycle()
+                                    }
+
+                                    // Strategy 2: Click on a destination address entry
+                                    for (keyword in destKeywords) {
+                                        val addressNode = findNodeWithText(rootNode, keyword)
+                                        if (addressNode != null) {
+                                            val nodeText = addressNode.text?.toString() ?: addressNode.contentDescription?.toString() ?: ""
+                                            // Make sure it's a meaningful address entry, not just a label
+                                            if (nodeText.length > keyword.length + 3) {
+                                                Log.i(TAG, "🚖 Found destination address entry: '$nodeText' - clicking")
+                                                if (careemGestureClick(addressNode)) {
+                                                    Log.i(TAG, "🚖 ✓ Clicked destination address")
+                                                    addressNode.recycle()
+                                                    return
+                                                }
+                                            }
+                                            addressNode.recycle()
+                                        }
+                                    }
+
+                                    // Strategy 3: Click Map icon
+                                    val mapIconNode = findNodeWithText(rootNode, "Map icon")
+                                    if (mapIconNode != null) {
+                                        Log.i(TAG, "🚖 Found Map icon - clicking")
+                                        if (careemGestureClick(mapIconNode)) {
+                                            Log.i(TAG, "🚖 ✓ Clicked Map icon")
+                                            mapIconNode.recycle()
+                                            return
+                                        }
+                                        mapIconNode.recycle()
+                                    }
+
+                                    Log.w(TAG, "🚖 Map confirmation click strategies failed, will retry")
+                                } else if (careemMapConfirmAttempts >= 5) {
+                                    Log.w(TAG, "🚖 Map confirmation attempts exhausted (5+) - restarting flow")
+                                    // Reset and restart the entire flow
+                                    careemCarButtonClicked = false
+                                    careemCarButtonClickAttempts = 0
+                                    careemPickupFieldClicked = false
+                                    careemPickupEntered = false
+                                    careemPickupSuggestionClicked = false
+                                    careemPickupClickAttempts = 0
+                                    careemUseCurrentLocationAttempted = false
+                                    careemNoValidPickupSuggestionCount = 0
+                                    careemPickupButtonFallbackAttempted = false
+                                    careemPickupPhaseComplete = false
+                                    careemDestinationSuggestionClicked = false
+                                    careemDestinationClickAttempts = 0
+                                    careemDestinationMismatchRetries = 0
+                                    careemPositionBasedClickAttempt = 0
+                                    careemGestureClickAttempt = 0
+                                    careemDestMapIconFallbackAttempted = false
+                                    careemDestQuickTapAttempted = false
+                                    careemPickupTextRetryCount = 0
+                                    careemMapConfirmAttempts = 0
+
+                                    automationState = AutomationState.FINDING_PICKUP_FIELD
+                                    automationRetries = 0
+                                    automationStep = 0
+                                    return
+                                }
+
+                                Log.i(TAG, "🚖 In destination phase - waiting for price screen")
                                 onIntermediateScreen = true
                             } else {
                             Log.i(TAG, "🚖 Careem is on PICKUP screen (not price screen) - need to enter pickup address")
@@ -2199,6 +2292,7 @@ class PriceReaderService : AccessibilityService() {
     private var careemDestMapIconFallbackAttempted = false  // Track if we tried Map icon fallback for destination
     private var careemDestQuickTapAttempted = false  // Track if we tried quick tap (shorter duration) for destination
     private var careemPickupTextRetryCount = 0  // Track how many times we retried entering pickup text
+    private var careemMapConfirmAttempts = 0  // Track attempts to click confirm on map screen when stuck
 
     /**
      * Find and click Careem PICKUP field for PICKUP FIRST flow
