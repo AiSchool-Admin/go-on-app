@@ -2590,12 +2590,15 @@ class PriceReaderService : AccessibilityService() {
 
                 Thread.sleep(400)
 
-                // Method 2: Try pressing Enter key via IME action
-                try {
-                    editText.performAction(AccessibilityNodeInfo.ACTION_IME_ENTER)
-                    Log.i(TAG, "🚖 [PICKUP FIRST] Method 2: Sent ACTION_IME_ENTER")
-                } catch (e: Exception) {
-                    Log.w(TAG, "🚖 [PICKUP FIRST] Method 2 failed: ${e.message}")
+                // Method 2: Try pressing Enter key via IME action (API 30+)
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                    try {
+                        val imeEnterAction = AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER
+                        editText.performAction(imeEnterAction.id)
+                        Log.i(TAG, "🚖 [PICKUP FIRST] Method 2: Sent ACTION_IME_ENTER")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "🚖 [PICKUP FIRST] Method 2 failed: ${e.message}")
+                    }
                 }
 
                 Thread.sleep(400)
