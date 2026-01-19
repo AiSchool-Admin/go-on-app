@@ -40,7 +40,7 @@ class NavigationFallbackStrategy(
         val packageName = context.packageName
         val allText = NodeFinder.getAllText(rootNode)
 
-        AppLogger.d("NavigationFallback: Analyzing screen for $packageName", tag)
+        AppLogger.d(tag, "NavigationFallback: Analyzing screen for $packageName")
 
         var attempts = 0
 
@@ -340,7 +340,7 @@ class IntermediateScreenFallbackStrategy(
         val packageName = context.packageName
         val allText = NodeFinder.getAllText(rootNode)
 
-        AppLogger.d("IntermediateScreenFallback: Checking for intermediate screens in $packageName", tag)
+        AppLogger.d(tag, "IntermediateScreenFallback: Checking for intermediate screens in $packageName")
 
         return when (packageName) {
             AppConstants.Packages.INDRIVER -> handleInDriverIntermediate(rootNode, allText)

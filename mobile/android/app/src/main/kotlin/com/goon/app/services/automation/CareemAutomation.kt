@@ -106,7 +106,7 @@ class CareemAutomation(
         // STEP 1: Check if we're on Careem HOME screen
         val isOnHomeScreen = isHomeScreen(allText)
 
-        AppLogger.d("Home screen detection: isOnHomeScreen=$isOnHomeScreen, carButtonClicked=$carButtonClicked", TAG)
+        AppLogger.d(TAG, "Home screen detection: isOnHomeScreen=$isOnHomeScreen, carButtonClicked=$carButtonClicked")
 
         // If on home screen, click "سيارة" button first
         if (isOnHomeScreen && !carButtonClicked) {
@@ -116,7 +116,7 @@ class CareemAutomation(
             for (buttonText in carButtonTexts) {
                 val nodes = findAllNodesWithNormalizedText(rootNode, buttonText)
                 if (nodes.isNotEmpty()) {
-                    AppLogger.d("Found ${nodes.size} nodes for '$buttonText'", TAG)
+                    AppLogger.d(TAG, "Found ${nodes.size} nodes for '$buttonText'")
                     for (node in nodes) {
                         if (smartClick(node) || careemGestureClick(node)) {
                             AppLogger.automation(TAG, "Clicked '$buttonText' button", state = "CAR_BUTTON_CLICKED")
@@ -133,7 +133,7 @@ class CareemAutomation(
 
             carButtonClickAttempts++
             if (carButtonClickAttempts >= 5) {
-                AppLogger.w("Max car button attempts - marking as clicked", TAG)
+                AppLogger.w(TAG, "Max car button attempts - marking as clicked")
                 carButtonClicked = true
             }
             return AutomationResult(false, "Could not click car button", shouldRetry = true)
@@ -473,7 +473,7 @@ class CareemAutomation(
             }
             val elapsed = System.currentTimeMillis() - loaderFirstSeenTime
             if (elapsed > 10000) {
-                AppLogger.w("Loader timeout exceeded", TAG)
+                AppLogger.w(TAG, "Loader timeout exceeded")
                 loaderFirstSeenTime = 0L
                 return AutomationResult(false, "Loader timeout", shouldRetry = false)
             }

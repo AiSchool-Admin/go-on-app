@@ -37,7 +37,7 @@ class TextEntryFallbackStrategy(
 
     override fun execute(rootNode: AccessibilityNodeInfo, context: FallbackContext): FallbackResult {
         val textToEnter = context.targetText
-        AppLogger.d("TextEntryFallback: Entering text '$textToEnter'", tag)
+        AppLogger.d(tag, "TextEntryFallback: Entering text '$textToEnter'")
 
         // Find all EditText fields
         val editTexts = NodeFinder.findAllEditTexts(rootNode)
@@ -45,7 +45,7 @@ class TextEntryFallbackStrategy(
             return failure("NoEditText", "No EditText fields found")
         }
 
-        AppLogger.d("Found ${editTexts.size} EditText fields", tag)
+        AppLogger.d(tag, "Found ${editTexts.size} EditText fields")
 
         // Sort by Y position (top to bottom)
         val sortedEditTexts = editTexts.sortedBy { node ->
@@ -59,7 +59,7 @@ class TextEntryFallbackStrategy(
 
         // Try each EditText with all strategies
         for ((index, editText) in sortedEditTexts.withIndex()) {
-            AppLogger.d("Trying EditText #$index", tag)
+            AppLogger.d(tag, "Trying EditText #$index")
 
             for (strategy in strategies) {
                 attempts++
@@ -84,7 +84,7 @@ class TextEntryFallbackStrategy(
         // Fallback: Try focused input if exists
         val focusedInput = NodeFinder.findFocusedEditText(rootNode)
         if (focusedInput != null) {
-            AppLogger.d("Trying focused EditText", tag)
+            AppLogger.d(tag, "Trying focused EditText")
             for (strategy in strategies) {
                 attempts++
                 if (strategy.action(focusedInput)) {
@@ -268,7 +268,7 @@ class CoordinatesEntryFallbackStrategy(
         val lat = context.metadata["lat"] as? Double ?: return failure("NoLat", "Latitude not provided")
         val lng = context.metadata["lng"] as? Double ?: return failure("NoLng", "Longitude not provided")
 
-        AppLogger.d("CoordinatesEntryFallback: Entering coordinates ($lat, $lng)", tag)
+        AppLogger.d(tag, "CoordinatesEntryFallback: Entering coordinates ($lat, $lng)")
 
         // Different coordinate formats to try
         val formats = listOf(
@@ -287,7 +287,7 @@ class CoordinatesEntryFallbackStrategy(
         var attempts = 0
         for (format in formats) {
             attempts++
-            AppLogger.d("Trying format: $format", tag)
+            AppLogger.d(tag, "Trying format: $format")
 
             for (editText in editTexts) {
                 val success = enterCoordinates(editText, format)

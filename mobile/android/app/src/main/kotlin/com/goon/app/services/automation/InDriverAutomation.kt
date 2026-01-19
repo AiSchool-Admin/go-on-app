@@ -89,7 +89,7 @@ class InDriverAutomation(
         logAllVisibleText(rootNode, "PICKUP_SEARCH")
 
         // Strategy 1: Find by resource ID "address_edittext_from"
-        AppLogger.d("Strategy 1: Looking for address_edittext_from by resource ID", TAG)
+        AppLogger.d(TAG, "Strategy 1: Looking for address_edittext_from by resource ID")
         val pickupFieldIds = listOf(
             "address_edittext_from",
             "edittext_from",
@@ -383,7 +383,7 @@ class InDriverAutomation(
 
         // Cooldown check
         if (currentTime - lastClickTime < clickCooldown) {
-            AppLogger.d("InDriver cooldown active", TAG)
+            AppLogger.d(TAG, "InDriver cooldown active")
             return AutomationResult(false, "Cooldown", shouldRetry = true)
         }
 
@@ -488,7 +488,7 @@ class InDriverAutomation(
 
                     // After 3 clicks, assume automation is near complete
                     if (doneClickCount >= 3) {
-                        AppLogger.d("3 Done clicks - nearing completion", TAG)
+                        AppLogger.d(TAG, "3 Done clicks - nearing completion")
                     }
 
                     Thread.sleep(500)
@@ -508,7 +508,7 @@ class InDriverAutomation(
     override fun extractPrices(rootNode: AccessibilityNodeInfo): ExtractedPrice? {
         // CRITICAL: Block price detection until automation is complete
         if (!automationComplete) {
-            AppLogger.d("Price detection BLOCKED - automation not complete", TAG)
+            AppLogger.d(TAG, "Price detection BLOCKED - automation not complete")
             return null
         }
 

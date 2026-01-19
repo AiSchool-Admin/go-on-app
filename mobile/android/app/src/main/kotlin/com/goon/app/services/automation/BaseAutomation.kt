@@ -249,7 +249,7 @@ abstract class BaseAutomation(
             AppLogger.click(tag, "clickAtPosition: Dispatched at ($x, $y)")
             return true
         } catch (e: Exception) {
-            AppLogger.e("clickAtPosition failed", e, null, tag)
+            AppLogger.e(tag, "clickAtPosition failed", e)
             return false
         }
     }
@@ -355,7 +355,7 @@ abstract class BaseAutomation(
         )
 
         if (node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)) {
-            AppLogger.d("Entered text: ${text.take(20)}...", tag)
+            AppLogger.d(tag, "Entered text: ${text.take(20)}...")
             return true
         }
 
@@ -435,11 +435,11 @@ abstract class BaseAutomation(
      */
     protected fun logAllVisibleText(rootNode: AccessibilityNodeInfo, prefix: String = "") {
         val allText = getAllTextFromNode(rootNode)
-        AppLogger.d("=== VISIBLE TEXT ($prefix) ===", tag)
+        AppLogger.d(tag, "=== VISIBLE TEXT ($prefix) ===")
         allText.take(30).forEachIndexed { index, text ->
-            AppLogger.d("[$index] '$text'", tag)
+            AppLogger.d(tag, "[$index] '$text'")
         }
-        AppLogger.d("=== END (${allText.size} items) ===", tag)
+        AppLogger.d(tag, "=== END (${allText.size} items) ===")
     }
 
     /**
@@ -456,7 +456,7 @@ abstract class BaseAutomation(
 
         if (text.isNotBlank() || desc.isNotBlank()) {
             val prefix = "  ".repeat(depth)
-            AppLogger.d("$prefix[$className] text='$text' desc='$desc' click=${node.isClickable} id='$viewId'", tag)
+            AppLogger.d(tag, "$prefix[$className] text='$text' desc='$desc' click=${node.isClickable} id='$viewId'")
         }
 
         for (i in 0 until node.childCount) {

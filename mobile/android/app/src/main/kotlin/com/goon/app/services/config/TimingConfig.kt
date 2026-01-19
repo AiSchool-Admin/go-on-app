@@ -260,4 +260,27 @@ object TimingConfig {
         AppConstants.Packages.INDRIVER -> AppTimeouts.DEFAULT_TIMEOUT_MS
         else -> AppTimeouts.DEFAULT_TIMEOUT_MS
     }
+
+    // ============================================================
+    // CONVENIENCE CONSTANTS (for backward compatibility)
+    // These expose nested values at the top level
+    // ============================================================
+
+    // Retry config
+    val MAX_RETRIES: Int get() = RetryConfig.MAX_RETRIES
+    val DIDI_MAX_DESTINATION_ATTEMPTS: Int get() = RetryConfig.DIDI_MAX_DESTINATION_ATTEMPTS
+    val DIDI_MAX_SUGGESTION_RETRIES: Int get() = RetryConfig.DIDI_MAX_SUGGESTION_RETRIES
+    val INDRIVER_MAX_DONE_CLICKS: Int get() = RetryConfig.INDRIVER_MAX_DONE_CLICKS
+
+    // App timeouts
+    val UBER_MIN_WAIT_MS: Long get() = AppTimeouts.UBER_MIN_WAIT_MS
+    val DIDI_TIMEOUT_MS: Long get() = AppTimeouts.DIDI_TIMEOUT_MS
+    val CAREEM_TIMEOUT_MS: Long get() = AppTimeouts.CAREEM_TIMEOUT_MS
+    val CAREEM_LOADER_EXTENSION_MS: Long get() = AppTimeouts.CAREEM_LOADER_EXTENSION_MS
+    val INDRIVER_MIN_WAIT_AFTER_DONE_MS: Long get() = AppTimeouts.INDRIVER_MIN_WAIT_AFTER_DONE_MS
+    val DEFAULT_TIMEOUT_MS: Long get() = AppTimeouts.DEFAULT_TIMEOUT_MS
+    val BOLT_TIMEOUT_MS: Long get() = AppTimeouts.BOLT_TIMEOUT_MS
+
+    // Automation timeout
+    val automationTimeout: Long get() = DEFAULT_TIMEOUT_MS
 }

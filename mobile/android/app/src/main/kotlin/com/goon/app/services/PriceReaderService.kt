@@ -164,7 +164,7 @@ class PriceReaderService : AccessibilityService() {
 
         // Initialize modular automation adapter (Phase 5)
         modularAdapter = PriceReaderAdapter(this)
-        AppLogger.i("Modular automation system initialized (flag: $useModularAutomation)", TAG)
+        AppLogger.i(TAG, "Modular automation system initialized (flag: $useModularAutomation)")
     }
 
     /**
@@ -178,7 +178,7 @@ class PriceReaderService : AccessibilityService() {
      */
     fun setModularAutomation(enabled: Boolean) {
         useModularAutomation = enabled
-        AppLogger.i("Modular automation ${if (enabled) "ENABLED" else "DISABLED"}", TAG)
+        AppLogger.i(TAG, "Modular automation ${if (enabled) "ENABLED" else "DISABLED"}")
     }
 
     /**

@@ -97,7 +97,7 @@ abstract class FallbackStrategy(
      */
     protected fun logAttempt(attemptName: String, success: Boolean, details: String = "") {
         val status = if (success) "✓" else "✗"
-        AppLogger.d("$status Fallback attempt: $attemptName${if (details.isNotEmpty()) " - $details" else ""}", tag)
+        AppLogger.d(tag, "$status Fallback attempt: $attemptName${if (details.isNotEmpty()) " - $details" else ""}")
     }
 
     /**
@@ -155,7 +155,7 @@ class CompositeFallbackStrategy(
             .sortedBy { it.priority }
 
         for (strategy in sortedStrategies) {
-            AppLogger.d("Trying fallback strategy: ${strategy::class.simpleName}", tag)
+            AppLogger.d(tag, "Trying fallback strategy: ${strategy::class.simpleName}")
 
             val result = strategy.execute(rootNode, context)
             totalAttempts += result.attemptsMade

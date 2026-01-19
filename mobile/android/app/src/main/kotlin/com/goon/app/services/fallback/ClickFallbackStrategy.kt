@@ -40,7 +40,7 @@ class ClickFallbackStrategy(
     }
 
     override fun execute(rootNode: AccessibilityNodeInfo, context: FallbackContext): FallbackResult {
-        AppLogger.d("ClickFallback: Executing for target='${context.targetText}' element='${context.targetElement}'", tag)
+        AppLogger.d(tag, "ClickFallback: Executing for target='${context.targetText}' element='${context.targetElement}'")
 
         // Find the target node
         val targetNode = findTargetNode(rootNode, context)
@@ -276,7 +276,7 @@ class SuggestionClickFallbackStrategy(
     }
 
     override fun execute(rootNode: AccessibilityNodeInfo, context: FallbackContext): FallbackResult {
-        AppLogger.d("SuggestionClickFallback: Looking for suggestions", tag)
+        AppLogger.d(tag, "SuggestionClickFallback: Looking for suggestions")
 
         // Get all visible text
         val allText = NodeFinder.getAllText(rootNode)
@@ -297,7 +297,7 @@ class SuggestionClickFallbackStrategy(
             return failure("NoSuggestions", "No suggestion items found")
         }
 
-        AppLogger.d("Found ${suggestions.size} suggestions: ${suggestions.take(3)}", tag)
+        AppLogger.d(tag, "Found ${suggestions.size} suggestions: ${suggestions.take(3)}")
 
         var attempts = 0
         for (suggestion in suggestions.take(5)) {

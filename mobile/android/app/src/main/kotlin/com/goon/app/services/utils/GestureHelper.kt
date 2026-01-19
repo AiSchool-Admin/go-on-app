@@ -144,7 +144,7 @@ object GestureHelper {
             AppLogger.click(TAG, "tapAtPosition: Dispatched at ($x, $y) duration=${durationMs}ms")
             return true
         } catch (e: Exception) {
-            AppLogger.e("tapAtPosition failed", e, null, TAG)
+            AppLogger.e(TAG, "tapAtPosition failed", e)
             return false
         }
     }
@@ -240,10 +240,10 @@ object GestureHelper {
                 .build()
 
             service.dispatchGesture(gesture, null, null)
-            AppLogger.d("Swipe: ($startX,$startY) -> ($endX,$endY)", TAG)
+            AppLogger.d(TAG, "Swipe: ($startX,$startY) -> ($endX,$endY)")
             return true
         } catch (e: Exception) {
-            AppLogger.e("swipe failed", e, null, TAG)
+            AppLogger.e(TAG, "swipe failed", e)
             return false
         }
     }

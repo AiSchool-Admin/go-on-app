@@ -114,7 +114,7 @@ class PriceReaderAdapter(
         try {
             FloatingOverlayService.updateAppPrice(packageName, null, "loading", null)
         } catch (e: Exception) {
-            AppLogger.w("Could not update overlay: ${e.message}", TAG)
+            AppLogger.w(TAG, "Could not update overlay: ${e.message}")
         }
 
         // Start orchestrator
@@ -209,7 +209,7 @@ class PriceReaderAdapter(
                 null
             )
         } catch (e: Exception) {
-            AppLogger.w("Could not update overlay: ${e.message}", TAG)
+            AppLogger.w(TAG, "Could not update overlay: ${e.message}")
         }
 
         // Broadcast price update
@@ -217,7 +217,7 @@ class PriceReaderAdapter(
     }
 
     private fun handleAutomationFailed(packageName: String, reason: String) {
-        AppLogger.e("Automation failed: $reason", null, null, TAG)
+        AppLogger.e(TAG, "Automation failed: $reason")
 
         // Update overlay
         try {
@@ -228,7 +228,7 @@ class PriceReaderAdapter(
                 reason
             )
         } catch (e: Exception) {
-            AppLogger.w("Could not update overlay: ${e.message}", TAG)
+            AppLogger.w(TAG, "Could not update overlay: ${e.message}")
         }
 
         isActiveMonitoring = false
@@ -254,7 +254,7 @@ class PriceReaderAdapter(
             }
             service.sendBroadcast(intent)
         } catch (e: Exception) {
-            AppLogger.e("Failed to broadcast price: ${e.message}", e, null, TAG)
+            AppLogger.e(TAG, "Failed to broadcast price: ${e.message}", e)
         }
     }
 
@@ -264,10 +264,10 @@ class PriceReaderAdapter(
             intent?.let {
                 it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 service.startActivity(it)
-                AppLogger.d("Returned to GO-ON app", TAG)
+                AppLogger.d(TAG, "Returned to GO-ON app")
             }
         } catch (e: Exception) {
-            AppLogger.e("Failed to return to GO-ON: ${e.message}", e, null, TAG)
+            AppLogger.e(TAG, "Failed to return to GO-ON: ${e.message}", e)
         }
     }
 

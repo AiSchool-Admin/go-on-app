@@ -94,7 +94,7 @@ class AutomationOrchestrator(
         // Get or create automation instance
         currentAutomation = AutomationFactory.getAutomation(service, packageName)
         if (currentAutomation == null) {
-            AppLogger.e("No automation available for $packageName", null, null, TAG)
+            AppLogger.e(TAG, "No automation available for $packageName")
             onAutomationFailed?.invoke(packageName, "Unsupported app")
             return
         }
@@ -172,7 +172,7 @@ class AutomationOrchestrator(
 
         val packageName = rootNode.packageName?.toString() ?: return false
         if (packageName != currentPackage) {
-            AppLogger.d("Waiting for $currentPackage (current: $packageName)", TAG)
+            AppLogger.d(TAG, "Waiting for $currentPackage (current: $packageName)")
             return false
         }
 
@@ -341,7 +341,7 @@ class AutomationOrchestrator(
                 // Timeout check
                 val elapsed = System.currentTimeMillis() - startTime
                 if (elapsed > TimingConfig.automationTimeout) {
-                    AppLogger.e("Automation timeout after ${elapsed}ms", null, null, TAG)
+                    AppLogger.e(TAG, "Automation timeout after ${elapsed}ms")
                     transitionTo(AutomationState.FAILED)
                 }
 
@@ -389,7 +389,7 @@ class AutomationOrchestrator(
         consecutiveFailures++
 
         if (retries > TimingConfig.MAX_RETRIES) {
-            AppLogger.e("Max retries exceeded in state $currentState - attempting fallback", null, null, TAG)
+            AppLogger.e(TAG, "Max retries exceeded in state $currentState - attempting fallback")
 
             // Try fallback before giving up
             val rootNode = service.rootInActiveWindow
@@ -400,7 +400,7 @@ class AutomationOrchestrator(
                         // Fallback succeeded - reset retries and continue
                         retries = 0
                         consecutiveFailures = 0
-                        AppLogger.d("Fallback succeeded - continuing automation", TAG)
+                        AppLogger.d(TAG, "Fallback succeeded - continuing automation")
                         return
                     }
                 } finally {
@@ -411,11 +411,11 @@ class AutomationOrchestrator(
             // Fallback failed - transition to FAILED state
             transitionTo(AutomationState.FAILED)
         } else {
-            AppLogger.w("Retry $retries/${TimingConfig.MAX_RETRIES}: ${result.message}", TAG)
+            AppLogger.w(TAG, "Retry $retries/${TimingConfig.MAX_RETRIES}: ${result.message}")
 
             // Check for consecutive failures - might need recovery
             if (consecutiveFailures >= maxConsecutiveFailures) {
-                AppLogger.w("$consecutiveFailures consecutive failures - attempting recovery", TAG)
+                AppLogger.w(TAG, "$consecutiveFailures consecutive failures - attempting recovery")
                 val rootNode = service.rootInActiveWindow
                 if (rootNode != null) {
                     try {
@@ -435,7 +435,7 @@ class AutomationOrchestrator(
     private fun attemptFallback(rootNode: AccessibilityNodeInfo, errorMessage: String): Boolean {
         val packageName = currentPackage ?: return false
 
-        AppLogger.d("Attempting fallback for state: $currentState", TAG)
+        AppLogger.d(TAG, "Attempting fallback for state: $currentState")
 
         // Determine fallback type based on current state
         val fallbackType = when (currentState) {
@@ -477,7 +477,7 @@ class AutomationOrchestrator(
         // Execute fallback
         val result = fallbackManager.handleFailure(rootNode, context, fallbackType)
 
-        AppLogger.d("Fallback result: success=${result.success}, strategy=${result.strategyUsed}", TAG)
+        AppLogger.d(TAG, "Fallback result: success=${result.success}, strategy=${result.strategyUsed}")
 
         return result.success
     }
@@ -489,7 +489,7 @@ class AutomationOrchestrator(
     private fun attemptRecovery(rootNode: AccessibilityNodeInfo) {
         val packageName = currentPackage ?: return
 
-        AppLogger.d("Attempting recovery for $packageName", TAG)
+        AppLogger.d(TAG, "Attempting recovery for $packageName")
 
         val result = fallbackManager.attemptRecovery(
             rootNode,
@@ -500,9 +500,9 @@ class AutomationOrchestrator(
 
         if (result.success) {
             consecutiveFailures = 0
-            AppLogger.d("Recovery successful", TAG)
+            AppLogger.d(TAG, "Recovery successful")
         } else {
-            AppLogger.w("Recovery failed: ${result.message}", TAG)
+            AppLogger.w(TAG, "Recovery failed: ${result.message}")
         }
     }
 

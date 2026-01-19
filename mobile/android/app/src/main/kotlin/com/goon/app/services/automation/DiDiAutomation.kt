@@ -84,7 +84,7 @@ class DiDiAutomation(
         }
 
         if (hasWhereToButton) {
-            AppLogger.d("On home screen - clicking 'Where to?'", TAG)
+            AppLogger.d(TAG, "On home screen - clicking 'Where to?'")
 
             // Try clicking the "Where to?" element
             val whereToTexts = listOf("Where to?", "Tap to enter your destination")
@@ -213,7 +213,7 @@ class DiDiAutomation(
         }
 
         if (isOnHomeScreen) {
-            AppLogger.w("Back on home screen - need to retry from start", TAG)
+            AppLogger.w(TAG, "Back on home screen - need to retry from start")
             return findAndClickPickupField(rootNode)
         }
 
@@ -274,7 +274,7 @@ class DiDiAutomation(
         }
 
         if (isOnHomeScreen) {
-            AppLogger.w("Still on home screen - destination click didn't work", TAG)
+            AppLogger.w(TAG, "Still on home screen - destination click didn't work")
             return AutomationResult(false, "Still on home screen", shouldRetry = true,
                 nextState = AutomationState.FINDING_DESTINATION_FIELD)
         }

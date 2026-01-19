@@ -102,7 +102,7 @@ class FallbackManager(
         val attempts = sessionAttempts.getOrDefault(sessionKey, 0)
 
         if (attempts >= maxAttemptsPerType) {
-            AppLogger.w("Max fallback attempts reached for $sessionKey", TAG)
+            AppLogger.w(TAG, "Max fallback attempts reached for $sessionKey")
             return FallbackResult(
                 success = false,
                 strategyUsed = "MaxAttemptsReached",
@@ -112,7 +112,7 @@ class FallbackManager(
             )
         }
 
-        AppLogger.d("Handling $type failure for ${context.packageName} (attempt ${attempts + 1})", TAG)
+        AppLogger.d(TAG, "Handling $type failure for ${context.packageName} (attempt ${attempts + 1})")
 
         // Get strategies for this type
         val typeStrategies = strategies[type] ?: emptyList()
@@ -132,7 +132,7 @@ class FallbackManager(
             if (intermediateStrategy.canHandle(context)) {
                 val result = intermediateStrategy.execute(rootNode, context)
                 if (result.success) {
-                    AppLogger.d("Intermediate screen handled successfully", TAG)
+                    AppLogger.d(TAG, "Intermediate screen handled successfully")
                     return result
                 }
             }
@@ -142,18 +142,18 @@ class FallbackManager(
         for (strategy in typeStrategies.sortedBy { it.priority }) {
             if (!strategy.canHandle(context)) continue
 
-            AppLogger.d("Trying strategy: ${strategy::class.simpleName}", TAG)
+            AppLogger.d(TAG, "Trying strategy: ${strategy::class.simpleName}")
 
             val result = strategy.execute(rootNode, context)
             sessionAttempts[sessionKey] = attempts + 1
 
             if (result.success) {
-                AppLogger.d("Strategy ${strategy::class.simpleName} succeeded", TAG)
+                AppLogger.d(TAG, "Strategy ${strategy::class.simpleName} succeeded")
                 return result
             }
 
             if (!result.shouldContinue) {
-                AppLogger.d("Strategy ${strategy::class.simpleName} says stop", TAG)
+                AppLogger.d(TAG, "Strategy ${strategy::class.simpleName} says stop")
                 return result
             }
         }
@@ -292,7 +292,7 @@ class FallbackManager(
      */
     fun resetAttempts() {
         sessionAttempts.clear()
-        AppLogger.d("Fallback attempts reset", TAG)
+        AppLogger.d(TAG, "Fallback attempts reset")
     }
 
     /**
@@ -303,7 +303,7 @@ class FallbackManager(
         sessionAttempts.keys.filter { it.startsWith(packageName) }.forEach {
             sessionAttempts.remove(it)
         }
-        AppLogger.d("Fallback attempts reset for $packageName", TAG)
+        AppLogger.d(TAG, "Fallback attempts reset for $packageName")
     }
 
     /**

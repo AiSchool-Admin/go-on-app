@@ -48,14 +48,14 @@ object AutomationFactory {
             AppConstants.Packages.DIDI -> DiDiAutomation(service)
             AppConstants.Packages.BOLT -> BoltAutomation(service)
             else -> {
-                AppLogger.w("Unknown package: $packageName", TAG)
+                AppLogger.w(TAG, "Unknown package: $packageName")
                 null
             }
         }
 
         automation?.let {
             automationCache[packageName] = it
-            AppLogger.d("Created automation for: ${it.displayName}", TAG)
+            AppLogger.d(TAG, "Created automation for: ${it.displayName}")
         }
 
         return automation
@@ -151,7 +151,7 @@ object AutomationFactory {
      */
     fun clearCache() {
         automationCache.clear()
-        AppLogger.d("Automation cache cleared", TAG)
+        AppLogger.d(TAG, "Automation cache cleared")
     }
 
     /**
