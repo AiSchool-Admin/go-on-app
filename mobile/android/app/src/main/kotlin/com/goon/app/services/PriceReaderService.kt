@@ -101,6 +101,9 @@ class PriceReaderService : AccessibilityService() {
      * The calibrate() function adjusts these based on device performance.
      */
     object TimingConfig {
+        // Local TAG for logging (since we can't access companion object's private TAG)
+        private const val TAG = "GO-ON-TimingConfig"
+
         // Performance multiplier (1.0 = normal, <1.0 = fast device, >1.0 = slow device)
         private var performanceMultiplier = 1.0
         private var isCalibrated = false
