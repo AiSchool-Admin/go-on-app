@@ -18,6 +18,13 @@ import com.goon.app.services.config.TimingConfig
 import com.goon.app.services.config.PricePatterns
 import com.goon.app.services.config.UITexts
 
+// Import modular automation system (Phase 5)
+import com.goon.app.services.automation.AutomationFactory
+import com.goon.app.services.automation.AutomationOrchestrator
+import com.goon.app.services.automation.AutomationState as ModularAutomationState
+import com.goon.app.services.automation.PriceReaderAdapter
+import com.goon.app.utils.AppLogger
+
 /**
  * GO-ON Price Reader Accessibility Service - ENHANCED VERSION
  *
@@ -109,6 +116,13 @@ class PriceReaderService : AccessibilityService() {
     private var lastDiDiSelectAddressClickTime = 0L // Cooldown for DiDi address selection
     private var lastInDriverClickTime = 0L // Cooldown for InDriver (crashes with rapid clicks)
 
+    // ============================================================
+    // MODULAR AUTOMATION SYSTEM (Phase 5)
+    // Set useModularAutomation = true to use new architecture
+    // ============================================================
+    private var useModularAutomation = false  // Feature flag for gradual migration
+    private var modularAdapter: PriceReaderAdapter? = null
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
@@ -147,6 +161,24 @@ class PriceReaderService : AccessibilityService() {
 
         // Initialize scan handler
         scanHandler = Handler(Looper.getMainLooper())
+
+        // Initialize modular automation adapter (Phase 5)
+        modularAdapter = PriceReaderAdapter(this)
+        AppLogger.i("Modular automation system initialized (flag: $useModularAutomation)", TAG)
+    }
+
+    /**
+     * تفعيل/تعطيل نظام الأتمتة الجديد
+     * Enable/disable new modular automation system
+     *
+     * Call from Flutter:
+     * ```dart
+     * await methodChannel.invokeMethod('setModularAutomation', true);
+     * ```
+     */
+    fun setModularAutomation(enabled: Boolean) {
+        useModularAutomation = enabled
+        AppLogger.i("Modular automation ${if (enabled) "ENABLED" else "DISABLED"}", TAG)
     }
 
     /**
@@ -239,6 +271,9 @@ class PriceReaderService : AccessibilityService() {
     /**
      * FULLY AUTOMATED PRICE FETCH
      * Opens app, enters destination, captures price, returns to GO-ON
+     *
+     * When useModularAutomation = true, uses new modular architecture (Phase 5)
+     * When useModularAutomation = false, uses legacy monolithic code
      */
     fun automateGetPrice(
         packageName: String,
@@ -252,6 +287,26 @@ class PriceReaderService : AccessibilityService() {
         Log.i(TAG, "🤖 Starting AUTOMATION for $packageName")
         Log.i(TAG, "   From: $pickup")
         Log.i(TAG, "   To: $destination")
+
+        // ============================================================
+        // MODULAR AUTOMATION PATH (Phase 5)
+        // When enabled, uses new architecture with app-specific automation classes
+        // ============================================================
+        if (useModularAutomation && modularAdapter?.canHandlePackage(packageName) == true) {
+            AppLogger.automation(TAG, "Using MODULAR automation for $packageName", state = "MODULAR_START")
+            modularAdapter?.startAutomation(
+                packageName,
+                pickup, destination,
+                pickupLatitude, pickupLongitude,
+                destLatitude, destLongitude
+            )
+            return
+        }
+
+        // ============================================================
+        // LEGACY AUTOMATION PATH (Original monolithic code)
+        // ============================================================
+        AppLogger.automation(TAG, "Using LEGACY automation for $packageName", state = "LEGACY_START")
 
         // Store trip details
         pickupAddress = pickup
