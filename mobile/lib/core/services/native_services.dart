@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../utils/app_logger.dart';
 
 /// Provider for NativeServicesManager
 final nativeServicesProvider = Provider<NativeServicesManager>((ref) {
@@ -114,7 +115,7 @@ class NativeServicesManager {
       final result = await _channel.invokeMethod<bool>('isAccessibilityEnabled');
       return result ?? false;
     } on PlatformException catch (e) {
-      print('Error checking accessibility: ${e.message}');
+      AppLogger.native('Error checking accessibility: ${e.message}', isError: true);
       return false;
     }
   }
@@ -125,7 +126,7 @@ class NativeServicesManager {
       final result = await _channel.invokeMethod<bool>('isServiceActive');
       return result ?? false;
     } on PlatformException catch (e) {
-      print('Error checking service active: ${e.message}');
+      AppLogger.native('Error checking service active: ${e.message}', isError: true);
       return false;
     }
   }
@@ -135,7 +136,7 @@ class NativeServicesManager {
     try {
       await _channel.invokeMethod('openAccessibilitySettings');
     } on PlatformException catch (e) {
-      print('Error opening accessibility settings: ${e.message}');
+      AppLogger.native('Error opening accessibility settings: ${e.message}', isError: true);
     }
   }
 
@@ -150,7 +151,7 @@ class NativeServicesManager {
       final List<dynamic> jsonList = json.decode(result);
       return jsonList.map((e) => AppPrice.fromJson(e)).toList();
     } on PlatformException catch (e) {
-      print('Error getting prices: ${e.message}');
+      AppLogger.native('Error getting prices: ${e.message}', isError: true);
       return [];
     }
   }
@@ -163,7 +164,7 @@ class NativeServicesManager {
       });
       return result;
     } on PlatformException catch (e) {
-      print('Error getting price for app: ${e.message}');
+      AppLogger.native('Error getting price for app: ${e.message}');
       return null;
     }
   }
@@ -176,7 +177,7 @@ class NativeServicesManager {
       });
       return result?.map((e) => (e as num).toDouble()).toList() ?? [];
     } on PlatformException catch (e) {
-      print('Error getting all prices for app: ${e.message}');
+      AppLogger.native('Error getting all prices for app: ${e.message}');
       return [];
     }
   }
@@ -219,7 +220,7 @@ class NativeServicesManager {
         vehiclePrices: vehiclePrices,
       );
     } on PlatformException catch (e) {
-      print('Error getting price info for app: ${e.message}');
+      AppLogger.native('Error getting price info for app: ${e.message}');
       return null;
     }
   }
@@ -260,7 +261,7 @@ class NativeServicesManager {
         vehiclePrices: vehiclePrices,
       );
     } on PlatformException catch (e) {
-      print('Error scanning current app: ${e.message}');
+      AppLogger.native('Error scanning current app: ${e.message}');
       return null;
     }
   }
@@ -274,9 +275,9 @@ class NativeServicesManager {
       await _channel.invokeMethod('startActiveMonitoring', {
         'packageName': packageName,
       });
-      print('✓ Started active monitoring for $packageName');
+      AppLogger.native('✓ Started active monitoring for $packageName');
     } on PlatformException catch (e) {
-      print('Error starting active monitoring: ${e.message}');
+      AppLogger.native('Error starting active monitoring: ${e.message}');
     }
   }
 
@@ -284,9 +285,9 @@ class NativeServicesManager {
   Future<void> stopActiveMonitoring() async {
     try {
       await _channel.invokeMethod('stopActiveMonitoring');
-      print('✓ Stopped active monitoring');
+      AppLogger.native('✓ Stopped active monitoring');
     } on PlatformException catch (e) {
-      print('Error stopping active monitoring: ${e.message}');
+      AppLogger.native('Error stopping active monitoring: ${e.message}');
     }
   }
 
@@ -296,7 +297,7 @@ class NativeServicesManager {
       final result = await _channel.invokeMethod<bool>('isActivelyMonitoring');
       return result ?? false;
     } on PlatformException catch (e) {
-      print('Error checking monitoring status: ${e.message}');
+      AppLogger.native('Error checking monitoring status: ${e.message}');
       return false;
     }
   }
@@ -307,7 +308,7 @@ class NativeServicesManager {
       final result = await _channel.invokeMethod<String>('getMonitoringPackage');
       return result;
     } on PlatformException catch (e) {
-      print('Error getting monitoring package: ${e.message}');
+      AppLogger.native('Error getting monitoring package: ${e.message}');
       return null;
     }
   }
@@ -332,10 +333,10 @@ class NativeServicesManager {
         return false;
       }
 
-      print('✓ Opened $packageName with active monitoring');
+      AppLogger.native('✓ Opened $packageName with active monitoring');
       return true;
     } catch (e) {
-      print('Error opening app and monitoring: $e');
+      AppLogger.native('Error opening app and monitoring: $e');
       await stopActiveMonitoring();
       return false;
     }
@@ -386,10 +387,10 @@ class NativeServicesManager {
         'destLng': destLng,
       });
 
-      print('🤖 Started FULL AUTOMATION for $packageName');
+      AppLogger.automation('Started FULL AUTOMATION for $packageName');
       return result ?? false;
     } on PlatformException catch (e) {
-      print('Error in automation: ${e.message}');
+      AppLogger.native('Error in automation: ${e.message}');
       return false;
     }
   }
@@ -400,7 +401,7 @@ class NativeServicesManager {
       final result = await _channel.invokeMethod<String>('getAutomationState');
       return result ?? 'IDLE';
     } on PlatformException catch (e) {
-      print('Error getting automation state: ${e.message}');
+      AppLogger.native('Error getting automation state: ${e.message}');
       return 'ERROR';
     }
   }
@@ -411,7 +412,7 @@ class NativeServicesManager {
       final result = await _channel.invokeMethod<bool>('isAutomationComplete');
       return result ?? false;
     } on PlatformException catch (e) {
-      print('Error checking automation: ${e.message}');
+      AppLogger.native('Error checking automation: ${e.message}');
       return false;
     }
   }
@@ -421,7 +422,7 @@ class NativeServicesManager {
     try {
       await _channel.invokeMethod('resetAutomation');
     } on PlatformException catch (e) {
-      print('Error resetting automation: ${e.message}');
+      AppLogger.native('Error resetting automation: ${e.message}');
     }
   }
 
@@ -434,26 +435,26 @@ class NativeServicesManager {
       // Log progress every 4 polls (~1 second)
       if (i % 4 == 0) {
         final state = await getAutomationState();
-        print('⏳ Waiting... ($i/40) State: $state');
+        AppLogger.automation('⏳ Waiting... ($i/40) State: $state');
       }
 
       final complete = await isAutomationComplete();
       if (complete) {
         final state = await getAutomationState();
-        print('✓ Automation completed with state: $state');
+        AppLogger.native('✓ Automation completed with state: $state');
 
         if (state == 'PRICE_CAPTURED') {
           final price = await getPriceForApp(packageName);
-          print('💰 getPriceForApp returned: $price');
+          AppLogger.price('getPriceForApp returned: $price');
           return price;
         } else {
-          print('✗ Automation failed with state: $state');
+          AppLogger.native('✗ Automation failed with state: $state');
           return null; // Failed
         }
       }
     }
 
-    print('⏱️ Automation timeout after 10 seconds');
+    AppLogger.automation('⏱️ Automation timeout after 10 seconds');
     return null;
   }
 
@@ -482,26 +483,26 @@ class NativeServicesManager {
       // Log progress every 4 polls (~1 second)
       if (i % 4 == 0) {
         final state = await getAutomationState();
-        print('⏳ Waiting... ($i/$maxPolls) State: $state');
+        AppLogger.automation('⏳ Waiting... ($i/$maxPolls) State: $state');
       }
 
       final complete = await isAutomationComplete();
       if (complete) {
         final state = await getAutomationState();
-        print('✓ Automation completed with state: $state');
+        AppLogger.native('✓ Automation completed with state: $state');
 
         if (state == 'PRICE_CAPTURED') {
           final priceInfo = await getPriceInfoForApp(packageName);
-          print('💰 getPriceInfoForApp returned: ${priceInfo?.price} with ${priceInfo?.vehiclePrices.length ?? 0} vehicle types');
+          AppLogger.price('getPriceInfoForApp returned: ${priceInfo?.price} with ${priceInfo?.vehiclePrices.length ?? 0} vehicle types');
           return priceInfo;
         } else {
-          print('✗ Automation failed with state: $state');
+          AppLogger.native('✗ Automation failed with state: $state');
           return null; // Failed
         }
       }
     }
 
-    print('⏱️ Automation timeout after $timeoutSec seconds');
+    AppLogger.automation('⏱️ Automation timeout after $timeoutSec seconds');
     return null;
   }
 
@@ -510,7 +511,7 @@ class NativeServicesManager {
     try {
       await _channel.invokeMethod('clearPrices');
     } on PlatformException catch (e) {
-      print('Error clearing prices: ${e.message}');
+      AppLogger.native('Error clearing prices: ${e.message}');
     }
   }
 
@@ -522,7 +523,7 @@ class NativeServicesManager {
       final result = await _channel.invokeMethod<bool>('canDrawOverlay');
       return result ?? false;
     } on PlatformException catch (e) {
-      print('Error checking overlay permission: ${e.message}');
+      AppLogger.native('Error checking overlay permission: ${e.message}');
       return false;
     }
   }
@@ -532,7 +533,7 @@ class NativeServicesManager {
     try {
       await _channel.invokeMethod('openOverlaySettings');
     } on PlatformException catch (e) {
-      print('Error opening overlay settings: ${e.message}');
+      AppLogger.native('Error opening overlay settings: ${e.message}');
     }
   }
 
@@ -551,7 +552,7 @@ class NativeServicesManager {
         'savings': savingsPercent,
       });
     } on PlatformException catch (e) {
-      print('Error showing overlay: ${e.message}');
+      AppLogger.native('Error showing overlay: ${e.message}');
     }
   }
 
@@ -560,7 +561,7 @@ class NativeServicesManager {
     try {
       await _channel.invokeMethod('hideOverlay');
     } on PlatformException catch (e) {
-      print('Error hiding overlay: ${e.message}');
+      AppLogger.native('Error hiding overlay: ${e.message}');
     }
   }
 
@@ -569,7 +570,7 @@ class NativeServicesManager {
     try {
       await _channel.invokeMethod('setGoonBestPrice', {'price': price});
     } on PlatformException catch (e) {
-      print('Error setting GOON price: ${e.message}');
+      AppLogger.native('Error setting GOON price: ${e.message}');
     }
   }
 
@@ -589,7 +590,7 @@ class NativeServicesManager {
         'apps': apps,
       });
     } on PlatformException catch (e) {
-      print('Error showing price fetching overlay: ${e.message}');
+      AppLogger.native('Error showing price fetching overlay: ${e.message}');
     }
   }
 
@@ -608,7 +609,7 @@ class NativeServicesManager {
         'eta': eta,
       });
     } on PlatformException catch (e) {
-      print('Error updating overlay price: ${e.message}');
+      AppLogger.native('Error updating overlay price: ${e.message}');
     }
   }
 
@@ -617,7 +618,7 @@ class NativeServicesManager {
     try {
       await _channel.invokeMethod('hidePriceFetchingOverlay');
     } on PlatformException catch (e) {
-      print('Error hiding price fetching overlay: ${e.message}');
+      AppLogger.native('Error hiding price fetching overlay: ${e.message}');
     }
   }
 
@@ -631,7 +632,7 @@ class NativeServicesManager {
       });
       return result ?? false;
     } on PlatformException catch (e) {
-      print('Error checking app installed: ${e.message}');
+      AppLogger.native('Error checking app installed: ${e.message}');
       return false;
     }
   }
@@ -644,7 +645,7 @@ class NativeServicesManager {
       });
       return result ?? false;
     } on PlatformException catch (e) {
-      print('Error opening app: ${e.message}');
+      AppLogger.native('Error opening app: ${e.message}');
       return false;
     }
   }
@@ -672,7 +673,7 @@ class NativeServicesManager {
       });
       return result ?? false;
     } on PlatformException catch (e) {
-      print('Error opening app with trip: ${e.message}');
+      AppLogger.native('Error opening app with trip: ${e.message}');
       return false;
     }
   }
@@ -700,7 +701,7 @@ class NativeServicesManager {
       });
       return result ?? false;
     } on PlatformException catch (e) {
-      print('Error fetching price from app: ${e.message}');
+      AppLogger.native('Error fetching price from app: ${e.message}');
       return false;
     }
   }
@@ -710,7 +711,7 @@ class NativeServicesManager {
     try {
       await _channel.invokeMethod('returnToApp');
     } on PlatformException catch (e) {
-      print('Error returning to app: ${e.message}');
+      AppLogger.native('Error returning to app: ${e.message}');
     }
   }
 
@@ -729,7 +730,7 @@ class NativeServicesManager {
     final prices = <String, double>{};
 
     if (installedApps.isEmpty) {
-      print('No ride apps installed');
+      AppLogger.native('No ride apps installed');
       return prices;
     }
 
@@ -741,7 +742,7 @@ class NativeServicesManager {
       final appName = _getAppName(packageName);
 
       onProgress?.call(appName, i + 1, installedApps.length);
-      print('Fetching price from $appName ($packageName)...');
+      AppLogger.automation('Fetching price from $appName ($packageName)...');
 
       // Open the app with trip details
       final opened = await fetchPriceFromApp(
@@ -755,7 +756,7 @@ class NativeServicesManager {
       );
 
       if (!opened) {
-        print('Failed to open $appName');
+        AppLogger.native('Failed to open $appName');
         continue;
       }
 
@@ -771,7 +772,7 @@ class NativeServicesManager {
 
         if (appPrice != null && appPrice.price > 0) {
           capturedPrice = appPrice.price;
-          print('✓ Got price from $appName: ${appPrice.price} EGP (from stored)');
+          AppLogger.native('✓ Got price from $appName: ${appPrice.price} EGP (from stored)');
           break;
         }
 
@@ -779,13 +780,13 @@ class NativeServicesManager {
         final directPrice = await getPriceForApp(packageName);
         if (directPrice != null && directPrice > 0) {
           capturedPrice = directPrice;
-          print('✓ Got price from $appName: $directPrice EGP (direct)');
+          AppLogger.native('✓ Got price from $appName: $directPrice EGP (direct)');
           break;
         }
 
         // Wait a bit more if no price yet
         if (retry < 2) {
-          print('No price yet from $appName, waiting... (retry ${retry + 1})');
+          AppLogger.automation('No price yet from $appName, waiting... (retry ${retry + 1})');
           await Future.delayed(const Duration(seconds: 2));
         }
       }
@@ -793,7 +794,7 @@ class NativeServicesManager {
       if (capturedPrice != null) {
         prices[packageName] = capturedPrice;
       } else {
-        print('✗ Could not get price from $appName');
+        AppLogger.native('✗ Could not get price from $appName');
       }
 
       // Return to GO-ON
@@ -801,7 +802,7 @@ class NativeServicesManager {
       await Future.delayed(const Duration(milliseconds: 800));
     }
 
-    print('Fetched ${prices.length} prices from ${installedApps.length} apps');
+    AppLogger.native('Fetched ${prices.length} prices from ${installedApps.length} apps');
     return prices;
   }
 
@@ -828,7 +829,7 @@ class NativeServicesManager {
       final result = await _channel.invokeMethod<List<dynamic>>('getInstalledRideApps');
       return result?.cast<String>() ?? [];
     } on PlatformException catch (e) {
-      print('Error getting installed apps: ${e.message}');
+      AppLogger.native('Error getting installed apps: ${e.message}');
       return [];
     }
   }
@@ -844,7 +845,7 @@ class NativeServicesManager {
         overlay: result?['overlay'] ?? false,
       );
     } on PlatformException catch (e) {
-      print('Error checking permissions: ${e.message}');
+      AppLogger.native('Error checking permissions: ${e.message}');
       return PermissionStatus(accessibility: false, overlay: false);
     }
   }
@@ -870,7 +871,7 @@ class NativeServicesManager {
     final appsToFetch = allApps.where((p) => p != indriverPackage).toList();
 
     if (appsToFetch.isEmpty) {
-      print('No ride apps installed (excluding InDriver)');
+      AppLogger.native('No ride apps installed (excluding InDriver)');
       return prices;
     }
 
@@ -881,7 +882,7 @@ class NativeServicesManager {
       final appName = _getAppName(packageName);
       onProgress?.call(appName, 'جاري فتح التطبيق...');
 
-      print('🚀 Starting automation for $appName...');
+      AppLogger.automation('🚀 Starting automation for $appName...');
 
       // Start full automation (opens app, enters destination, captures price, auto-returns)
       final started = await automateGetPrice(
@@ -895,7 +896,7 @@ class NativeServicesManager {
       );
 
       if (!started) {
-        print('✗ Failed to start automation for $appName');
+        AppLogger.native('✗ Failed to start automation for $appName');
         onProgress?.call(appName, 'فشل');
         continue;
       }
@@ -907,10 +908,10 @@ class NativeServicesManager {
 
       if (price != null && price > 0) {
         prices[packageName] = price;
-        print('✓ Got price from $appName: $price EGP');
+        AppLogger.native('✓ Got price from $appName: $price EGP');
         onProgress?.call(appName, '${price.round()} ج.م ✓');
       } else {
-        print('✗ No price from $appName');
+        AppLogger.native('✗ No price from $appName');
         onProgress?.call(appName, 'لم يتم العثور على سعر');
       }
 
@@ -921,7 +922,7 @@ class NativeServicesManager {
       await Future.delayed(const Duration(milliseconds: 500));
     }
 
-    print('✓ Fetched ${prices.length} prices from ${appsToFetch.length} apps');
+    AppLogger.native('✓ Fetched ${prices.length} prices from ${appsToFetch.length} apps');
     return prices;
   }
 
