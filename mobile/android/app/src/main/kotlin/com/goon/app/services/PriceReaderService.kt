@@ -2573,21 +2573,36 @@ class PriceReaderService : AccessibilityService() {
                 // Wait for Careem to process coordinates
                 Thread.sleep(800)
 
-                // Method 1: Try IME_ACTION_SEARCH to trigger the search
-                val imeArgs = android.os.Bundle()
-                imeArgs.putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_MOVEMENT_GRANULARITY_INT,
-                    android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH)
-                editText.performAction(AccessibilityNodeInfo.ACTION_NEXT_AT_MOVEMENT_GRANULARITY, imeArgs)
-                Log.i(TAG, "🚖 [PICKUP FIRST] Method 1: Sent IME_ACTION_SEARCH")
+                // ENHANCED: Multiple methods to trigger search for Careem coordinates
+                // Method 1: Try IME_ACTION_SEARCH
+                try {
+                    val imeArgs = android.os.Bundle()
+                    imeArgs.putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_MOVEMENT_GRANULARITY_INT,
+                        android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH)
+                    editText.performAction(AccessibilityNodeInfo.ACTION_NEXT_AT_MOVEMENT_GRANULARITY, imeArgs)
+                    Log.i(TAG, "🚖 [PICKUP FIRST] Method 1: Sent IME_ACTION_SEARCH")
+                } catch (e: Exception) {
+                    Log.w(TAG, "🚖 [PICKUP FIRST] Method 1 failed: ${e.message}")
+                }
 
-                Thread.sleep(500)
+                Thread.sleep(400)
 
-                // Method 2: Click below the input field to dismiss keyboard and show suggestions
+                // Method 2: Try pressing Enter key via IME action
+                try {
+                    editText.performAction(AccessibilityNodeInfo.ACTION_IME_ENTER)
+                    Log.i(TAG, "🚖 [PICKUP FIRST] Method 2: Sent ACTION_IME_ENTER")
+                } catch (e: Exception) {
+                    Log.w(TAG, "🚖 [PICKUP FIRST] Method 2 failed: ${e.message}")
+                }
+
+                Thread.sleep(400)
+
+                // Method 3: Click in suggestion area to trigger search
                 try {
                     val displayMetrics = resources.displayMetrics
                     val screenWidth = displayMetrics.widthPixels
                     val tapX = screenWidth / 2f
-                    val tapY = (rect.bottom + 200).toFloat()  // Tap below the input field
+                    val tapY = (rect.bottom + 150).toFloat()  // Tap below the input field
 
                     val path = android.graphics.Path()
                     path.moveTo(tapX, tapY)
@@ -2595,9 +2610,46 @@ class PriceReaderService : AccessibilityService() {
                         .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 100))
                         .build()
                     dispatchGesture(gesture, null, null)
-                    Log.i(TAG, "🚖 [PICKUP FIRST] Method 2: Tapped below input at ($tapX, $tapY) to show suggestions")
+                    Log.i(TAG, "🚖 [PICKUP FIRST] Method 3: Tapped below input at ($tapX, $tapY) to show suggestions")
                 } catch (e: Exception) {
-                    Log.w(TAG, "🚖 [PICKUP FIRST] Method 2 failed: ${e.message}")
+                    Log.w(TAG, "🚖 [PICKUP FIRST] Method 3 failed: ${e.message}")
+                }
+
+                Thread.sleep(400)
+
+                // Method 4: Try clicking on any search icon visible
+                try {
+                    val searchNodes = rootNode.findAccessibilityNodeInfosByText("search")
+                    for (searchNode in searchNodes) {
+                        if (searchNode.isClickable) {
+                            searchNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                            Log.i(TAG, "🚖 [PICKUP FIRST] Method 4: Clicked search button")
+                            searchNode.recycle()
+                            break
+                        }
+                        searchNode.recycle()
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "🚖 [PICKUP FIRST] Method 4 failed: ${e.message}")
+                }
+
+                // Method 5: Click at first suggestion position directly (Careem typically shows first result here)
+                try {
+                    val displayMetrics = resources.displayMetrics
+                    val screenWidth = displayMetrics.widthPixels
+                    val screenHeight = displayMetrics.heightPixels
+                    val tapX = screenWidth / 2f
+                    val tapY = screenHeight * 0.35f  // Typically first suggestion area
+
+                    val path = android.graphics.Path()
+                    path.moveTo(tapX, tapY)
+                    val gesture = android.accessibilityservice.GestureDescription.Builder()
+                        .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 200))
+                        .build()
+                    dispatchGesture(gesture, null, null)
+                    Log.i(TAG, "🚖 [PICKUP FIRST] Method 5: Tapped at first suggestion position ($tapX, $tapY)")
+                } catch (e: Exception) {
+                    Log.w(TAG, "🚖 [PICKUP FIRST] Method 5 failed: ${e.message}")
                 }
 
                 editTexts.forEach { try { it.recycle() } catch (e: Exception) {} }
@@ -6499,9 +6551,176 @@ class PriceReaderService : AccessibilityService() {
 
     /**
      * Handle Careem intermediate screens
+     * ENHANCED: Handles:
+     * 1. Map confirmation screen (after coordinates entered)
+     * 2. "تأكيد الانطلاق" (Confirm pickup) button
+     * 3. Promo/dialog screens
+     * 4. "تم" (Done) button on map
      */
     private fun handleCareemIntermediateScreens(rootNode: AccessibilityNodeInfo): Boolean {
-        // Similar logic for Careem dialogs
+        val allText = getAllTextFromNode(rootNode)
+        Log.i(TAG, "🚖 handleCareemIntermediateScreens: checking screen state")
+        Log.i(TAG, "🚖 Visible text (first 15): ${allText.take(15)}")
+
+        // ============================================================
+        // Check 1: Map confirmation screen with confirm button
+        // When coordinates are entered, Careem shows a map with location pin
+        // User needs to click confirm button to proceed
+        // ============================================================
+        val hasMapConfirmButton = allText.any { text ->
+            text.contains("تأكيد الانطلاق") ||  // Confirm pickup
+            text.contains("تأكيد الوجهة") ||    // Confirm destination
+            text.contains("تأكيد") && !text.contains("حجز") ||  // Confirm (not booking)
+            text.contains("Confirm pickup") ||
+            text.contains("Confirm destination") ||
+            text == "تم" ||                     // Done
+            text == "Done"
+        }
+
+        // Check if this is a map screen (has map-related elements)
+        val hasMapElements = allText.any { text ->
+            text.contains("خرائط Google") ||
+            text.contains("Google Maps") ||
+            text == "Map icon" ||
+            text == "crossedFlagsFilled" ||
+            text.contains("على الخريطة")
+        }
+
+        if (hasMapConfirmButton || hasMapElements) {
+            Log.i(TAG, "🚖 Detected MAP/CONFIRM screen (hasConfirm=$hasMapConfirmButton, hasMap=$hasMapElements)")
+
+            // List of buttons to try clicking (in order of priority)
+            val confirmTexts = listOf(
+                "تأكيد الانطلاق",  // Confirm pickup
+                "تأكيد الوجهة",    // Confirm destination
+                "تأكيد",           // Confirm
+                "تم",              // Done
+                "Confirm pickup",
+                "Confirm destination",
+                "Confirm",
+                "Done"
+            )
+
+            for (buttonText in confirmTexts) {
+                val nodes = rootNode.findAccessibilityNodeInfosByText(buttonText)
+                for (node in nodes) {
+                    val nodeText = node.text?.toString() ?: ""
+                    Log.i(TAG, "🚖 Found confirm button candidate: '$nodeText' (looking for '$buttonText')")
+
+                    // Try clicking
+                    if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        Log.i(TAG, "🚖 ✓ Clicked '$buttonText' via ACTION_CLICK")
+                        node.recycle()
+                        nodes.forEach { n -> try { n.recycle() } catch (e: Exception) {} }
+                        return true
+                    }
+
+                    // Try gesture click
+                    if (careemGestureClick(node)) {
+                        Log.i(TAG, "🚖 ✓ Gesture clicked '$buttonText'")
+                        node.recycle()
+                        nodes.forEach { n -> try { n.recycle() } catch (e: Exception) {} }
+                        return true
+                    }
+
+                    // Try clicking parent
+                    var parent = node.parent
+                    for (level in 1..3) {
+                        if (parent == null) break
+                        if (parent.isClickable && parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                            Log.i(TAG, "🚖 ✓ Clicked parent L$level of '$buttonText'")
+                            parent.recycle()
+                            node.recycle()
+                            nodes.forEach { n -> try { n.recycle() } catch (e: Exception) {} }
+                            return true
+                        }
+                        val next = parent.parent
+                        parent.recycle()
+                        parent = next
+                    }
+                    node.recycle()
+                }
+            }
+
+            // Fallback: If map screen detected but no button found, try tapping bottom area
+            // (confirm button is usually at the bottom)
+            if (hasMapElements) {
+                Log.i(TAG, "🚖 Trying fallback: tap at bottom of screen for confirm button")
+                try {
+                    val displayMetrics = resources.displayMetrics
+                    val screenWidth = displayMetrics.widthPixels
+                    val screenHeight = displayMetrics.heightPixels
+                    val tapX = screenWidth / 2f
+                    val tapY = screenHeight * 0.88f  // Bottom area where confirm button typically is
+
+                    val path = android.graphics.Path()
+                    path.moveTo(tapX, tapY)
+                    val gesture = android.accessibilityservice.GestureDescription.Builder()
+                        .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 200))
+                        .build()
+                    dispatchGesture(gesture, null, null)
+                    Log.i(TAG, "🚖 ✓ Fallback: tapped bottom at ($tapX, $tapY)")
+                    return true
+                } catch (e: Exception) {
+                    Log.w(TAG, "🚖 Fallback tap failed: ${e.message}")
+                }
+            }
+        }
+
+        // ============================================================
+        // Check 2: Promo/discount dialogs
+        // ============================================================
+        val hasPromoDialog = allText.any { text ->
+            text.contains("خصم") ||           // Discount
+            text.contains("عرض") ||            // Offer
+            text.contains("discount") ||
+            text.contains("promo") ||
+            text.contains("أدخل كود") ||       // Enter code
+            text.contains("Enter code")
+        }
+
+        if (hasPromoDialog) {
+            Log.i(TAG, "🚖 Detected promo dialog")
+            val dismissTexts = listOf("تخطي", "Skip", "لا شكراً", "No thanks", "إغلاق", "Close", "X")
+            for (dismissText in dismissTexts) {
+                val nodes = rootNode.findAccessibilityNodeInfosByText(dismissText)
+                for (node in nodes) {
+                    if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        Log.i(TAG, "🚖 ✓ Dismissed promo dialog with '$dismissText'")
+                        node.recycle()
+                        return true
+                    }
+                    node.recycle()
+                }
+            }
+        }
+
+        // ============================================================
+        // Check 3: Permission/info dialogs
+        // ============================================================
+        val hasInfoDialog = allText.any { text ->
+            text.contains("حسناً") ||
+            text.contains("OK") ||
+            text.contains("Got it") ||
+            text.contains("فهمت")
+        }
+
+        if (hasInfoDialog) {
+            Log.i(TAG, "🚖 Detected info dialog")
+            val okTexts = listOf("حسناً", "OK", "Got it", "فهمت", "موافق")
+            for (okText in okTexts) {
+                val nodes = rootNode.findAccessibilityNodeInfosByText(okText)
+                for (node in nodes) {
+                    if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        Log.i(TAG, "🚖 ✓ Dismissed info dialog with '$okText'")
+                        node.recycle()
+                        return true
+                    }
+                    node.recycle()
+                }
+            }
+        }
+
         return false
     }
 
@@ -7747,16 +7966,47 @@ class PriceReaderService : AccessibilityService() {
 
                 var price = extractPrice(text)
 
-                // Special handling for Careem format: "ج.م.‏ XX.XX"
+                // Special handling for Careem format: "ج.م.‏ XX.XX" or "ج.م.‏ XX"
                 // The RTL mark and space may not be matched by standard patterns
+                // Enhanced: Now handles integers, decimals with 1-2 digits, and various formats
                 if (price == null && currentPackage == CAREEM_PACKAGE && text.contains("ج.م")) {
-                    // Extract just the numeric part from Careem price format
-                    val careemPricePattern = Pattern.compile("(\\d+[.,]\\d{2})")
-                    val matcher = careemPricePattern.matcher(text)
-                    if (matcher.find()) {
-                        price = matcher.group(1)?.replace(",", ".")?.toDoubleOrNull()
-                        if (price != null) {
-                            Log.i(TAG, "🚖 Careem special extraction: $price from '$text'")
+                    // Try multiple patterns in order of specificity
+                    val careemPatterns = listOf(
+                        // Pattern 1: Decimal with 1-2 digits after point (e.g., "65.50", "65.5")
+                        Pattern.compile("(\\d+[.,]\\d{1,2})"),
+                        // Pattern 2: Integer only (e.g., "100", "65")
+                        Pattern.compile("(\\d{2,4})")
+                    )
+
+                    for (pattern in careemPatterns) {
+                        val matcher = pattern.matcher(text)
+                        if (matcher.find()) {
+                            val candidate = matcher.group(1)?.replace(",", ".")?.toDoubleOrNull()
+                            // Validate price range (10-5000 EGP is reasonable for rides)
+                            if (candidate != null && candidate in 10.0..5000.0) {
+                                price = candidate
+                                Log.i(TAG, "🚖 Careem special extraction: $price from '$text' (pattern: ${pattern.pattern()})")
+                                break
+                            }
+                        }
+                    }
+                }
+
+                // Additional Careem-specific: Extract from price display text like "٧٠ ج.م" (Arabic numerals)
+                if (price == null && currentPackage == CAREEM_PACKAGE) {
+                    // Convert Arabic-Indic numerals to Western Arabic
+                    val arabicNumerals = mapOf('٠' to '0', '١' to '1', '٢' to '2', '٣' to '3', '٤' to '4',
+                                              '٥' to '5', '٦' to '6', '٧' to '7', '٨' to '8', '٩' to '9')
+                    val convertedText = text.map { arabicNumerals[it] ?: it }.joinToString("")
+                    if (convertedText != text) {
+                        val arabicPricePattern = Pattern.compile("(\\d+[.,]?\\d*)")
+                        val matcher = arabicPricePattern.matcher(convertedText)
+                        if (matcher.find()) {
+                            val candidate = matcher.group(1)?.replace(",", ".")?.toDoubleOrNull()
+                            if (candidate != null && candidate in 10.0..5000.0) {
+                                price = candidate
+                                Log.i(TAG, "🚖 Careem Arabic numeral extraction: $price from '$text' -> '$convertedText'")
+                            }
                         }
                     }
                 }
