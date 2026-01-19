@@ -18,14 +18,14 @@ allprojects {
 
     // Define SDK versions globally for all subprojects
     ext {
-        compileSdkVersion = 34
-        targetSdkVersion = 34
+        compileSdkVersion = 36
+        targetSdkVersion = 36
         minSdkVersion = 24
 
         // Create flutter object for plugins that need it
         flutter = [
-            compileSdkVersion: 34,
-            targetSdkVersion: 34,
+            compileSdkVersion: 36,
+            targetSdkVersion: 36,
             minSdkVersion: 24
         ]
     }
