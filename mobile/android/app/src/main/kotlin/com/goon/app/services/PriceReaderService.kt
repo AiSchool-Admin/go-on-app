@@ -12,6 +12,12 @@ import android.widget.Toast
 import org.json.JSONObject
 import java.util.regex.Pattern
 
+// Import centralized configuration
+import com.goon.app.services.config.AppConstants
+import com.goon.app.services.config.TimingConfig
+import com.goon.app.services.config.PricePatterns
+import com.goon.app.services.config.UITexts
+
 /**
  * GO-ON Price Reader Accessibility Service - ENHANCED VERSION
  *
@@ -29,7 +35,11 @@ class PriceReaderService : AccessibilityService() {
     companion object {
         private const val TAG = "GO-ON-PriceReader"
 
-        // Package names of supported apps
+        // ============================================================
+        // PACKAGE NAMES
+        // Canonical values are defined in AppConstants.Packages
+        // These are kept as const val for backward compatibility
+        // ============================================================
         const val UBER_PACKAGE = "com.ubercab"
         const val CAREEM_PACKAGE = "com.careem.acma"
         const val INDRIVER_PACKAGE = "sinet.startup.inDriver"
@@ -40,34 +50,8 @@ class PriceReaderService : AccessibilityService() {
         const val ACTION_PRICE_UPDATE = "com.goon.app.PRICE_UPDATE"
         const val EXTRA_PRICE_DATA = "price_data"
 
-        // Price patterns for Egyptian Pounds - COMPREHENSIVE
-        private val PRICE_PATTERNS = listOf(
-            // EGP formats
-            Pattern.compile("EGP\\s*(\\d+[.,]?\\d*)", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("(\\d+[.,]?\\d*)\\s*EGP", Pattern.CASE_INSENSITIVE),
-            // ج.م formats (Egyptian Arabic) - including RTL mark \u200F
-            Pattern.compile("ج\\.?م\\.?[\\s\\u200F\\u200E]*(\\d+[.,]?\\d*)"),
-            Pattern.compile("(\\d+[.,]?\\d*)[\\s\\u200F\\u200E]*ج\\.?م\\.?"),
-            // Careem specific format: ج.م.‏ XX.XX (with RTL mark)
-            Pattern.compile("ج\\.م\\.?\\u200F?\\s*(\\d+[.,]\\d{2})"),
-            // جنيه (Guinee)
-            Pattern.compile("جنيه\\s*(\\d+[.,]?\\d*)"),
-            Pattern.compile("(\\d+[.,]?\\d*)\\s*جنيه"),
-            // LE formats
-            Pattern.compile("LE\\s*(\\d+[.,]?\\d*)", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("(\\d+[.,]?\\d*)\\s*LE", Pattern.CASE_INSENSITIVE),
-            // E£ format
-            Pattern.compile("E£\\s*(\\d+[.,]?\\d*)"),
-            Pattern.compile("(\\d+[.,]?\\d*)\\s*E£"),
-            // Price with range (e.g., "65-75")
-            Pattern.compile("(\\d+)\\s*[-–]\\s*\\d+\\s*(?:EGP|ج\\.?م|جنيه|LE)?", Pattern.CASE_INSENSITIVE),
-            // Price in format "Fare: 65" or "السعر: 65"
-            Pattern.compile("(?:fare|price|السعر|الأجرة)[:\\s]*(\\d+)", Pattern.CASE_INSENSITIVE),
-            // Standalone decimal numbers like "61.40" or "67.50" (DiDi format)
-            Pattern.compile("^\\s*(\\d{2,3}[.,]\\d{1,2})\\s*$"),
-            // Standalone integers 2-3 digits
-            Pattern.compile("^\\s*(\\d{2,3})\\s*$")
-        )
+        // Price patterns - now using centralized PricePatterns config
+        private val PRICE_PATTERNS = PricePatterns.PATTERNS
 
         // Singleton instance for Flutter communication
         var instance: PriceReaderService? = null
@@ -91,95 +75,17 @@ class PriceReaderService : AccessibilityService() {
         var destLng: Double = 0.0
 
         // User preference for sorting rides
-        // Options: "lowest_price", "best_service", "fastest_arrival"
+        // Options defined in AppConstants.Preferences: "lowest_price", "best_service", "fastest_arrival"
         var rideSortPreference: String = "lowest_price"
     }
 
-    /**
-     * DEVICE-ADAPTIVE TIMING CONFIGURATION
-     * All timing values are centralized here for easy tuning across different devices.
-     * The calibrate() function adjusts these based on device performance.
-     */
-    object TimingConfig {
-        // Performance multiplier (1.0 = normal, <1.0 = fast device, >1.0 = slow device)
-        private var performanceMultiplier = 1.0
-        private var isCalibrated = false
+    // ============================================================
+    // NOTE: TimingConfig is now imported from config/TimingConfig.kt
+    // All timing values are centralized there for easy maintenance.
+    // ============================================================
 
-        // Base timing values (in milliseconds)
-        private const val BASE_CLICK_DELAY = 300L
-        private const val BASE_ANIMATION_WAIT = 500L
-        private const val BASE_SCAN_INTERVAL = 500L
-        private const val BASE_TEXT_INPUT_DELAY = 100L
-        private const val BASE_KEYBOARD_WAIT = 300L
-
-        // Computed timing values (adjusted by performance multiplier)
-        val clickDelay: Long get() = (BASE_CLICK_DELAY * performanceMultiplier).toLong()
-        val animationWait: Long get() = (BASE_ANIMATION_WAIT * performanceMultiplier).toLong()
-        val scanInterval: Long get() = (BASE_SCAN_INTERVAL * performanceMultiplier).toLong()
-        val textInputDelay: Long get() = (BASE_TEXT_INPUT_DELAY * performanceMultiplier).toLong()
-        val keyboardWait: Long get() = (BASE_KEYBOARD_WAIT * performanceMultiplier).toLong()
-
-        // App-specific timeouts (less affected by device speed)
-        const val UBER_MIN_WAIT_MS = 3000L
-        const val DIDI_TIMEOUT_MS = 20000L
-        const val CAREEM_TIMEOUT_MS = 25000L  // Careem needs more time for loading
-        const val CAREEM_LOADER_EXTENSION_MS = 10000L  // Extra time when loader is visible
-        const val DEFAULT_TIMEOUT_MS = 12000L
-        const val INDRIVER_MIN_WAIT_AFTER_DONE_MS = 1000L  // OPTIMIZED: Reduced for faster detection
-
-        // Retry limits
-        const val MAX_RETRIES = 10
-        const val DIDI_MAX_DESTINATION_ATTEMPTS = 10
-        const val DIDI_MAX_SUGGESTION_RETRIES = 3
-        const val INDRIVER_MAX_DONE_CLICKS = 3
-
-        // Minimum valid prices (to filter out invalid readings)
-        const val UBER_MIN_PRICE = 50.0
-
-        /**
-         * Calibrate timing based on device performance.
-         * Call this once when the service starts.
-         */
-        fun calibrate() {
-            if (isCalibrated) return
-
-            val startTime = System.nanoTime()
-            // Simple benchmark: string operations
-            var dummy = ""
-            repeat(10000) { dummy += "x"; dummy = dummy.takeLast(100) }
-            val elapsedNs = System.nanoTime() - startTime
-            val elapsedMs = elapsedNs / 1_000_000
-
-            // Determine performance tier
-            performanceMultiplier = when {
-                elapsedMs < 20 -> 0.8    // Fast device - reduce delays
-                elapsedMs < 50 -> 1.0    // Normal device
-                elapsedMs < 100 -> 1.3   // Slower device
-                else -> 1.5              // Very slow device
-            }
-
-            isCalibrated = true
-            Log.i(TAG, "📱 Device calibrated: benchmark=${elapsedMs}ms, multiplier=$performanceMultiplier")
-            Log.i(TAG, "📱 Timings: click=${clickDelay}ms, animation=${animationWait}ms, scan=${scanInterval}ms")
-        }
-
-        /**
-         * Force recalibration (useful for testing)
-         */
-        fun recalibrate() {
-            isCalibrated = false
-            calibrate()
-        }
-    }
-
-    // Service ratings for "best_service" preference
-    private val serviceRatings = mapOf(
-        UBER_PACKAGE to 4.5,
-        CAREEM_PACKAGE to 4.3,
-        DIDI_PACKAGE to 4.0,
-        BOLT_PACKAGE to 4.2,
-        INDRIVER_PACKAGE to 3.8
-    )
+    // Service ratings for "best_service" preference - now using centralized config
+    private val serviceRatings = AppConstants.ServiceRatings.RATINGS
 
     data class PriceInfo(
         val appName: String,
