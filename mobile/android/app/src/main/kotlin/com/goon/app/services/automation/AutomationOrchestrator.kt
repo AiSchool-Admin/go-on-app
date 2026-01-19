@@ -6,6 +6,10 @@ import android.os.Looper
 import android.view.accessibility.AccessibilityNodeInfo
 import com.goon.app.services.config.AppConstants
 import com.goon.app.services.config.TimingConfig
+import com.goon.app.services.fallback.FallbackManager
+import com.goon.app.services.fallback.FallbackType
+import com.goon.app.services.fallback.FallbackContext
+import com.goon.app.services.utils.NodeFinder
 import com.goon.app.utils.AppLogger
 
 /**
@@ -62,6 +66,11 @@ class AutomationOrchestrator(
     // Handler for scheduling
     private val handler = Handler(Looper.getMainLooper())
     private var scanRunnable: Runnable? = null
+
+    // Fallback manager for handling failures (Phase 6)
+    private val fallbackManager = FallbackManager(service)
+    private var consecutiveFailures = 0
+    private val maxConsecutiveFailures = 5
 
     // ============================================================
     // PUBLIC API
@@ -377,11 +386,132 @@ class AutomationOrchestrator(
 
     private fun handleRetry(result: AutomationResult) {
         retries++
+        consecutiveFailures++
+
         if (retries > TimingConfig.MAX_RETRIES) {
-            AppLogger.e("Max retries exceeded in state $currentState", null, null, TAG)
+            AppLogger.e("Max retries exceeded in state $currentState - attempting fallback", null, null, TAG)
+
+            // Try fallback before giving up
+            val rootNode = service.rootInActiveWindow
+            if (rootNode != null) {
+                try {
+                    val fallbackResult = attemptFallback(rootNode, result.message)
+                    if (fallbackResult) {
+                        // Fallback succeeded - reset retries and continue
+                        retries = 0
+                        consecutiveFailures = 0
+                        AppLogger.d("Fallback succeeded - continuing automation", TAG)
+                        return
+                    }
+                } finally {
+                    rootNode.recycle()
+                }
+            }
+
+            // Fallback failed - transition to FAILED state
             transitionTo(AutomationState.FAILED)
         } else {
             AppLogger.w("Retry $retries/${TimingConfig.MAX_RETRIES}: ${result.message}", TAG)
+
+            // Check for consecutive failures - might need recovery
+            if (consecutiveFailures >= maxConsecutiveFailures) {
+                AppLogger.w("$consecutiveFailures consecutive failures - attempting recovery", TAG)
+                val rootNode = service.rootInActiveWindow
+                if (rootNode != null) {
+                    try {
+                        attemptRecovery(rootNode)
+                    } finally {
+                        rootNode.recycle()
+                    }
+                }
+            }
         }
+    }
+
+    /**
+     * محاولة Fallback عند فشل الأتمتة
+     * Attempt fallback when automation fails
+     */
+    private fun attemptFallback(rootNode: AccessibilityNodeInfo, errorMessage: String): Boolean {
+        val packageName = currentPackage ?: return false
+
+        AppLogger.d("Attempting fallback for state: $currentState", TAG)
+
+        // Determine fallback type based on current state
+        val fallbackType = when (currentState) {
+            AutomationState.FINDING_PICKUP_FIELD,
+            AutomationState.FINDING_DESTINATION_FIELD -> FallbackType.CLICK
+
+            AutomationState.ENTERING_PICKUP,
+            AutomationState.ENTERING_DESTINATION -> FallbackType.TEXT_ENTRY
+
+            AutomationState.SELECTING_SUGGESTION -> FallbackType.SUGGESTION
+
+            AutomationState.WAITING_FOR_SUGGESTIONS,
+            AutomationState.WAITING_FOR_PRICE -> FallbackType.INTERMEDIATE
+
+            else -> FallbackType.RECOVERY
+        }
+
+        // Create fallback context
+        val context = FallbackContext(
+            packageName = packageName,
+            currentState = currentState.name,
+            targetText = when (currentState) {
+                AutomationState.ENTERING_PICKUP -> pickupAddress
+                AutomationState.ENTERING_DESTINATION -> destinationAddress
+                AutomationState.SELECTING_SUGGESTION -> if (step < 10) pickupAddress else destinationAddress
+                else -> ""
+            },
+            lastError = errorMessage,
+            previousAttempts = retries,
+            screenTexts = NodeFinder.getAllText(rootNode),
+            metadata = mapOf(
+                "pickupLat" to pickupLat,
+                "pickupLng" to pickupLng,
+                "destLat" to destLat,
+                "destLng" to destLng
+            )
+        )
+
+        // Execute fallback
+        val result = fallbackManager.handleFailure(rootNode, context, fallbackType)
+
+        AppLogger.d("Fallback result: success=${result.success}, strategy=${result.strategyUsed}", TAG)
+
+        return result.success
+    }
+
+    /**
+     * محاولة استعادة من حالة فشل متكرر
+     * Attempt recovery from repeated failures
+     */
+    private fun attemptRecovery(rootNode: AccessibilityNodeInfo) {
+        val packageName = currentPackage ?: return
+
+        AppLogger.d("Attempting recovery for $packageName", TAG)
+
+        val result = fallbackManager.attemptRecovery(
+            rootNode,
+            packageName,
+            currentState.name,
+            "Consecutive failures: $consecutiveFailures"
+        )
+
+        if (result.success) {
+            consecutiveFailures = 0
+            AppLogger.d("Recovery successful", TAG)
+        } else {
+            AppLogger.w("Recovery failed: ${result.message}", TAG)
+        }
+    }
+
+    /**
+     * إعادة تعيين مدير الـ Fallback
+     * Reset fallback manager
+     */
+    fun resetFallbackAttempts() {
+        fallbackManager.resetAttempts()
+        consecutiveFailures = 0
     }
 }
