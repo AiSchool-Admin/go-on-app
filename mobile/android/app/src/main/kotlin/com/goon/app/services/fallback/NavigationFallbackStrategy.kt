@@ -250,7 +250,7 @@ class NavigationFallbackStrategy(
         }
 
         // Check for "Where to?" or destination field
-        val whereToTexts = listOf("Where to?", "إلى أين", "الوجهة", "Destination")
+        val whereToTexts = listOf("Tap to enter your destination", "Where to?", "إلى أين", "الوجهة", "Destination")
         for (text in whereToTexts) {
             val node = NodeFinder.findByText(rootNode, text)
             if (node != null) {

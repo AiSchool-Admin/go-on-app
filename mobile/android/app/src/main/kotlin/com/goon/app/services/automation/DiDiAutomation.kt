@@ -87,7 +87,8 @@ class DiDiAutomation(
             AppLogger.d(TAG, "On home screen - clicking 'Where to?'")
 
             // Try clicking the "Where to?" element
-            val whereToTexts = listOf("Where to?", "Tap to enter your destination")
+            // "Tap to enter your destination" first - matches only the button, not the text label
+            val whereToTexts = listOf("Tap to enter your destination", "Where to?Button", "Where to?")
             for (text in whereToTexts) {
                 val node = findNodeWithText(rootNode, text)
                 if (node != null) {

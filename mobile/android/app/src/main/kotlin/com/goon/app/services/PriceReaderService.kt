@@ -1753,7 +1753,9 @@ class PriceReaderService : AccessibilityService() {
 
             // Click "Where to?" to open the search screen
             // DiDi requires ACTION_CLICK on the node, not gesture tap
-            val whereToTexts = listOf("Where to?", "Where to", "إلى أين", "إلى أين؟", "Tap to enter your destination")
+            // IMPORTANT: "Tap to enter your destination" must come FIRST because "Where to?"
+            // matches both the text label AND the button, but we need to click the button
+            val whereToTexts = listOf("Tap to enter your destination", "إلى أين؟", "إلى أين", "Where to?Button", "Where to?", "Where to")
             for (searchText in whereToTexts) {
                 val nodes = rootNode.findAccessibilityNodeInfosByText(searchText)
                 if (nodes.isNotEmpty()) {
