@@ -13,6 +13,7 @@ import '../../features/tracking/screens/tracking_screen.dart';
 import '../../features/wallet/screens/wallet_screen.dart';
 import '../../features/profile/screens/profile_screen.dart';
 import '../../features/permissions/screens/permissions_setup_screen.dart';
+import '../../features/drivers/screens/driver_registration_screen.dart';
 import '../../providers/auth_provider.dart';
 
 /// Route names
@@ -30,6 +31,7 @@ class AppRoutes {
   static const String tracking = '/tracking/:id';
   static const String wallet = '/wallet';
   static const String profile = '/profile';
+  static const String driverRegistration = '/driver-registration';
 }
 
 /// Router provider
@@ -126,6 +128,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.profile,
         builder: (context, state) => const ProfileScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.driverRegistration,
+        builder: (context, state) => const DriverRegistrationScreen(),
       ),
     ],
     errorBuilder: (context, state) => ErrorScreen(error: state.error),

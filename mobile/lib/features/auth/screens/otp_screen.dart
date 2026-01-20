@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/routes/app_router.dart';
@@ -77,14 +78,25 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
             token: _otp,
           );
 
+      // Create profile after successful verification
+      final user = ref.read(currentUserProvider);
+      if (user != null) {
+        await _createOrUpdateProfile(user.id, widget.phoneNumber);
+      }
+
       if (mounted) {
         context.go(AppRoutes.home);
       }
     } catch (e) {
       if (mounted) {
+        String errorMessage = 'رمز التحقق غير صحيح';
+        if (e.toString().contains('expired')) {
+          errorMessage = 'انتهت صلاحية الرمز. أعد الإرسال';
+        }
+
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('خطأ: ${e.toString()}'),
+            content: Text(errorMessage),
             backgroundColor: AppColors.error,
           ),
         );
@@ -93,6 +105,31 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
       if (mounted) {
         setState(() => _isLoading = false);
       }
+    }
+  }
+
+  Future<void> _createOrUpdateProfile(String userId, String phone) async {
+    try {
+      final supabase = Supabase.instance.client;
+
+      // Check if profile exists
+      final existing = await supabase
+          .from('profiles')
+          .select()
+          .eq('id', userId)
+          .maybeSingle();
+
+      if (existing == null) {
+        // Create new profile
+        await supabase.from('profiles').insert({
+          'id': userId,
+          'phone': phone,
+          'name': 'مستخدم',
+          'user_type': 'passenger',
+        });
+      }
+    } catch (e) {
+      debugPrint('Error creating profile: $e');
     }
   }
 

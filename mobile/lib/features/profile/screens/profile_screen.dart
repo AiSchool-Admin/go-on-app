@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../core/constants/app_colors.dart';
+import '../../../core/routes/app_router.dart';
 import '../../../providers/auth_provider.dart';
 
 class ProfileScreen extends ConsumerWidget {
@@ -106,6 +108,60 @@ class ProfileScreen extends ConsumerWidget {
                   ),
                 ),
               ],
+            ),
+
+            const SizedBox(height: 24),
+
+            // Become a Driver Card
+            InkWell(
+              onTap: () => context.push(AppRoutes.driverRegistration),
+              borderRadius: BorderRadius.circular(16),
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  gradient: AppColors.primaryGradient,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: const Row(
+                  children: [
+                    CircleAvatar(
+                      backgroundColor: Colors.white24,
+                      child: Icon(
+                        Icons.drive_eta,
+                        color: Colors.white,
+                      ),
+                    ),
+                    SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'سجّل كسائق',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          Text(
+                            'اربح دخلاً إضافياً مع GO-ON',
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Icon(
+                      Icons.arrow_forward_ios,
+                      color: Colors.white,
+                      size: 16,
+                    ),
+                  ],
+                ),
+              ),
             ),
 
             const SizedBox(height: 24),
