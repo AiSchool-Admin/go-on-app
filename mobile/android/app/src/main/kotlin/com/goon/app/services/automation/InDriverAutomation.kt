@@ -186,13 +186,31 @@ class InDriverAutomation(
             // Skip if already has destination-like content
             if (currentText.contains(destinationAddress.take(10))) continue
 
-            // Clear and enter
-            clearTextField(editText)
+            // AGGRESSIVE CLEAR: Multiple attempts to clear the field
+            // InDriver may have cached/saved location that needs forceful clearing
+            repeat(3) {
+                clearTextField(editText)
+                Thread.sleep(50)
+            }
+
+            // Also try selecting all and focusing
+            editText.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+            Thread.sleep(50)
+
+            // Set empty text explicitly
+            val clearBundle = Bundle()
+            clearBundle.putCharSequence(
+                AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                ""
+            )
+            editText.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, clearBundle)
             Thread.sleep(100)
 
             if (enterTextInField(editText, coordsText)) {
-                AppLogger.automation(TAG, "Entered pickup coordinates", state = "PICKUP_ENTERED")
+                AppLogger.automation(TAG, "Entered pickup coordinates: $coordsText", state = "PICKUP_ENTERED")
                 pickupEntered = true
+                pickupLat = lat
+                pickupLng = lng
                 editTexts.forEach { try { it.recycle() } catch (e: Exception) {} }
                 Thread.sleep(TimingConfig.textInputDelay)
                 return AutomationResult(true, "Entered pickup")
@@ -204,9 +222,17 @@ class InDriverAutomation(
         // Fallback: focused input
         val focusedInput = findFocusedEditText(rootNode)
         if (focusedInput != null) {
+            // Aggressive clear for focused field too
+            repeat(3) {
+                clearTextField(focusedInput)
+                Thread.sleep(50)
+            }
+
             if (enterTextInField(focusedInput, coordsText)) {
-                AppLogger.automation(TAG, "Entered pickup via focused field", state = "PICKUP_ENTERED")
+                AppLogger.automation(TAG, "Entered pickup via focused field: $coordsText", state = "PICKUP_ENTERED")
                 pickupEntered = true
+                pickupLat = lat
+                pickupLng = lng
                 focusedInput.recycle()
                 Thread.sleep(TimingConfig.textInputDelay)
                 return AutomationResult(true, "Entered pickup via focused")
