@@ -1761,9 +1761,10 @@ class PriceReaderService : AccessibilityService() {
                     node.getBoundsInScreen(rect)
                     Log.i(TAG, "🚕 Found '$searchText' at $rect - clicking...")
                     clickAtPosition(rect.centerX().toFloat(), rect.centerY().toFloat())
-                    Thread.sleep(TimingConfig.animationWait)
+                    Thread.sleep(TimingConfig.animationWait * 2)  // Wait longer for search screen to open
                     nodes.forEach { it.recycle() }
-                    return true  // Return true, will come back to find pickup field
+                    // Return FALSE - we clicked "Where to?" but still need to find and click the pickup field
+                    return false
                 }
             }
             return false
