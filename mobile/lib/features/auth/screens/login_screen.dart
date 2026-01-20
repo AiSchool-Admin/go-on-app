@@ -61,6 +61,17 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
     setState(() => _isLoading = true);
 
+    // TEMPORARY: Bypass OTP and go directly to home
+    // TODO: Re-enable OTP when service is working
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    if (mounted) {
+      setState(() => _isLoading = false);
+      context.go(AppRoutes.home);
+    }
+    return;
+
+    /* DISABLED: OTP flow
     final phone = _formatPhoneNumber(_phoneController.text.trim());
 
     try {
@@ -98,6 +109,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         setState(() => _isLoading = false);
       }
     }
+    */
   }
 
   Future<void> _submitEmail() async {
