@@ -1732,20 +1732,29 @@ class PriceReaderService : AccessibilityService() {
         Log.i(TAG, "🚕 ========== DIDI PICKUP FIELD SEARCH (PICKUP FIRST) ==========")
         Log.i(TAG, "🚕 Pickup to enter: $pickupAddress (coords: $pickupLat, $pickupLng)")
 
-        // Debug: Log ALL visible text on screen
+        // Debug: Log ALL visible text on screen (extended to 50 for DiDi debugging)
         val allText = getAllTextFromNode(rootNode)
-        Log.i(TAG, "🚕 === ALL VISIBLE TEXT ON SCREEN ===")
-        allText.take(20).forEachIndexed { index, text ->
+        Log.i(TAG, "🚕 === ALL VISIBLE TEXT ON SCREEN (${allText.size} items) ===")
+        allText.take(50).forEachIndexed { index, text ->
             Log.i(TAG, "🚕 [$index] '$text'")
         }
         Log.i(TAG, "🚕 === END OF VISIBLE TEXT ===")
 
         // Check if we're on the HOME screen (need to click "Where to?" first)
+        // EXTENDED patterns: English, Arabic, Chinese (DiDi is 滴滴出行)
         val isOnHomeScreen = allText.any { text ->
             val lower = text.lowercase()
             lower.contains("tap to enter your destination") ||
             lower.contains("where to?") ||
-            lower.contains("إلى أين")
+            lower.contains("where to") ||
+            lower.contains("إلى أين") ||
+            lower.contains("الى اين") ||
+            lower.contains("وين رايح") ||
+            lower.contains("去哪儿") ||  // Chinese "Where to go"
+            lower.contains("输入目的地") ||  // Chinese "Enter destination"
+            lower.contains("你要去哪") ||  // Chinese "Where do you want to go"
+            lower.contains("destination") ||
+            lower.contains("الوجهة")
         }
 
         if (isOnHomeScreen) {
@@ -1755,7 +1764,15 @@ class PriceReaderService : AccessibilityService() {
             // DiDi requires ACTION_CLICK on the node, not gesture tap
             // IMPORTANT: "Tap to enter your destination" must come FIRST because "Where to?"
             // matches both the text label AND the button, but we need to click the button
-            val whereToTexts = listOf("Tap to enter your destination", "إلى أين؟", "إلى أين", "Where to?Button", "Where to?", "Where to")
+            // EXTENDED: English, Arabic, Chinese patterns
+            val whereToTexts = listOf(
+                "Tap to enter your destination",
+                "إلى أين؟", "إلى أين", "الى اين", "الى اين؟",
+                "الوجهة", "وين رايح", "أين تريد الذهاب",
+                "Where to?Button", "Where to?", "Where to",
+                "去哪儿", "输入目的地", "你要去哪", "目的地",  // Chinese patterns
+                "Destination", "Search", "بحث"
+            )
             for (searchText in whereToTexts) {
                 val nodes = rootNode.findAccessibilityNodeInfosByText(searchText)
                 if (nodes.isNotEmpty()) {
@@ -1824,18 +1841,60 @@ class PriceReaderService : AccessibilityService() {
                     return false
                 }
             }
+
+            // FALLBACK: No text found but we're on home screen - tap at known position
+            Log.w(TAG, "🚕 [DiDi] On HOME screen but couldn't find any 'Where to?' text - using position fallback...")
+            Log.w(TAG, "🚕 [DiDi] This means DiDi's UI text doesn't match our patterns. Check the logged text above!")
+
+            // DiDi's "Where to?" button is typically in the upper-middle area of the screen
+            // Try tapping at approximately 1/3 down from top, center of screen
+            try {
+                val displayMetrics = resources.displayMetrics
+                val screenWidth = displayMetrics.widthPixels
+                val screenHeight = displayMetrics.heightPixels
+
+                // DiDi search bar is usually at about 25-35% from top
+                val tapX = screenWidth / 2f
+                val tapY = screenHeight * 0.30f  // 30% from top
+
+                Log.i(TAG, "🚕 Fallback: Tapping at ($tapX, $tapY) - center of screen, 30% down")
+                clickAtPositionWithDuration(tapX, tapY, 150)
+                Thread.sleep(TimingConfig.animationWait)
+
+                // Try another tap slightly higher
+                val tapY2 = screenHeight * 0.25f
+                Log.i(TAG, "🚕 Fallback: Tapping at ($tapX, $tapY2) - center of screen, 25% down")
+                clickAtPositionWithDuration(tapX, tapY2, 150)
+                Thread.sleep(TimingConfig.animationWait)
+
+                // Try tapping in the middle
+                val tapY3 = screenHeight * 0.40f
+                Log.i(TAG, "🚕 Fallback: Tapping at ($tapX, $tapY3) - center of screen, 40% down")
+                clickAtPositionWithDuration(tapX, tapY3, 150)
+            } catch (e: Exception) {
+                Log.e(TAG, "🚕 Fallback tap failed: ${e.message}")
+            }
             return false
         }
 
         // Check if we're on the SEARCH screen (has "Where to?" field for destination)
+        // EXTENDED: English, Arabic, Chinese patterns
         val isOnSearchScreen = allText.any { text ->
             val lower = text.lowercase()
             lower.contains("where to?") ||
+            lower.contains("where to") ||
             lower.contains("pickup point") ||
             lower.contains("your location") ||
+            lower.contains("current location") ||
             lower.contains("موقعك") ||
             lower.contains("نقطة الاقلال") ||
-            lower.contains("من أين")
+            lower.contains("نقطة الإقلال") ||
+            lower.contains("من أين") ||
+            lower.contains("موقعك الحالي") ||
+            lower.contains("当前位置") ||  // Chinese "Current location"
+            lower.contains("起点") ||  // Chinese "Starting point"
+            lower.contains("上车点") ||  // Chinese "Pickup point"
+            lower.contains("您的位置")  // Chinese "Your location"
         }
 
         if (isOnSearchScreen) {
@@ -1847,9 +1906,13 @@ class PriceReaderService : AccessibilityService() {
             // We need to click the PICKUP field (top one)
 
             // Strategy 1: Find by "Your location" or similar text
+            // EXTENDED: English, Arabic, Chinese patterns
             val pickupTexts = listOf(
-                "Your location", "Pickup point", "موقعك", "موقعك الحالي",
-                "نقطة الاقلال", "نقطة الإقلال", "من أين", "Current location"
+                "Your location", "Pickup point", "Current location",
+                "موقعك", "موقعك الحالي", "موقعي", "الموقع الحالي",
+                "نقطة الاقلال", "نقطة الإقلال", "من أين", "من أين؟",
+                "当前位置", "您的位置", "起点", "上车点", "出发地",  // Chinese
+                "From", "من", "Start"
             )
 
             for (pickupText in pickupTexts) {
@@ -1915,7 +1978,30 @@ class PriceReaderService : AccessibilityService() {
             }
         }
 
-        Log.w(TAG, "🚕 Could not find DiDi pickup field")
+        // FALLBACK: Couldn't detect which screen we're on
+        // This happens when DiDi shows unexpected UI text
+        Log.w(TAG, "🚕 Could not determine DiDi screen type!")
+        Log.w(TAG, "🚕 isOnHomeScreen=$isOnHomeScreen, isOnSearchScreen=$isOnSearchScreen")
+        Log.w(TAG, "🚕 Using AGGRESSIVE FALLBACK - tapping at multiple positions...")
+
+        try {
+            val displayMetrics = resources.displayMetrics
+            val screenWidth = displayMetrics.widthPixels
+            val screenHeight = displayMetrics.heightPixels
+            val tapX = screenWidth / 2f
+
+            // Try tapping at several Y positions where DiDi typically shows inputs
+            val tapPositions = listOf(0.25f, 0.30f, 0.35f, 0.40f, 0.45f)
+            for (yPercent in tapPositions) {
+                val tapY = screenHeight * yPercent
+                Log.i(TAG, "🚕 Aggressive fallback: Tapping at ($tapX, $tapY) - ${(yPercent * 100).toInt()}% from top")
+                clickAtPositionWithDuration(tapX, tapY, 150)
+                Thread.sleep(200)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "🚕 Aggressive fallback failed: ${e.message}")
+        }
+
         return false
     }
 
