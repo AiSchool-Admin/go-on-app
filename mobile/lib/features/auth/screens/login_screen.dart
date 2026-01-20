@@ -29,6 +29,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   bool _obscurePassword = true;
   LoginMethod _loginMethod = LoginMethod.phone;
 
+  // Debug mode bypass - tap logo 5 times
+  int _debugTapCount = 0;
+  DateTime? _lastTapTime;
+
   @override
   void dispose() {
     _phoneController.dispose();
@@ -182,6 +186,44 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
   }
 
+  // Debug bypass - tap logo 5 times within 3 seconds
+  void _handleDebugTap() {
+    final now = DateTime.now();
+    if (_lastTapTime != null && now.difference(_lastTapTime!).inSeconds > 3) {
+      _debugTapCount = 0;
+    }
+    _lastTapTime = now;
+    _debugTapCount++;
+
+    if (_debugTapCount >= 5) {
+      _debugTapCount = 0;
+      _showDebugBypassDialog();
+    }
+  }
+
+  void _showDebugBypassDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('وضع التطوير'),
+        content: const Text('هل تريد تجاوز تسجيل الدخول والذهاب للشاشة الرئيسية؟'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('إلغاء'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              context.go(AppRoutes.home);
+            },
+            child: const Text('تجاوز'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -193,27 +235,30 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             children: [
               const SizedBox(height: 32),
 
-              // Logo & Title
-              const Column(
-                children: [
-                  Text(
-                    'GO-ON',
-                    style: TextStyle(
-                      fontSize: 48,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.primary,
+              // Logo & Title - Tap 5 times for debug bypass
+              GestureDetector(
+                onTap: _handleDebugTap,
+                child: const Column(
+                  children: [
+                    Text(
+                      'GO-ON',
+                      style: TextStyle(
+                        fontSize: 48,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.primary,
+                      ),
                     ),
-                  ),
-                  SizedBox(height: 8),
-                  Text(
-                    'مصر تتحرك',
-                    style: TextStyle(
-                      fontSize: 18,
-                      color: AppColors.secondary,
-                      fontWeight: FontWeight.w600,
+                    SizedBox(height: 8),
+                    Text(
+                      'مصر تتحرك',
+                      style: TextStyle(
+                        fontSize: 18,
+                        color: AppColors.secondary,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
 
               const SizedBox(height: 40),
