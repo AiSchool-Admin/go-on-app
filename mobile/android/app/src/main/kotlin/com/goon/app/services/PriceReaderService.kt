@@ -6160,7 +6160,25 @@ class PriceReaderService : AccessibilityService() {
                     return true
                 }
             } else {
-                Log.w(TAG, "📍 No address card found on Select Address screen")
+                Log.w(TAG, "📍 No address card found on Select Address screen - trying position tap fallback...")
+
+                // FALLBACK: Tap at a fixed position where first suggestion usually appears
+                // First suggestion is typically at about 45-55% from top of screen
+                try {
+                    val displayMetrics = resources.displayMetrics
+                    val screenWidth = displayMetrics.widthPixels
+                    val screenHeight = displayMetrics.heightPixels
+                    val tapX = screenWidth / 2f
+                    val tapY = screenHeight * 0.50f  // 50% from top
+
+                    Log.i(TAG, "📍 Fallback: Tapping at ($tapX, $tapY) - center, 50% down")
+                    clickAtPositionWithDuration(tapX, tapY, 150)
+                    lastDiDiSelectAddressClickTime = currentTime
+                    Thread.sleep(500)
+                    return true
+                } catch (e: Exception) {
+                    Log.e(TAG, "📍 Fallback tap failed: ${e.message}")
+                }
             }
         }
 
@@ -6251,21 +6269,33 @@ class PriceReaderService : AccessibilityService() {
         // Skip UI elements that are not address cards
         val skipTexts = listOf(
             "Pin your location", "Select Address", "Powered by",
-            "Back", "Where to", "Add stop", "Pickup point", "Search"
+            "Back", "Add stop", "Pickup point", "Home", "Work", "Favou"
         )
-        val shouldSkip = skipTexts.any { combinedText.contains(it, ignoreCase = true) }
+        // Don't skip if text is long (might be address container)
+        val shouldSkip = skipTexts.any { combinedText.contains(it, ignoreCase = true) } &&
+                         combinedText.length < 80
 
-        if (!shouldSkip && combinedText.length > 15) {
+        if (!shouldSkip && combinedText.length > 10) {
             // Check if it looks like an address card
-            // Address cards have: location name AND (distance OR governorate)
-            val hasDistance = combinedText.contains("km") || combinedText.contains("كم") || combinedText.contains("m")
+            // Address cards have: location name AND (distance OR governorate OR postal code)
+            val hasDistance = combinedText.contains("km") || combinedText.contains("كم") ||
+                              combinedText.contains(" m ") || combinedText.contains("متر")
             val hasLocation = combinedText.contains("محافظة") || combinedText.contains("مصر") ||
                               combinedText.contains("العبور") || combinedText.contains("القاهرة") ||
                               combinedText.contains("الجيزة") || combinedText.contains("Egypt") ||
-                              combinedText.contains("شارع") || combinedText.contains("الحي")
+                              combinedText.contains("شارع") || combinedText.contains("الحي") ||
+                              combinedText.contains("Governorate") || combinedText.contains("Obour") ||
+                              combinedText.contains("Cairo") || combinedText.contains("Giza") ||
+                              combinedText.contains("Qalyubia") || combinedText.contains("القليوبية") ||
+                              combinedText.contains("Carrefour") || combinedText.contains("كارفور") ||
+                              combinedText.contains("Nursery") || combinedText.contains("Stars")
+            // Check for postal code pattern (6-7 digits)
+            val hasPostalCode = Regex("\\d{6,7}").containsMatchIn(combinedText)
+            // Check for Plus Code pattern (e.g., 5FP7+XX3)
+            val hasPlusCode = Regex("[A-Z0-9]{4,}\\+[A-Z0-9]{2,}").containsMatchIn(combinedText)
 
-            // Must have EITHER distance OR location indicator (more flexible)
-            if (hasDistance || hasLocation) {
+            // Must have EITHER distance OR location indicator OR postal code OR plus code
+            if (hasDistance || hasLocation || hasPostalCode || hasPlusCode) {
                 // Get bounds to verify it's a visible card (not tiny or off-screen)
                 val rect = android.graphics.Rect()
                 node.getBoundsInScreen(rect)
