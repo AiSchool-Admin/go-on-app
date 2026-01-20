@@ -6310,10 +6310,14 @@ class PriceReaderService : AccessibilityService() {
                 val rect = android.graphics.Rect()
                 node.getBoundsInScreen(rect)
 
+                // Debug: Log all potential matches
+                Log.d(TAG, "📍 Potential match: '${combinedText.take(40)}' Y=${rect.top} size=${rect.width()}x${rect.height()}")
+
                 // Valid card should:
                 // 1. Have reasonable size (at least 100x40 pixels)
-                // 2. Be below the input fields area (Y > 350 to skip input fields at top)
-                if (rect.width() > 100 && rect.height() > 40 && rect.top > 350) {
+                // 2. Be below the header area (Y > 150 to skip title/header)
+                // 3. NOT be the coordinate input (handled by isRawCoordinates check above)
+                if (rect.width() > 100 && rect.height() > 30 && rect.top > 150) {
                     Log.i(TAG, "📍 Found DiDi address text: '${combinedText.take(50)}...' bounds=$rect clickable=${node.isClickable}")
 
                     // If this node is clickable, return it
