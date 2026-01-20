@@ -14,8 +14,21 @@ final notificationServiceProvider = Provider<NotificationService>((ref) {
 /// Background message handler - must be top-level function
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  await Firebase.initializeApp();
-  AppLogger.i('Handling background message: ${message.messageId}', 'FCM');
+  try {
+    await Firebase.initializeApp();
+    AppLogger.i('Handling background message: ${message.messageId}', 'FCM');
+  } catch (e) {
+    debugPrint('Background handler error: $e');
+  }
+}
+
+/// Check if Firebase is properly initialized
+bool _isFirebaseInitialized() {
+  try {
+    return Firebase.apps.isNotEmpty;
+  } catch (e) {
+    return false;
+  }
 }
 
 /// GO-ON Notification Service
@@ -56,25 +69,54 @@ class NotificationService {
     }
 
     try {
-      // Initialize Firebase Messaging background handler
-      FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
-
-      // Initialize local notifications
+      // Initialize local notifications first (always works)
       await _initializeLocalNotifications();
 
-      // Request permissions
-      await _requestPermissions();
+      // Only setup Firebase if it's properly initialized
+      if (_isFirebaseInitialized()) {
+        try {
+          // Initialize Firebase Messaging background handler
+          FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
-      // Setup message handlers
-      _setupMessageHandlers();
+          // Request permissions
+          await _requestPermissions();
 
-      // Get FCM token
-      await _getFCMToken();
+          // Setup message handlers
+          _setupMessageHandlers();
+
+          // Get FCM token
+          await _getFCMToken();
+
+          AppLogger.i('FCM initialized successfully', 'Notification');
+        } catch (e) {
+          AppLogger.w('FCM not available, using local notifications only: $e', 'Notification');
+        }
+      } else {
+        AppLogger.w('Firebase not initialized, using local notifications only', 'Notification');
+        // Request local notification permissions only
+        await _requestLocalNotificationPermission();
+      }
 
       _initialized = true;
       AppLogger.i('NotificationService initialized successfully', 'Notification');
     } catch (e, stackTrace) {
       AppLogger.e('Failed to initialize NotificationService', e, stackTrace, 'Notification');
+    }
+  }
+
+  /// Request local notification permission only (when Firebase is not available)
+  static Future<void> _requestLocalNotificationPermission() async {
+    final androidPlugin =
+        _localNotifications.resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
+
+    if (androidPlugin != null) {
+      final granted = await androidPlugin.requestNotificationsPermission();
+      AppLogger.permission(
+        'Local notification permission',
+        permissionType: 'local_notification',
+        granted: granted ?? false,
+      );
     }
   }
 
@@ -422,19 +464,35 @@ class NotificationService {
 
   /// Get FCM token (for backend registration)
   static Future<String?> getToken() async {
-    return await _firebaseMessaging.getToken();
+    if (!_isFirebaseInitialized()) return null;
+    try {
+      return await _firebaseMessaging.getToken();
+    } catch (e) {
+      AppLogger.w('Failed to get FCM token: $e', 'Notification');
+      return null;
+    }
   }
 
   /// Subscribe to topic for group notifications
   static Future<void> subscribeToTopic(String topic) async {
-    await _firebaseMessaging.subscribeToTopic(topic);
-    AppLogger.d('Subscribed to topic: $topic', 'Notification');
+    if (!_isFirebaseInitialized()) return;
+    try {
+      await _firebaseMessaging.subscribeToTopic(topic);
+      AppLogger.d('Subscribed to topic: $topic', 'Notification');
+    } catch (e) {
+      AppLogger.w('Failed to subscribe to topic: $e', 'Notification');
+    }
   }
 
   /// Unsubscribe from topic
   static Future<void> unsubscribeFromTopic(String topic) async {
-    await _firebaseMessaging.unsubscribeFromTopic(topic);
-    AppLogger.d('Unsubscribed from topic: $topic', 'Notification');
+    if (!_isFirebaseInitialized()) return;
+    try {
+      await _firebaseMessaging.unsubscribeFromTopic(topic);
+      AppLogger.d('Unsubscribed from topic: $topic', 'Notification');
+    } catch (e) {
+      AppLogger.w('Failed to unsubscribe from topic: $e', 'Notification');
+    }
   }
 
   // Helper methods
