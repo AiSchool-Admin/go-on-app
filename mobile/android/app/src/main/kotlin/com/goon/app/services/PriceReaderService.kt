@@ -6269,13 +6269,18 @@ class PriceReaderService : AccessibilityService() {
         // Skip UI elements that are not address cards
         val skipTexts = listOf(
             "Pin your location", "Select Address", "Powered by",
-            "Back", "Add stop", "Pickup point", "Home", "Work", "Favou"
+            "Back", "Add stop", "Pickup point", "Home", "Work", "Favou", "Where to"
         )
         // Don't skip if text is long (might be address container)
         val shouldSkip = skipTexts.any { combinedText.contains(it, ignoreCase = true) } &&
                          combinedText.length < 80
 
-        if (!shouldSkip && combinedText.length > 10) {
+        // CRITICAL: Skip raw GPS coordinates (input field content)
+        // GPS coordinates look like "30.172909, 31.459723" - two decimal numbers
+        val isRawCoordinates = Regex("^\\s*\\d{1,3}\\.\\d+\\s*,\\s*\\d{1,3}\\.\\d+\\s*$").containsMatchIn(combinedText) ||
+                               Regex("\\d{2}\\.\\d{6,}").containsMatchIn(combinedText)  // High precision decimals
+
+        if (!shouldSkip && !isRawCoordinates && combinedText.length > 10) {
             // Check if it looks like an address card
             // Address cards have: location name AND (distance OR governorate OR postal code)
             val hasDistance = combinedText.contains("km") || combinedText.contains("كم") ||
@@ -6294,8 +6299,8 @@ class PriceReaderService : AccessibilityService() {
                               combinedText.contains("Nasr City") || combinedText.contains("مدينة نصر") ||
                               combinedText.contains("6th of October") || combinedText.contains("أكتوبر") ||
                               combinedText.contains("Sheikh Zayed") || combinedText.contains("الشيخ زايد")
-            // Check for postal code pattern (6-7 digits)
-            val hasPostalCode = Regex("\\d{6,7}").containsMatchIn(combinedText)
+            // Check for postal code pattern (6-7 digits) - but NOT if it looks like coordinates
+            val hasPostalCode = Regex("\\b\\d{6,7}\\b").containsMatchIn(combinedText) && !isRawCoordinates
             // Check for Plus Code pattern (e.g., 5FP7+XX3)
             val hasPlusCode = Regex("[A-Z0-9]{4,}\\+[A-Z0-9]{2,}").containsMatchIn(combinedText)
 
@@ -6305,8 +6310,10 @@ class PriceReaderService : AccessibilityService() {
                 val rect = android.graphics.Rect()
                 node.getBoundsInScreen(rect)
 
-                // Valid card should have reasonable size (at least 100x40 pixels)
-                if (rect.width() > 100 && rect.height() > 40) {
+                // Valid card should:
+                // 1. Have reasonable size (at least 100x40 pixels)
+                // 2. Be below the input fields area (Y > 350 to skip input fields at top)
+                if (rect.width() > 100 && rect.height() > 40 && rect.top > 350) {
                     Log.i(TAG, "📍 Found DiDi address text: '${combinedText.take(50)}...' bounds=$rect clickable=${node.isClickable}")
 
                     // If this node is clickable, return it
