@@ -38,11 +38,6 @@ subprojects {
 subprojects {
     project.evaluationDependsOn(':app')
 
-    // Exclude flutter_local_notifications if pulled in as transitive dependency
-    project.configurations.all {
-        exclude group: 'com.dexterous.flutterlocalnotifications', module: 'flutter_local_notifications'
-    }
-
     // Force compatible versions of androidx libraries
     project.configurations.all {
         resolutionStrategy {
