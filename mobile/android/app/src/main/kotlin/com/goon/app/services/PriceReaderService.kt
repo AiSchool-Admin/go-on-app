@@ -1740,7 +1740,100 @@ class PriceReaderService : AccessibilityService() {
         }
         Log.i(TAG, "🚕 === END OF VISIBLE TEXT ===")
 
-        // Check if we're on the HOME screen (need to click "Where to?" first)
+        // PRIORITY 1: Check if we're on "Select Address" screen FIRST
+        // This screen has both pickup field (top) and "Where to?" (bottom)
+        val isOnSelectAddressScreen = allText.any { text ->
+            val lower = text.lowercase()
+            lower.contains("select address") ||
+            lower.contains("اختر العنوان") ||
+            lower.contains("اختار العنوان") ||
+            lower.contains("选择地址")  // Chinese
+        }
+
+        if (isOnSelectAddressScreen) {
+            Log.i(TAG, "🚕 [DiDi] On SELECT ADDRESS screen - looking for pickup field (top field)...")
+
+            // On this screen, the pickup field is the TOP field (green dot)
+            // It shows the current location name like "السيدة نفيسة"
+            // We need to click it to edit it
+
+            // Strategy 1: Find all EditText fields and click the TOP one (pickup)
+            val editTexts = mutableListOf<AccessibilityNodeInfo>()
+            findAllEditTexts(rootNode, editTexts)
+            Log.i(TAG, "🚕 Found ${editTexts.size} EditText fields")
+
+            if (editTexts.isNotEmpty()) {
+                // Sort by Y position - pickup field is at the TOP
+                editTexts.sortWith { a, b ->
+                    val rectA = android.graphics.Rect()
+                    val rectB = android.graphics.Rect()
+                    a.getBoundsInScreen(rectA)
+                    b.getBoundsInScreen(rectB)
+                    rectA.top.compareTo(rectB.top)
+                }
+
+                // Get the TOP EditText (should be pickup field)
+                val pickupField = editTexts[0]
+                val rect = android.graphics.Rect()
+                pickupField.getBoundsInScreen(rect)
+                val currentText = pickupField.text?.toString() ?: ""
+                Log.i(TAG, "🚕 Top EditText at y=${rect.top}: '$currentText'")
+
+                // Click to focus and edit
+                pickupField.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+                pickupField.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                Log.i(TAG, "🚕 ✓ Clicked top pickup field!")
+
+                editTexts.forEach { it.recycle() }
+                Thread.sleep(TimingConfig.clickDelay)
+                return true
+            }
+
+            // Strategy 2: Find by location text patterns (the pickup shows location name)
+            // The pickup field might show text like "السيدة نفيسة", "Your location", etc.
+            // We look for clickable items that are NOT "Where to?"
+            Log.i(TAG, "🚕 Strategy 2: Looking for clickable location text...")
+            val clickableNodes = mutableListOf<Pair<AccessibilityNodeInfo, android.graphics.Rect>>()
+            findClickableTextNodes(rootNode, clickableNodes)
+
+            // Filter out "Where to?" and sort by Y position
+            val pickupCandidates = clickableNodes.filter { (node, _) ->
+                val text = (node.text?.toString() ?: "") + (node.contentDescription?.toString() ?: "")
+                !text.lowercase().contains("where to") &&
+                !text.contains("إلى أين") &&
+                text.isNotEmpty()
+            }.sortedBy { it.second.top }
+
+            if (pickupCandidates.isNotEmpty()) {
+                val (pickupNode, pickupRect) = pickupCandidates[0]
+                Log.i(TAG, "🚕 Found pickup candidate at y=${pickupRect.top}")
+                pickupNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                Log.i(TAG, "🚕 ✓ Clicked pickup candidate!")
+                clickableNodes.forEach { it.first.recycle() }
+                return true
+            }
+
+            // Strategy 3: Tap at fixed position (top input area ~15% from top)
+            Log.i(TAG, "🚕 Strategy 3: Tapping at top input area...")
+            try {
+                val displayMetrics = resources.displayMetrics
+                val screenWidth = displayMetrics.widthPixels
+                val screenHeight = displayMetrics.heightPixels
+                val tapX = screenWidth / 2f
+                val tapY = screenHeight * 0.15f  // 15% from top (where pickup field is)
+                Log.i(TAG, "🚕 Tapping at ($tapX, $tapY)")
+                clickAtPositionWithDuration(tapX, tapY, 150)
+                Thread.sleep(TimingConfig.clickDelay)
+                return true
+            } catch (e: Exception) {
+                Log.e(TAG, "🚕 Tap failed: ${e.message}")
+            }
+
+            clickableNodes.forEach { it.first.recycle() }
+            return false
+        }
+
+        // PRIORITY 2: Check if we're on the HOME screen (need to click "Where to?" first)
         // EXTENDED patterns: English, Arabic, Chinese (DiDi is 滴滴出行)
         val isOnHomeScreen = allText.any { text ->
             val lower = text.lowercase()
@@ -3946,6 +4039,30 @@ class PriceReaderService : AccessibilityService() {
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
             findAllEditTexts(child, results)
+            child.recycle()
+        }
+    }
+
+    /**
+     * Find all clickable nodes with text content
+     * Returns pairs of (node, bounds) for sorting by position
+     */
+    private fun findClickableTextNodes(
+        node: AccessibilityNodeInfo,
+        results: MutableList<Pair<AccessibilityNodeInfo, android.graphics.Rect>>
+    ) {
+        val text = node.text?.toString() ?: ""
+        val desc = node.contentDescription?.toString() ?: ""
+
+        if ((text.isNotEmpty() || desc.isNotEmpty()) && node.isClickable) {
+            val rect = android.graphics.Rect()
+            node.getBoundsInScreen(rect)
+            results.add(Pair(AccessibilityNodeInfo.obtain(node), rect))
+        }
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            findClickableTextNodes(child, results)
             child.recycle()
         }
     }
