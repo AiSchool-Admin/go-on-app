@@ -6280,6 +6280,7 @@ class PriceReaderService : AccessibilityService() {
             // Address cards have: location name AND (distance OR governorate OR postal code)
             val hasDistance = combinedText.contains("km") || combinedText.contains("كم") ||
                               combinedText.contains(" m ") || combinedText.contains("متر")
+            // General location indicators only (governorates, cities, districts)
             val hasLocation = combinedText.contains("محافظة") || combinedText.contains("مصر") ||
                               combinedText.contains("العبور") || combinedText.contains("القاهرة") ||
                               combinedText.contains("الجيزة") || combinedText.contains("Egypt") ||
@@ -6287,8 +6288,12 @@ class PriceReaderService : AccessibilityService() {
                               combinedText.contains("Governorate") || combinedText.contains("Obour") ||
                               combinedText.contains("Cairo") || combinedText.contains("Giza") ||
                               combinedText.contains("Qalyubia") || combinedText.contains("القليوبية") ||
-                              combinedText.contains("Carrefour") || combinedText.contains("كارفور") ||
-                              combinedText.contains("Nursery") || combinedText.contains("Stars")
+                              combinedText.contains("Alexandria") || combinedText.contains("الإسكندرية") ||
+                              combinedText.contains("Maadi") || combinedText.contains("المعادي") ||
+                              combinedText.contains("Heliopolis") || combinedText.contains("مصر الجديدة") ||
+                              combinedText.contains("Nasr City") || combinedText.contains("مدينة نصر") ||
+                              combinedText.contains("6th of October") || combinedText.contains("أكتوبر") ||
+                              combinedText.contains("Sheikh Zayed") || combinedText.contains("الشيخ زايد")
             // Check for postal code pattern (6-7 digits)
             val hasPostalCode = Regex("\\d{6,7}").containsMatchIn(combinedText)
             // Check for Plus Code pattern (e.g., 5FP7+XX3)
