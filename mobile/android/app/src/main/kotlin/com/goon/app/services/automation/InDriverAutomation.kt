@@ -2,6 +2,7 @@ package com.goon.app.services.automation
 
 import android.accessibilityservice.AccessibilityService
 import android.graphics.Rect
+import android.os.Bundle
 import android.view.accessibility.AccessibilityNodeInfo
 import com.goon.app.services.config.AppConstants
 import com.goon.app.services.config.TimingConfig
