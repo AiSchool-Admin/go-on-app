@@ -386,6 +386,16 @@ class MainActivity : FlutterActivity() {
      */
     private fun openApp(packageName: String): Boolean {
         return try {
+            // Special handling for DiDi - use explicit activity
+            if (packageName == PriceReaderService.DIDI_PACKAGE) {
+                val intent = Intent()
+                intent.setClassName(packageName, "com.didi.sdk.splash.SplashActivity")
+                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                startActivity(intent)
+                Log.i(TAG, "✓ Opened DiDi with explicit SplashActivity")
+                return true
+            }
+
             val intent = packageManager.getLaunchIntentForPackage(packageName)
             if (intent != null) {
                 startActivity(intent)
