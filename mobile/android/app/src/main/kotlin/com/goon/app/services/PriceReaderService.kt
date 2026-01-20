@@ -1798,9 +1798,9 @@ class PriceReaderService : AccessibilityService() {
                         parent.recycle()
                     }
 
-                    // Strategy 3: Gesture tap at center
-                    Log.i(TAG, "🚕 Strategy 3: gesture tap at center...")
-                    gestureAtNodeCenter(node)
+                    // Strategy 3: Gesture tap at center (100ms)
+                    Log.i(TAG, "🚕 Strategy 3: gesture tap at center (100ms)...")
+                    clickAtPosition(rect.centerX().toFloat(), rect.centerY().toFloat())
                     clickAttempted = true
                     Thread.sleep(TimingConfig.animationWait)
 
