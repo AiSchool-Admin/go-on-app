@@ -419,9 +419,8 @@ class PriceReaderService : AccessibilityService() {
 
             when (automationState) {
                 AutomationState.WAITING_FOR_APP -> {
-                    // For InDriver and Careem: enter PICKUP first, then destination
+                    // For InDriver, Careem, and DiDi: enter PICKUP first, then destination
                     // This ensures the custom pickup location from GO-ON is used, not the current GPS location
-                    // For DiDi: Skip pickup (uses current GPS automatically) and go to destination directly
                     if (packageName == INDRIVER_PACKAGE) {
                         Log.i(TAG, "🤖 ✓ InDriver active, transitioning to FINDING_PICKUP_FIELD...")
                         automationState = AutomationState.FINDING_PICKUP_FIELD
@@ -429,9 +428,8 @@ class PriceReaderService : AccessibilityService() {
                         Log.i(TAG, "🤖 ✓ Careem active, transitioning to FINDING_PICKUP_FIELD (PICKUP FIRST flow)...")
                         automationState = AutomationState.FINDING_PICKUP_FIELD
                     } else if (packageName == DIDI_PACKAGE) {
-                        // DiDi uses current GPS location automatically - skip pickup and enter destination directly
-                        Log.i(TAG, "🤖 ✓ DiDi active, transitioning to FINDING_DESTINATION_FIELD (uses GPS for pickup)...")
-                        automationState = AutomationState.FINDING_DESTINATION_FIELD
+                        Log.i(TAG, "🤖 ✓ DiDi active, transitioning to FINDING_PICKUP_FIELD (PICKUP FIRST flow)...")
+                        automationState = AutomationState.FINDING_PICKUP_FIELD
                     } else {
                         Log.i(TAG, "🤖 ✓ App is active, transitioning to FINDING_DESTINATION_FIELD...")
                         automationState = AutomationState.FINDING_DESTINATION_FIELD
