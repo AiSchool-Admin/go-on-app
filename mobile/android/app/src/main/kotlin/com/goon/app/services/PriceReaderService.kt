@@ -6160,10 +6160,74 @@ class PriceReaderService : AccessibilityService() {
                     return true
                 }
             } else {
-                Log.w(TAG, "📍 No address card found on Select Address screen - trying position tap fallback...")
+                Log.w(TAG, "📍 No address card found on Select Address screen")
 
-                // FALLBACK: Tap at a fixed position where first suggestion usually appears
-                // First suggestion is typically at about 45-55% from top of screen
+                // FALLBACK 1: Try to click "Pin your location on the map"
+                // This is the primary option when raw GPS coordinates don't produce suggestions
+                val pinLocationTexts = listOf(
+                    "Pin your location on the map",
+                    "Pin your location",
+                    "حدد موقعك على الخريطة",
+                    "حدد موقعك",
+                    "تحديد الموقع"
+                )
+
+                for (pinText in pinLocationTexts) {
+                    val pinNodes = rootNode.findAccessibilityNodeInfosByText(pinText)
+                    Log.i(TAG, "📍 Looking for '$pinText' - found ${pinNodes.size} nodes")
+
+                    for (node in pinNodes) {
+                        val nodeText = getNodeText(node)
+                        Log.i(TAG, "📍 Found pin location node: '${nodeText.take(50)}'")
+
+                        // Try direct click first
+                        if (node.isClickable) {
+                            if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                                Log.i(TAG, "📍 ✓ Clicked 'Pin your location' directly")
+                                node.recycle()
+                                lastDiDiSelectAddressClickTime = currentTime
+                                return true
+                            }
+                        }
+
+                        // Try clicking parent (up to 3 levels)
+                        var parent: AccessibilityNodeInfo? = node.parent
+                        for (level in 1..3) {
+                            if (parent == null) break
+                            if (parent.isClickable) {
+                                if (parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                                    Log.i(TAG, "📍 ✓ Clicked 'Pin your location' parent at level $level")
+                                    parent.recycle()
+                                    node.recycle()
+                                    lastDiDiSelectAddressClickTime = currentTime
+                                    return true
+                                }
+                            }
+                            val next = parent.parent
+                            parent.recycle()
+                            parent = next
+                        }
+
+                        // Try gesture tap on the node
+                        val rect = android.graphics.Rect()
+                        node.getBoundsInScreen(rect)
+                        if (rect.width() > 50 && rect.height() > 20) {
+                            val tapX = rect.centerX().toFloat()
+                            val tapY = rect.centerY().toFloat()
+                            Log.i(TAG, "📍 Trying gesture tap on 'Pin your location' at ($tapX, $tapY)")
+                            clickAtPositionWithDuration(tapX, tapY, 150)
+                            node.recycle()
+                            lastDiDiSelectAddressClickTime = currentTime
+                            Thread.sleep(300)
+                            return true
+                        }
+
+                        node.recycle()
+                    }
+                }
+
+                // FALLBACK 2: Position tap at 50% of screen
+                Log.w(TAG, "📍 'Pin your location' not found - trying position tap fallback...")
                 try {
                     val displayMetrics = resources.displayMetrics
                     val screenWidth = displayMetrics.widthPixels
