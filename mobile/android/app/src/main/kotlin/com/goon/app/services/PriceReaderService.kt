@@ -1764,13 +1764,15 @@ class PriceReaderService : AccessibilityService() {
                     node.getBoundsInScreen(rect)
                     Log.i(TAG, "🚕 Found '$searchText' at $rect - trying multiple click strategies...")
 
-                    // Strategy 1: Try smartClick (ACTION_CLICK on node or parents)
-                    Log.i(TAG, "🚕 Strategy 1: smartClick...")
-                    if (smartClick(node)) {
-                        Log.i(TAG, "🚕 ✓ smartClick succeeded!")
-                        Thread.sleep(TimingConfig.animationWait * 2)
-                        nodes.forEach { it.recycle() }
-                        return false
+                    // Try ALL strategies - don't return early, gesture dispatch "success" doesn't mean button responded
+                    var clickAttempted = false
+
+                    // Strategy 1: Try ACTION_CLICK directly on node
+                    Log.i(TAG, "🚕 Strategy 1: ACTION_CLICK on node...")
+                    if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        Log.i(TAG, "🚕 ✓ ACTION_CLICK on node succeeded!")
+                        clickAttempted = true
+                        Thread.sleep(TimingConfig.animationWait)
                     }
 
                     // Strategy 2: Try clicking the parent (Button container)
@@ -1779,10 +1781,8 @@ class PriceReaderService : AccessibilityService() {
                     if (parent != null) {
                         if (parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
                             Log.i(TAG, "🚕 ✓ Parent click succeeded!")
-                            Thread.sleep(TimingConfig.animationWait * 2)
-                            parent.recycle()
-                            nodes.forEach { it.recycle() }
-                            return false
+                            clickAttempted = true
+                            Thread.sleep(TimingConfig.animationWait)
                         }
 
                         // Try grandparent
@@ -1790,22 +1790,37 @@ class PriceReaderService : AccessibilityService() {
                         if (grandparent != null) {
                             if (grandparent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
                                 Log.i(TAG, "🚕 ✓ Grandparent click succeeded!")
-                                Thread.sleep(TimingConfig.animationWait * 2)
-                                grandparent.recycle()
-                                parent.recycle()
-                                nodes.forEach { it.recycle() }
-                                return false
+                                clickAttempted = true
+                                Thread.sleep(TimingConfig.animationWait)
                             }
                             grandparent.recycle()
                         }
                         parent.recycle()
                     }
 
-                    // Strategy 3: Gesture tap with longer duration
-                    Log.i(TAG, "🚕 Strategy 3: long gesture tap (200ms)...")
+                    // Strategy 3: Gesture tap at center
+                    Log.i(TAG, "🚕 Strategy 3: gesture tap at center...")
+                    gestureAtNodeCenter(node)
+                    clickAttempted = true
+                    Thread.sleep(TimingConfig.animationWait)
+
+                    // Strategy 4: Gesture tap with longer duration (200ms)
+                    Log.i(TAG, "🚕 Strategy 4: long gesture tap (200ms)...")
                     clickAtPositionWithDuration(rect.centerX().toFloat(), rect.centerY().toFloat(), 200)
-                    Thread.sleep(TimingConfig.animationWait * 2)
+                    clickAttempted = true
+                    Thread.sleep(TimingConfig.animationWait)
+
+                    // Strategy 5: Try clicking slightly above center (where text might be)
+                    Log.i(TAG, "🚕 Strategy 5: gesture tap at upper area...")
+                    val upperY = rect.top + (rect.height() * 0.3f)
+                    clickAtPositionWithDuration(rect.centerX().toFloat(), upperY, 150)
+                    clickAttempted = true
+
                     nodes.forEach { it.recycle() }
+
+                    // Wait for screen to change, then return false to check if we moved to search screen
+                    Thread.sleep(TimingConfig.animationWait * 2)
+                    Log.i(TAG, "🚕 Tried all click strategies, waiting for screen change...")
                     return false
                 }
             }
