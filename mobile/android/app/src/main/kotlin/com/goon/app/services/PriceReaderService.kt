@@ -1752,6 +1752,7 @@ class PriceReaderService : AccessibilityService() {
             Log.i(TAG, "🚕 [DiDi] On HOME screen - clicking 'Where to?' to open search...")
 
             // Click "Where to?" to open the search screen
+            // DiDi requires ACTION_CLICK on the node, not gesture tap
             val whereToTexts = listOf("Where to?", "Where to", "إلى أين", "إلى أين؟", "Tap to enter your destination")
             for (searchText in whereToTexts) {
                 val nodes = rootNode.findAccessibilityNodeInfosByText(searchText)
@@ -1759,11 +1760,50 @@ class PriceReaderService : AccessibilityService() {
                     val node = nodes[0]
                     val rect = android.graphics.Rect()
                     node.getBoundsInScreen(rect)
-                    Log.i(TAG, "🚕 Found '$searchText' at $rect - clicking...")
-                    clickAtPosition(rect.centerX().toFloat(), rect.centerY().toFloat())
-                    Thread.sleep(TimingConfig.animationWait * 2)  // Wait longer for search screen to open
+                    Log.i(TAG, "🚕 Found '$searchText' at $rect - trying multiple click strategies...")
+
+                    // Strategy 1: Try smartClick (ACTION_CLICK on node or parents)
+                    Log.i(TAG, "🚕 Strategy 1: smartClick...")
+                    if (smartClick(node)) {
+                        Log.i(TAG, "🚕 ✓ smartClick succeeded!")
+                        Thread.sleep(TimingConfig.animationWait * 2)
+                        nodes.forEach { it.recycle() }
+                        return false
+                    }
+
+                    // Strategy 2: Try clicking the parent (Button container)
+                    Log.i(TAG, "🚕 Strategy 2: clicking parent...")
+                    val parent = node.parent
+                    if (parent != null) {
+                        if (parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                            Log.i(TAG, "🚕 ✓ Parent click succeeded!")
+                            Thread.sleep(TimingConfig.animationWait * 2)
+                            parent.recycle()
+                            nodes.forEach { it.recycle() }
+                            return false
+                        }
+
+                        // Try grandparent
+                        val grandparent = parent.parent
+                        if (grandparent != null) {
+                            if (grandparent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                                Log.i(TAG, "🚕 ✓ Grandparent click succeeded!")
+                                Thread.sleep(TimingConfig.animationWait * 2)
+                                grandparent.recycle()
+                                parent.recycle()
+                                nodes.forEach { it.recycle() }
+                                return false
+                            }
+                            grandparent.recycle()
+                        }
+                        parent.recycle()
+                    }
+
+                    // Strategy 3: Gesture tap with longer duration
+                    Log.i(TAG, "🚕 Strategy 3: long gesture tap (200ms)...")
+                    clickAtPositionWithDuration(rect.centerX().toFloat(), rect.centerY().toFloat(), 200)
+                    Thread.sleep(TimingConfig.animationWait * 2)
                     nodes.forEach { it.recycle() }
-                    // Return FALSE - we clicked "Where to?" but still need to find and click the pickup field
                     return false
                 }
             }
