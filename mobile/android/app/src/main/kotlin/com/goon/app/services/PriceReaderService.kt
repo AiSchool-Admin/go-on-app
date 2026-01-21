@@ -6245,6 +6245,9 @@ class PriceReaderService : AccessibilityService() {
 
                             if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
                                 Log.i(TAG, "📍 ✓ Clicked 'Where to?' field directly")
+                                Log.i(TAG, "📍 ✓ Transitioning to ENTERING_DESTINATION to enter destination text...")
+                                automationState = AutomationState.ENTERING_DESTINATION
+                                automationRetries = 0
                                 node.recycle()
                                 lastDiDiSelectAddressClickTime = currentTime
                                 return true
@@ -6255,6 +6258,9 @@ class PriceReaderService : AccessibilityService() {
                             val tapY = rect.centerY().toFloat()
                             Log.i(TAG, "📍 Trying gesture tap on 'Where to?' at ($tapX, $tapY)")
                             clickAtPositionWithDuration(tapX, tapY, 150)
+                            Log.i(TAG, "📍 ✓ Transitioning to ENTERING_DESTINATION to enter destination text...")
+                            automationState = AutomationState.ENTERING_DESTINATION
+                            automationRetries = 0
                             node.recycle()
                             lastDiDiSelectAddressClickTime = currentTime
                             Thread.sleep(300)
