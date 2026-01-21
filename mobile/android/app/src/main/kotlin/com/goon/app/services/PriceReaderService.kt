@@ -725,8 +725,25 @@ class PriceReaderService : AccessibilityService() {
                     // For InDriver: PICKUP CONFIRMATION STRATEGY
                     // InDriver requires clicking a pickup suggestion to confirm the location
                     if (packageName == INDRIVER_PACKAGE) {
+                        val wasPickupPhaseComplete = inDriverPickupPhaseComplete
+                        val previousState = automationState
+
                         if (handleInDriverIntermediateScreens(rootNode)) {
                             Log.i(TAG, "🤖 📋 Handled InDriver intermediate screen")
+                            // If handleInDriverIntermediateScreens already transitioned state, don't overwrite
+                            if (automationState != previousState) {
+                                Log.i(TAG, "🤖 [InDriver] State already transitioned to $automationState - skipping further transitions")
+                                return
+                            }
+                        }
+
+                        // If pickup phase was just completed by clicking a suggestion, we already transitioned
+                        // This check is a safety net in case the state transition above didn't work
+                        if (!wasPickupPhaseComplete && inDriverPickupPhaseComplete) {
+                            Log.i(TAG, "🤖 [InDriver] Pickup just confirmed! Going to FINDING_DESTINATION_FIELD")
+                            automationState = AutomationState.FINDING_DESTINATION_FIELD
+                            automationStep = 0
+                            return
                         }
 
                         // If pickup phase is NOT complete, wait for suggestions then select
@@ -737,9 +754,10 @@ class PriceReaderService : AccessibilityService() {
                                 automationStep = 0
                             }
                         } else {
-                            // Pickup phase complete (destination entered), go to WAITING_FOR_PRICE
+                            // Pickup phase complete AND destination was entered, go to WAITING_FOR_PRICE
+                            // This happens when we're in WAITING_FOR_SUGGESTIONS after entering destination
                             if (automationStep > 3) {
-                                Log.i(TAG, "🤖 [InDriver] Pickup confirmed, going to WAITING_FOR_PRICE...")
+                                Log.i(TAG, "🤖 [InDriver] Destination suggestion phase - going to WAITING_FOR_PRICE...")
                                 automationState = AutomationState.WAITING_FOR_PRICE
                                 automationStep = 0
                             }
@@ -7041,16 +7059,34 @@ class PriceReaderService : AccessibilityService() {
                 }
 
                 if (clicked) {
-                    Log.i(TAG, "🗺️ ✓✓✓ CLICKED SUGGESTION '$text' - should navigate to price screen!")
+                    Log.i(TAG, "🗺️ ✓✓✓ CLICKED SUGGESTION '$text'")
                     lastInDriverClickTime = currentTime
+
+                    // CRITICAL FIX: If we just clicked a PICKUP suggestion, mark pickup phase as complete
+                    // This prevents the SELECTING_SUGGESTION state from trying to click again
+                    if (!inDriverPickupPhaseComplete) {
+                        Log.i(TAG, "🗺️ ✓✓✓ PICKUP SUGGESTION CONFIRMED! Marking pickup phase complete and going to FINDING_DESTINATION_FIELD")
+                        inDriverPickupPhaseComplete = true
+                        automationState = AutomationState.FINDING_DESTINATION_FIELD
+                        automationStep = 0
+                    } else {
+                        Log.i(TAG, "🗺️ ✓✓✓ DESTINATION SUGGESTION clicked - should navigate to price screen!")
+                    }
                     return true
                 } else {
                     Log.w(TAG, "🗺️ ✗ Could not click suggestion '$text' - trying keyboard Done as fallback...")
 
                     // FALLBACK: Try pressing keyboard "Done" key instead of clicking suggestion
                     if (pressKeyboardDone()) {
-                        Log.i(TAG, "🗺️ ✓✓✓ KEYBOARD DONE pressed - should navigate to price screen!")
+                        Log.i(TAG, "🗺️ ✓✓✓ KEYBOARD DONE pressed")
                         lastInDriverClickTime = currentTime
+                        // Also mark pickup phase complete if this is pickup confirmation
+                        if (!inDriverPickupPhaseComplete) {
+                            Log.i(TAG, "🗺️ ✓✓✓ PICKUP confirmed via keyboard Done - going to FINDING_DESTINATION_FIELD")
+                            inDriverPickupPhaseComplete = true
+                            automationState = AutomationState.FINDING_DESTINATION_FIELD
+                            automationStep = 0
+                        }
                         return true
                     }
                 }
@@ -7063,8 +7099,15 @@ class PriceReaderService : AccessibilityService() {
 
                 // FALLBACK: Try pressing keyboard "Done" key
                 if (pressKeyboardDone()) {
-                    Log.i(TAG, "🗺️ ✓✓✓ KEYBOARD DONE pressed (no suggestions) - should navigate to price screen!")
+                    Log.i(TAG, "🗺️ ✓✓✓ KEYBOARD DONE pressed (no suggestions)")
                     lastInDriverClickTime = currentTime
+                    // Also mark pickup phase complete if this is pickup confirmation
+                    if (!inDriverPickupPhaseComplete) {
+                        Log.i(TAG, "🗺️ ✓✓✓ PICKUP confirmed via keyboard Done (no suggestions) - going to FINDING_DESTINATION_FIELD")
+                        inDriverPickupPhaseComplete = true
+                        automationState = AutomationState.FINDING_DESTINATION_FIELD
+                        automationStep = 0
+                    }
                     return true
                 }
             }
