@@ -4261,9 +4261,11 @@ class PriceReaderService : AccessibilityService() {
             }
         }
 
-        // STEP 2: Enter new pickup coordinates
-        val textToEnter = "$pickupLat, $pickupLng"
-        Log.i(TAG, "🤖 STEP 2: Entering pickup coordinates: $textToEnter")
+        // STEP 2: Enter pickup ADDRESS TEXT (not coordinates!)
+        // InDriver doesn't find results for coordinates - use text address instead
+        // This allows InDriver to show real suggestions that user can select
+        val textToEnter = pickupAddress
+        Log.i(TAG, "🤖 STEP 2: Entering pickup ADDRESS: $textToEnter")
 
         val focusedNode = rootNode.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
         if (focusedNode != null) {
@@ -4281,7 +4283,7 @@ class PriceReaderService : AccessibilityService() {
             focusedNode.recycle()
 
             if (result) {
-                Log.i(TAG, "🤖 ✓ Successfully entered pickup: $textToEnter")
+                Log.i(TAG, "🤖 ✓ Successfully entered pickup address: $textToEnter")
                 return true
             } else {
                 Log.w(TAG, "🤖 ✗ ACTION_SET_TEXT failed on focused node")
