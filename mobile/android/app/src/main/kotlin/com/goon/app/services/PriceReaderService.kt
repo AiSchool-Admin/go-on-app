@@ -6855,7 +6855,7 @@ class PriceReaderService : AccessibilityService() {
                 Log.i(TAG, "🗺️   [$index] '$text'")
             }
 
-            // Filter out "اختر على الخريطة", coordinates, and similar options
+            // Filter out "اختر على الخريطة", coordinates, Google Maps attribution, and similar options
             val coordPattern = Regex("^\\d+\\.\\d+,\\s*\\d+\\.\\d+$")
             var realSuggestions = suggestions.filter { (_, text) ->
                 !text.contains("اختر على الخريطة") &&
@@ -6863,6 +6863,9 @@ class PriceReaderService : AccessibilityService() {
                 !text.contains("على الخريطة") &&
                 !text.contains("لا توجد نتائج") &&
                 !text.contains("No results") &&
+                !text.contains("خرائط Google") &&  // Exclude Google Maps attribution
+                !text.contains("Google Maps") &&   // Exclude Google Maps in English
+                text != "Google" &&                // Exclude standalone "Google"
                 !coordPattern.matches(text.trim()) &&  // Exclude coordinates like "30.123, 31.456"
                 !text.matches(Regex("^\\d+\\.\\d+.*")) &&  // Exclude text starting with decimals
                 text.length > 5  // Skip very short texts
@@ -6933,6 +6936,9 @@ class PriceReaderService : AccessibilityService() {
                 realSuggestions = suggestions.filter { (_, text) ->
                     !text.contains("اختر على الخريطة") &&
                     !text.contains("Choose on map") &&
+                    !text.contains("خرائط Google") &&  // Exclude Google Maps attribution
+                    !text.contains("Google Maps") &&   // Exclude Google Maps in English
+                    text != "Google" &&                // Exclude standalone "Google"
                     !coordPattern.matches(text.trim()) &&
                     !text.matches(Regex("^\\d+\\.\\d+.*")) &&
                     text.length > 5
