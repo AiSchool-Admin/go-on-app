@@ -6632,10 +6632,97 @@ class PriceReaderService : AccessibilityService() {
                 Log.i(TAG, "🗺️   [$index] '$text'")
             }
 
-            // Click the FIRST real suggestion
-            if (realSuggestions.isNotEmpty()) {
-                val (node, text) = realSuggestions[0]
-                Log.i(TAG, "🗺️ ✓✓✓ CLICKING FIRST SUGGESTION: '$text'")
+            // SMART SUGGESTION SELECTION: For DESTINATION suggestions, rank by keyword match and proximity
+            // This prevents selecting "البنك الوطني المصري - ماكينة الصراف الآلي" (far ATM)
+            // instead of "البنك الوطني المصري" (nearby bank)
+            val selectedSuggestion: Pair<AccessibilityNodeInfo, String>? = if (!isPickupSuggestion && realSuggestions.isNotEmpty()) {
+                // Extract keywords from destination address
+                val destKeywords = destinationAddress.split(" ").filter { it.length > 2 }
+                Log.i(TAG, "🗺️ SMART RANKING: destAddress='$destinationAddress', keywords=$destKeywords")
+
+                // Score each suggestion
+                val scoredSuggestions = realSuggestions.map { (node, text) ->
+                    var score = 0
+
+                    // 1. Keyword match score (higher = better)
+                    val matchingKeywords = destKeywords.count { keyword -> text.contains(keyword) }
+                    score += matchingKeywords * 100
+
+                    // 2. Exact match bonus (destination text is contained in suggestion)
+                    if (text.contains(destinationAddress, ignoreCase = true)) {
+                        score += 500
+                    }
+
+                    // 3. Penalty for extra text/longer suggestions (prefer shorter, more exact matches)
+                    // This avoids "البنك - ماكينة الصراف الآلي" when we want just "البنك"
+                    val extraLength = text.length - destinationAddress.length
+                    if (extraLength > 10) {
+                        score -= (extraLength - 10) * 2  // Penalty for each extra character beyond 10
+                    }
+
+                    // 4. Bonus for similar length to destination (exact match is best)
+                    val lengthDiff = kotlin.math.abs(text.length - destinationAddress.length)
+                    if (lengthDiff < 10) {
+                        score += (10 - lengthDiff) * 5
+                    }
+
+                    // 5. Parse distance from suggestion (كم = km, متر = meters)
+                    // Prefer closer distances when available
+                    val distanceKmMatch = Regex("(\\d+\\.?\\d*)\\s*كم").find(text)
+                    val distanceMMatch = Regex("(\\d+)\\s*متر").find(text)
+                    val distanceKmMatchEn = Regex("(\\d+\\.?\\d*)\\s*km", RegexOption.IGNORE_CASE).find(text)
+
+                    if (distanceKmMatch != null) {
+                        val km = distanceKmMatch.groupValues[1].toDoubleOrNull() ?: 999.0
+                        // Smaller distance = higher score (up to 200 points for close distances)
+                        score += maxOf(0, (200 - km * 20).toInt())
+                        Log.i(TAG, "🗺️   Distance parsed: ${km}km, adding ${maxOf(0, (200 - km * 20).toInt())} points")
+                    } else if (distanceMMatch != null) {
+                        val meters = distanceMMatch.groupValues[1].toDoubleOrNull() ?: 9999.0
+                        // Meters is closer, give more points
+                        score += maxOf(0, (200 - meters / 50).toInt())
+                        Log.i(TAG, "🗺️   Distance parsed: ${meters}m, adding ${maxOf(0, (200 - meters / 50).toInt())} points")
+                    } else if (distanceKmMatchEn != null) {
+                        val km = distanceKmMatchEn.groupValues[1].toDoubleOrNull() ?: 999.0
+                        score += maxOf(0, (200 - km * 20).toInt())
+                        Log.i(TAG, "🗺️   Distance parsed: ${km}km (EN), adding ${maxOf(0, (200 - km * 20).toInt())} points")
+                    }
+
+                    // 6. Penalty for generic additions like "ATM", "ماكينة الصراف", etc.
+                    val genericAdditions = listOf(
+                        "ماكينة الصراف", "صراف آلي", "ATM", "atm",
+                        "فرع", "Branch", "branch"
+                    )
+                    if (genericAdditions.any { text.contains(it, ignoreCase = true) }) {
+                        score -= 150
+                        Log.i(TAG, "🗺️   Penalty for generic addition (ATM/branch): -150")
+                    }
+
+                    Log.i(TAG, "🗺️   Score for '$text': $score (keywords=$matchingKeywords)")
+                    Triple(node, text, score)
+                }
+
+                // Sort by score descending (best match first)
+                val sortedSuggestions = scoredSuggestions.sortedByDescending { it.third }
+                Log.i(TAG, "🗺️ RANKED suggestions:")
+                sortedSuggestions.forEachIndexed { index, (_, text, score) ->
+                    Log.i(TAG, "🗺️   [$index] Score=$score: '$text'")
+                }
+
+                // Return best match
+                val best = sortedSuggestions.firstOrNull()
+                if (best != null) Pair(best.first, best.second) else null
+            } else if (realSuggestions.isNotEmpty()) {
+                // For PICKUP suggestions, just use first one (existing behavior)
+                realSuggestions[0]
+            } else {
+                null
+            }
+
+            // Click the BEST (or first) real suggestion
+            if (selectedSuggestion != null) {
+                val (node, text) = selectedSuggestion
+                Log.i(TAG, "🗺️ ✓✓✓ CLICKING BEST SUGGESTION: '$text'")
 
                 // Get bounds for smart click
                 val bounds = android.graphics.Rect()
