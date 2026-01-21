@@ -256,6 +256,8 @@ class PriceReaderService : AccessibilityService() {
 
     // Track if InDriver pickup was successfully entered
     private var inDriverPickupEntered = false
+    // Track if InDriver pickup phase is complete (suggestion selected)
+    private var inDriverPickupPhaseComplete = false
 
     // Track DiDi destination click retries (to prevent infinite loops)
     private var didiDestinationClickAttempts = 0
@@ -324,6 +326,7 @@ class PriceReaderService : AccessibilityService() {
         automationStartTime = System.currentTimeMillis()  // Track when automation started
         uberScreenReady = false  // Reset screen ready flag
         inDriverPickupEntered = false  // Reset InDriver pickup flag
+        inDriverPickupPhaseComplete = false  // Reset InDriver pickup phase complete flag
         didiDestinationClickAttempts = 0  // Reset DiDi destination click attempts
         didiSuggestionRetryCount = 0  // Reset DiDi suggestion retry counter
         didiPickupEntered = false  // Reset DiDi pickup flag (PICKUP FIRST flow)
@@ -553,10 +556,11 @@ class PriceReaderService : AccessibilityService() {
                             inDriverPickupEntered = true
                             latestPrices.remove(packageName)  // Clear any cached price
 
-                            // CRITICAL: Go DIRECTLY to destination field - don't handle suggestions yet!
-                            // We need to enter BOTH pickup and destination BEFORE clicking any suggestions
-                            Log.i(TAG, "🤖 ✓ Now going DIRECTLY to FINDING_DESTINATION_FIELD (skip suggestions)...")
-                            automationState = AutomationState.FINDING_DESTINATION_FIELD
+                            // PICKUP CONFIRMATION STRATEGY: Wait for pickup suggestions and click first one
+                            // InDriver requires selecting a pickup suggestion to confirm the location
+                            // Without this, InDriver uses a cached/saved location instead of entered coordinates
+                            Log.i(TAG, "🤖 ✓ [InDriver] Now going to WAITING_FOR_SUGGESTIONS for pickup confirmation...")
+                            automationState = AutomationState.WAITING_FOR_SUGGESTIONS
                             automationRetries = 0
                             automationStep = 0
                         } else {
@@ -718,18 +722,27 @@ class PriceReaderService : AccessibilityService() {
                     automationStep++
                     Log.i(TAG, "🤖 Waiting for suggestions (step $automationStep/3)...")
 
-                    // For InDriver: Handle intermediate screens (No Results, Map Confirmation)
-                    // Price detection is BLOCKED during automation, so we just handle UI navigation
+                    // For InDriver: PICKUP CONFIRMATION STRATEGY
+                    // InDriver requires clicking a pickup suggestion to confirm the location
                     if (packageName == INDRIVER_PACKAGE) {
                         if (handleInDriverIntermediateScreens(rootNode)) {
                             Log.i(TAG, "🤖 📋 Handled InDriver intermediate screen")
-                            // Don't transition yet - stay in this state until intermediate screens are done
                         }
-                        // Always go to WAITING_FOR_PRICE after some steps
-                        if (automationStep > 3) {
-                            Log.i(TAG, "🤖 InDriver: Going to WAITING_FOR_PRICE...")
-                            automationState = AutomationState.WAITING_FOR_PRICE
-                            automationStep = 0
+
+                        // If pickup phase is NOT complete, wait for suggestions then select
+                        if (!inDriverPickupPhaseComplete) {
+                            if (automationStep > 3) {
+                                Log.i(TAG, "🤖 [InDriver] Transitioning to SELECTING_SUGGESTION for pickup confirmation...")
+                                automationState = AutomationState.SELECTING_SUGGESTION
+                                automationStep = 0
+                            }
+                        } else {
+                            // Pickup phase complete (destination entered), go to WAITING_FOR_PRICE
+                            if (automationStep > 3) {
+                                Log.i(TAG, "🤖 [InDriver] Pickup confirmed, going to WAITING_FOR_PRICE...")
+                                automationState = AutomationState.WAITING_FOR_PRICE
+                                automationStep = 0
+                            }
                         }
                         return
                     }
@@ -790,12 +803,39 @@ class PriceReaderService : AccessibilityService() {
                 AutomationState.SELECTING_SUGGESTION -> {
                     Log.i(TAG, "🤖 Selecting first suggestion...")
 
-                    // InDriver should not reach this state (handled separately)
-                    // But if it does, just go to WAITING_FOR_PRICE
+                    // PICKUP CONFIRMATION STRATEGY for InDriver
+                    // InDriver requires clicking a pickup suggestion to confirm the entered coordinates
+                    // Without this, InDriver falls back to a cached/saved location
                     if (packageName == INDRIVER_PACKAGE) {
-                        Log.i(TAG, "🤖 InDriver: Skipping SELECTING_SUGGESTION, going to WAITING_FOR_PRICE")
-                        automationState = AutomationState.WAITING_FOR_PRICE
-                        automationStep = 0
+                        if (!inDriverPickupPhaseComplete) {
+                            // Try to click first pickup suggestion to confirm location
+                            Log.i(TAG, "🤖 [InDriver] PICKUP CONFIRMATION: Clicking first suggestion to confirm pickup location...")
+                            val selected = selectFirstSuggestion(rootNode, packageName)
+                            if (selected) {
+                                Log.i(TAG, "🤖 ✓ [InDriver] PICKUP suggestion clicked! Marking pickup phase complete.")
+                                inDriverPickupPhaseComplete = true
+                                // Now move to destination entry
+                                Log.i(TAG, "🤖 [InDriver] Now moving to FINDING_DESTINATION_FIELD...")
+                                automationState = AutomationState.FINDING_DESTINATION_FIELD
+                                automationStep = 0
+                            } else {
+                                // If no suggestion clicked, retry a few times then move on
+                                automationRetries++
+                                Log.w(TAG, "🤖 [InDriver] Failed to click pickup suggestion (attempt $automationRetries)")
+                                if (automationRetries > 5) {
+                                    Log.w(TAG, "🤖 [InDriver] Max pickup suggestion attempts - moving to destination anyway")
+                                    inDriverPickupPhaseComplete = true
+                                    automationState = AutomationState.FINDING_DESTINATION_FIELD
+                                    automationRetries = 0
+                                    automationStep = 0
+                                }
+                            }
+                        } else {
+                            // Pickup phase complete, now handle destination suggestions
+                            Log.i(TAG, "🤖 [InDriver] Pickup confirmed, going to WAITING_FOR_PRICE for destination...")
+                            automationState = AutomationState.WAITING_FOR_PRICE
+                            automationStep = 0
+                        }
                         return
                     }
 
