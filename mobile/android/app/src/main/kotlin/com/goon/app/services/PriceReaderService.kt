@@ -6226,8 +6226,46 @@ class PriceReaderService : AccessibilityService() {
                     }
                 }
 
-                // FALLBACK 2: Position tap at 50% of screen
-                Log.w(TAG, "📍 'Pin your location' not found - trying position tap fallback...")
+                // FALLBACK 2: Try to click on "Where to?" (destination field) to skip stuck pickup
+                // This helps when coordinates are entered but DiDi shows no suggestions
+                Log.w(TAG, "📍 'Pin your location' not found - trying to click 'Where to?' destination field...")
+                val whereToTexts = listOf("Where to?", "إلى أين؟", "إلى أين", "الوجهة")
+                for (whereToText in whereToTexts) {
+                    val whereToNodes = rootNode.findAccessibilityNodeInfosByText(whereToText)
+                    Log.i(TAG, "📍 Looking for '$whereToText' - found ${whereToNodes.size} nodes")
+
+                    for (node in whereToNodes) {
+                        val rect = android.graphics.Rect()
+                        node.getBoundsInScreen(rect)
+
+                        // Skip if this is the title/header (usually at top of screen, Y < 300)
+                        // We want the input field which is lower on screen
+                        if (rect.top > 150 && rect.height() > 30) {
+                            Log.i(TAG, "📍 Found 'Where to?' field at Y=${rect.top} - clicking...")
+
+                            if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                                Log.i(TAG, "📍 ✓ Clicked 'Where to?' field directly")
+                                node.recycle()
+                                lastDiDiSelectAddressClickTime = currentTime
+                                return true
+                            }
+
+                            // Try gesture tap
+                            val tapX = rect.centerX().toFloat()
+                            val tapY = rect.centerY().toFloat()
+                            Log.i(TAG, "📍 Trying gesture tap on 'Where to?' at ($tapX, $tapY)")
+                            clickAtPositionWithDuration(tapX, tapY, 150)
+                            node.recycle()
+                            lastDiDiSelectAddressClickTime = currentTime
+                            Thread.sleep(300)
+                            return true
+                        }
+                        node.recycle()
+                    }
+                }
+
+                // FALLBACK 3: Position tap at 50% of screen (last resort)
+                Log.w(TAG, "📍 'Where to?' field not found - trying position tap fallback...")
                 try {
                     val displayMetrics = resources.displayMetrics
                     val screenWidth = displayMetrics.widthPixels
