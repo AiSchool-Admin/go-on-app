@@ -558,10 +558,11 @@ class PriceReaderService : AccessibilityService() {
                             inDriverPickupEntered = true
                             latestPrices.remove(packageName)  // Clear any cached price
 
-                            // CRITICAL: Go DIRECTLY to destination field - don't handle suggestions yet!
-                            // We need to enter BOTH pickup and destination BEFORE clicking any suggestions
-                            Log.i(TAG, "🤖 ✓ Now going DIRECTLY to FINDING_DESTINATION_FIELD (skip suggestions)...")
-                            automationState = AutomationState.FINDING_DESTINATION_FIELD
+                            // CRITICAL FIX: We MUST wait for pickup suggestions and click one!
+                            // Otherwise InDriver uses cached location ("مستشفى فريد حبيب")
+                            // Go to WAITING_FOR_PICKUP_SUGGESTIONS to click the first suggestion
+                            Log.i(TAG, "🤖 ✓ Now going to WAITING_FOR_PICKUP_SUGGESTIONS to click pickup suggestion...")
+                            automationState = AutomationState.WAITING_FOR_PICKUP_SUGGESTIONS
                             automationRetries = 0
                             automationStep = 0
                         } else {
@@ -575,13 +576,35 @@ class PriceReaderService : AccessibilityService() {
                     }
                 }
 
-                // WAITING_FOR_PICKUP_SUGGESTIONS is now SKIPPED for InDriver
-                // We enter both pickup and destination first, then handle all confirmations together
+                // WAITING_FOR_PICKUP_SUGGESTIONS - InDriver needs to click pickup suggestion!
+                // This is CRITICAL to fix the cached location issue ("مستشفى فريد حبيب")
                 AutomationState.WAITING_FOR_PICKUP_SUGGESTIONS -> {
-                    // This state is kept for compatibility but should not be reached for InDriver
-                    Log.i(TAG, "🤖 [InDriver] WAITING_FOR_PICKUP_SUGGESTIONS (legacy - should not reach here)")
-                    automationState = AutomationState.FINDING_DESTINATION_FIELD
-                    automationStep = 0
+                    automationStep++
+                    Log.i(TAG, "🤖 [InDriver] WAITING_FOR_PICKUP_SUGGESTIONS (step $automationStep/5)...")
+
+                    // Use handleInDriverIntermediateScreens to click pickup suggestion
+                    // It will detect pickup suggestions (with distance markers) and click them
+                    if (handleInDriverIntermediateScreens(rootNode)) {
+                        Log.i(TAG, "🤖 📋 Handled pickup suggestion click")
+                    }
+
+                    // Check if pickup phase was completed (suggestion was clicked)
+                    if (inDriverPickupPhaseComplete) {
+                        Log.i(TAG, "🤖 ✓ Pickup suggestion clicked! Moving to FINDING_DESTINATION_FIELD...")
+                        automationState = AutomationState.FINDING_DESTINATION_FIELD
+                        automationStep = 0
+                        automationRetries = 0
+                        return
+                    }
+
+                    // After 5 steps, move on even if no suggestion was clicked (fallback)
+                    if (automationStep > 5) {
+                        Log.w(TAG, "🤖 ⚠️ No pickup suggestion clicked after 5 steps - moving to destination anyway")
+                        // Mark pickup phase as complete to avoid confusion later
+                        inDriverPickupPhaseComplete = true
+                        automationState = AutomationState.FINDING_DESTINATION_FIELD
+                        automationStep = 0
+                    }
                 }
 
                 AutomationState.CONFIRMING_PICKUP_ON_MAP -> {
@@ -6478,18 +6501,21 @@ class PriceReaderService : AccessibilityService() {
         }
 
         // Also check for PICKUP field focus (indicates we need to click pickup suggestion)
-        val hasPickupFieldFocus = allText.any {
+        // CRITICAL FIX: Only consider pickup field focus if pickup phase is NOT complete yet!
+        val hasPickupFieldFocus = !inDriverPickupPhaseComplete && allText.any {
             it.contains("من أين") || it.contains("From where") || it.contains("نقطة الإقلال")
         }
 
         // SPECIAL: Detect pickup suggestions screen by looking for distance patterns with location names
         // This handles the case where InDriver shows pickup suggestions AFTER destination was clicked
-        val hasPickupSuggestionsWithDistance = allText.any { it.contains("متر") || it.contains("كم") } &&
+        // CRITICAL FIX: Only consider as pickup suggestions if pickup phase is NOT complete yet!
+        val hasPickupSuggestionsWithDistance = !inDriverPickupPhaseComplete &&
+            allText.any { it.contains("متر") || it.contains("كم") } &&
             allText.any { it.contains("Abdel") || it.contains("Obour") || it.contains("العبور") ||
                           it.contains("Riyad") || it.contains("رياض") || it.contains("Nasr") ||
                           it.contains("Maadi") || it.contains("معادي") || it.contains("Heliopolis") }
 
-        Log.i(TAG, "🗺️ SUGGESTIONS CHECK: hasChooseOnMap=$hasChooseOnMapOption, hasDestField=$hasDestinationField, hasSuggestions=$hasSuggestionItems, hasPickupFocus=$hasPickupFieldFocus, hasPickupWithDist=$hasPickupSuggestionsWithDistance")
+        Log.i(TAG, "🗺️ SUGGESTIONS CHECK: hasChooseOnMap=$hasChooseOnMapOption, hasDestField=$hasDestinationField, hasSuggestions=$hasSuggestionItems, hasPickupFocus=$hasPickupFieldFocus, hasPickupWithDist=$hasPickupSuggestionsWithDistance, pickupPhaseComplete=$inDriverPickupPhaseComplete")
 
         // If we see suggestions (either with "Choose on map" for destination, OR pickup suggestions with distance markers)
         // IMPORTANT: Pickup suggestions after destination click may NOT have "Choose on map"!
