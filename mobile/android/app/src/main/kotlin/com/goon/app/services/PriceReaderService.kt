@@ -257,6 +257,10 @@ class PriceReaderService : AccessibilityService() {
     // Track if InDriver pickup was successfully entered
     private var inDriverPickupEntered = false
 
+    // Track if InDriver pickup suggestion was clicked (to prevent double-click)
+    // This flag is set by handleInDriverIntermediateScreens when it clicks a pickup suggestion
+    private var inDriverPickupPhaseComplete = false
+
     // Track DiDi destination click retries (to prevent infinite loops)
     private var didiDestinationClickAttempts = 0
 
@@ -324,6 +328,7 @@ class PriceReaderService : AccessibilityService() {
         automationStartTime = System.currentTimeMillis()  // Track when automation started
         uberScreenReady = false  // Reset screen ready flag
         inDriverPickupEntered = false  // Reset InDriver pickup flag
+        inDriverPickupPhaseComplete = false  // Reset InDriver pickup phase complete flag
         didiDestinationClickAttempts = 0  // Reset DiDi destination click attempts
         didiSuggestionRetryCount = 0  // Reset DiDi suggestion retry counter
         didiPickupEntered = false  // Reset DiDi pickup flag (PICKUP FIRST flow)
@@ -721,11 +726,23 @@ class PriceReaderService : AccessibilityService() {
                     // For InDriver: Handle intermediate screens (No Results, Map Confirmation)
                     // Price detection is BLOCKED during automation, so we just handle UI navigation
                     if (packageName == INDRIVER_PACKAGE) {
+                        // Store current state BEFORE calling handleInDriverIntermediateScreens
+                        val stateBefore = automationState
+
                         if (handleInDriverIntermediateScreens(rootNode)) {
                             Log.i(TAG, "🤖 📋 Handled InDriver intermediate screen")
                             // Don't transition yet - stay in this state until intermediate screens are done
                         }
-                        // Always go to WAITING_FOR_PRICE after some steps
+
+                        // CRITICAL FIX: Check if state was changed by handleInDriverIntermediateScreens
+                        // If it transitioned to FINDING_DESTINATION_FIELD (pickup suggestion clicked),
+                        // don't override with WAITING_FOR_PRICE!
+                        if (automationState != stateBefore) {
+                            Log.i(TAG, "🤖 State changed from $stateBefore to $automationState by handler - respecting transition")
+                            return
+                        }
+
+                        // Only go to WAITING_FOR_PRICE after some steps IF state wasn't changed
                         if (automationStep > 3) {
                             Log.i(TAG, "🤖 InDriver: Going to WAITING_FOR_PRICE...")
                             automationState = AutomationState.WAITING_FOR_PRICE
@@ -4073,11 +4090,12 @@ class PriceReaderService : AccessibilityService() {
     }
 
     /**
-     * Enter PICKUP coordinates/text into InDriver's focused input field
+     * Enter PICKUP text address into InDriver's focused input field
      * IMPORTANT: First clears existing "الموقع الحالي" (Current Location) by clicking X button
+     * NOTE: InDriver doesn't find results when searching with coordinates, so we use text address
      */
     private fun enterInDriverPickupText(rootNode: AccessibilityNodeInfo): Boolean {
-        Log.i(TAG, "🤖 enterInDriverPickupText: Entering pickup coordinates...")
+        Log.i(TAG, "🤖 enterInDriverPickupText: Entering pickup TEXT ADDRESS...")
 
         // STEP 0: Check if the pickup field already has content that needs clearing
         // If field is empty (shows "من" placeholder), skip clearing
@@ -4104,9 +4122,11 @@ class PriceReaderService : AccessibilityService() {
             }
         }
 
-        // STEP 2: Enter new pickup coordinates
-        val textToEnter = "$pickupLat, $pickupLng"
-        Log.i(TAG, "🤖 STEP 2: Entering pickup coordinates: $textToEnter")
+        // STEP 2: Enter new pickup TEXT ADDRESS (NOT coordinates!)
+        // InDriver doesn't find results when searching with coordinates like "30.123, 31.456"
+        // It needs a text address like "Daniel's" or "مدينة العبور"
+        val textToEnter = if (pickupAddress.isNotBlank()) pickupAddress else "$pickupLat, $pickupLng"
+        Log.i(TAG, "🤖 STEP 2: Entering pickup text: $textToEnter")
 
         val focusedNode = rootNode.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
         if (focusedNode != null) {
@@ -6478,7 +6498,8 @@ class PriceReaderService : AccessibilityService() {
                                      (hasPickupSuggestionsWithDistance && !hasNoResults)  // NEW: Pickup with distance
 
         if (shouldClickSuggestion) {
-            val suggestionType = if (hasPickupFieldFocus || hasPickupSuggestionsWithDistance) "PICKUP" else "DESTINATION"
+            val isPickupSuggestion = hasPickupFieldFocus || hasPickupSuggestionsWithDistance
+            val suggestionType = if (isPickupSuggestion) "PICKUP" else "DESTINATION"
             Log.i(TAG, "🗺️ ✓ Detected $suggestionType SUGGESTIONS SCREEN - looking for first real suggestion to click")
 
             // Collect all suggestions from the screen
@@ -6490,7 +6511,7 @@ class PriceReaderService : AccessibilityService() {
                 Log.i(TAG, "🗺️   [$index] '$text'")
             }
 
-            // Filter out "اختر على الخريطة", coordinates, and similar options
+            // Filter out "اختر على الخريطة", coordinates, Google Maps attribution, and similar options
             val coordPattern = Regex("^\\d+\\.\\d+,\\s*\\d+\\.\\d+$")
             var realSuggestions = suggestions.filter { (_, text) ->
                 !text.contains("اختر على الخريطة") &&
@@ -6498,6 +6519,9 @@ class PriceReaderService : AccessibilityService() {
                 !text.contains("على الخريطة") &&
                 !text.contains("لا توجد نتائج") &&
                 !text.contains("No results") &&
+                !text.contains("خرائط Google") &&  // Filter out Google Maps attribution (Arabic)
+                !text.contains("Google Maps") &&  // Filter out Google Maps attribution (English)
+                !text.contains("google", ignoreCase = true) &&  // Filter out any Google text
                 !coordPattern.matches(text.trim()) &&  // Exclude coordinates like "30.123, 31.456"
                 !text.matches(Regex("^\\d+\\.\\d+.*")) &&  // Exclude text starting with decimals
                 text.length > 5  // Skip very short texts
@@ -6568,6 +6592,9 @@ class PriceReaderService : AccessibilityService() {
                 realSuggestions = suggestions.filter { (_, text) ->
                     !text.contains("اختر على الخريطة") &&
                     !text.contains("Choose on map") &&
+                    !text.contains("خرائط Google") &&  // Filter out Google Maps attribution (Arabic)
+                    !text.contains("Google Maps") &&  // Filter out Google Maps attribution (English)
+                    !text.contains("google", ignoreCase = true) &&  // Filter out any Google text
                     !coordPattern.matches(text.trim()) &&
                     !text.matches(Regex("^\\d+\\.\\d+.*")) &&
                     text.length > 5
@@ -6668,8 +6695,21 @@ class PriceReaderService : AccessibilityService() {
                 }
 
                 if (clicked) {
-                    Log.i(TAG, "🗺️ ✓✓✓ CLICKED SUGGESTION '$text' - should navigate to price screen!")
+                    Log.i(TAG, "🗺️ ✓✓✓ CLICKED $suggestionType SUGGESTION '$text' - should navigate!")
                     lastInDriverClickTime = currentTime
+
+                    // CRITICAL FIX: If this was a PICKUP suggestion, mark pickup phase as complete
+                    // and transition DIRECTLY to FINDING_DESTINATION_FIELD to avoid double-click
+                    if (isPickupSuggestion) {
+                        Log.i(TAG, "🗺️ ✓ PICKUP suggestion clicked - setting inDriverPickupPhaseComplete=true")
+                        inDriverPickupPhaseComplete = true
+
+                        // Directly transition to destination field (skip SELECTING_SUGGESTION)
+                        Log.i(TAG, "🗺️ ✓ Transitioning DIRECTLY to FINDING_DESTINATION_FIELD...")
+                        automationState = AutomationState.FINDING_DESTINATION_FIELD
+                        automationStep = 0
+                        automationRetries = 0
+                    }
                     return true
                 } else {
                     Log.w(TAG, "🗺️ ✗ Could not click suggestion '$text' - trying keyboard Done as fallback...")
