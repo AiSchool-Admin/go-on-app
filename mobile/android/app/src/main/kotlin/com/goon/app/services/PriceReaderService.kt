@@ -1780,6 +1780,86 @@ class PriceReaderService : AccessibilityService() {
         }
         Log.i(TAG, "🚕 === END OF VISIBLE TEXT ===")
 
+        // CRITICAL FIX: Check for SELECT ADDRESS screen FIRST (has both "Pickup point" AND "Where to?")
+        // This screen appears after clicking "Where to?" on the home screen
+        val isOnSelectAddressScreen = allText.any { text ->
+            val lower = text.lowercase()
+            lower.contains("select address") ||
+            lower.contains("pickup point") ||
+            lower.contains("نقطة الاقلال") ||
+            lower.contains("نقطة الإقلال") ||
+            lower.contains("اختر العنوان")
+        }
+
+        if (isOnSelectAddressScreen) {
+            Log.i(TAG, "🚕 [DiDi] On SELECT ADDRESS screen - clicking 'Pickup point' field...")
+
+            // Find and click "Pickup point" field
+            val pickupTexts = listOf(
+                "Pickup point", "نقطة الاقلال", "نقطة الإقلال",
+                "Your location", "Current location", "موقعك الحالي",
+                "上车点", "起点", "当前位置"
+            )
+
+            for (pickupText in pickupTexts) {
+                val nodes = rootNode.findAccessibilityNodeInfosByText(pickupText)
+                if (nodes.isNotEmpty()) {
+                    val node = nodes[0]
+                    val rect = android.graphics.Rect()
+                    node.getBoundsInScreen(rect)
+                    Log.i(TAG, "🚕 Found '$pickupText' at $rect - clicking...")
+
+                    // Try multiple click strategies
+                    var clicked = false
+
+                    // Strategy 1: ACTION_CLICK
+                    if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        Log.i(TAG, "🚕 ✓ ACTION_CLICK on '$pickupText' succeeded!")
+                        clicked = true
+                    }
+
+                    // Strategy 2: Click parent
+                    val parent = node.parent
+                    if (parent != null) {
+                        if (parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                            Log.i(TAG, "🚕 ✓ Parent click succeeded!")
+                            clicked = true
+                        }
+                        parent.recycle()
+                    }
+
+                    // Strategy 3: Gesture tap
+                    Log.i(TAG, "🚕 Strategy 3: gesture tap at center...")
+                    clickAtPositionWithDuration(rect.centerX().toFloat(), rect.centerY().toFloat(), 150)
+                    clicked = true
+
+                    nodes.forEach { it.recycle() }
+                    Thread.sleep(TimingConfig.animationWait)
+
+                    if (clicked) {
+                        Log.i(TAG, "🚕 ✓✓✓ Clicked 'Pickup point' - should open input field now!")
+                        return true
+                    }
+                }
+            }
+
+            Log.w(TAG, "🚕 Could not find 'Pickup point' text - trying position-based click...")
+            // Fallback: Pickup field is usually at top, around Y=300-400
+            try {
+                val displayMetrics = resources.displayMetrics
+                val screenWidth = displayMetrics.widthPixels
+                val tapX = screenWidth / 2f
+                val tapY = 350f  // Pickup point is usually around this Y position
+                Log.i(TAG, "🚕 Fallback: Tapping at ($tapX, $tapY) for pickup field")
+                clickAtPositionWithDuration(tapX, tapY, 150)
+                Thread.sleep(TimingConfig.animationWait)
+                return true
+            } catch (e: Exception) {
+                Log.e(TAG, "🚕 Fallback tap failed: ${e.message}")
+            }
+            return false
+        }
+
         // Check if we're on the HOME screen (need to click "Where to?" first)
         // EXTENDED patterns: English, Arabic, Chinese (DiDi is 滴滴出行)
         val isOnHomeScreen = allText.any { text ->
