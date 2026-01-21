@@ -4581,17 +4581,23 @@ class PriceReaderService : AccessibilityService() {
             return false
         }
 
-        // Look for clickable/focusable elements in the top portion of screen (y < 600)
-        // that could be the destination input field
-        val isTopOfScreen = bounds.top in 100..600
+        // Look for clickable/focusable elements in the DESTINATION area of screen
+        // CRITICAL: Destination field should be BELOW pickup (which is at y~200-300)
+        // Destination "إلى" field is typically at y~350-500
+        // Avoid clicking on header (y<250) or suggestions area (y>550)
+        val isDestinationArea = bounds.top in 250..550
         val isClickableOrFocusable = node.isClickable || node.isFocusable
         val isInputLike = className.contains("edit") || className.contains("text") ||
-            className.contains("input") || className.contains("view")
+            className.contains("input")
+        // EXCLUDE generic ViewGroup to avoid clicking on wrong container elements
+        val isNotGenericContainer = !className.endsWith("viewgroup") || text.isNotEmpty()
 
         // Check if this looks like the destination field
         // It should be empty or contain placeholder text like "إلى"
-        val isDestinationField = isTopOfScreen && isClickableOrFocusable && isInputLike &&
-            (text.isEmpty() || text == "إلى" || text == "To" || text.contains("الوجهة"))
+        // CRITICAL: Skip fields that have actual address text (non-placeholder)
+        val hasPlaceholderOrEmpty = text.isEmpty() || text == "إلى" || text == "To" || text.contains("الوجهة")
+        val isDestinationField = isDestinationArea && isClickableOrFocusable && isInputLike &&
+            isNotGenericContainer && hasPlaceholderOrEmpty
 
         if (isDestinationField) {
             Log.i(TAG, "🎯 Found potential destination field: y=${bounds.top}, text='$text', class=$className")
@@ -4740,6 +4746,28 @@ class PriceReaderService : AccessibilityService() {
             Log.i(TAG, "🚗 Strategy B: Looking for destination field by position...")
             val foundByPosition = findDestinationFieldByPosition(rootNode)
             if (foundByPosition) {
+                return true
+            }
+
+            // Strategy C: Gesture tap at destination field position
+            // Based on InDriver UI: pickup row ~200-300, destination row ~350-450
+            // The "إلى" field should be at approximately y=400
+            Log.i(TAG, "🚗 Strategy C: Gesture tap at destination field position...")
+            val displayMetrics = resources.displayMetrics
+            val screenWidth = displayMetrics.widthPixels.toFloat()
+            val destY = 400f  // Destination field is typically at y~400
+
+            Log.i(TAG, "🚗 Trying gesture tap at (${screenWidth / 2}, $destY)")
+            if (clickAtPosition(screenWidth / 2, destY)) {
+                Log.i(TAG, "🚗 ✓ Gesture tap at destination position succeeded!")
+                return true
+            }
+
+            // Strategy D: Try slightly lower position
+            val altDestY = 450f
+            Log.i(TAG, "🚗 Strategy D: Gesture tap at alternate position (${screenWidth / 2}, $altDestY)")
+            if (clickAtPosition(screenWidth / 2, altDestY)) {
+                Log.i(TAG, "🚗 ✓ Gesture tap at alternate position succeeded!")
                 return true
             }
         }
@@ -5350,6 +5378,32 @@ class PriceReaderService : AccessibilityService() {
                 focusedNode.recycle()
                 // Try to find and click the correct destination field
                 return findAndEnterDestinationInCareem(rootNode, textToEnter)
+            }
+
+            // SAFETY CHECK FOR INDRIVER: After pickup confirmation, the pickup field may still be focused
+            // If the focused field has non-placeholder text, it's likely the pickup field (auto-filled after suggestion click)
+            // We should find and click the "إلى" destination field instead
+            if (packageName == INDRIVER_PACKAGE && inDriverPickupPhaseComplete) {
+                val isPlaceholder = focusedText.isEmpty() || focusedText == "إلى" || focusedText == "من" ||
+                    focusedText == "To" || focusedText == "From" || focusedText.contains("الوجهة")
+
+                if (!isPlaceholder && focusedText.isNotEmpty()) {
+                    Log.w(TAG, "🤖 ⚠️ [InDriver] WRONG FIELD DETECTED!")
+                    Log.w(TAG, "🤖 ⚠️ Focused field has text: '$focusedText'")
+                    Log.w(TAG, "🤖 ⚠️ This is likely the PICKUP field - need to find DESTINATION field...")
+                    focusedNode.recycle()
+
+                    // Find the "إلى" destination field and click it
+                    if (findAndClickInDriverDestination(rootNode)) {
+                        Log.i(TAG, "🤖 ✓ Found and clicked destination field, now entering text...")
+                        Thread.sleep(TimingConfig.clickDelay)
+                        // Recursively call to enter text in the newly focused field
+                        return enterDestinationText(rootNode, packageName)
+                    } else {
+                        Log.e(TAG, "🤖 ✗ Could not find InDriver destination field!")
+                        return false
+                    }
+                }
             }
 
             // Clear existing text and set new text
