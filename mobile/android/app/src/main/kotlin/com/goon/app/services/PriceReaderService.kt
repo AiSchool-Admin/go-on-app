@@ -2132,9 +2132,10 @@ class PriceReaderService : AccessibilityService() {
     private fun enterDiDiPickupText(rootNode: AccessibilityNodeInfo): Boolean {
         Log.i(TAG, "🚕 enterDiDiPickupText: Looking for focused input...")
 
-        // Use coordinates format for DiDi - it handles this well
-        val textToEnter = "$pickupLat, $pickupLng"
-        Log.i(TAG, "🚕 Using COORDINATES for DiDi pickup: $textToEnter")
+        // IMPORTANT: DiDi does NOT support GPS coordinate search - must use TEXT address
+        // Unlike InDriver, DiDi needs a readable address to show suggestions
+        val textToEnter = if (pickupAddress.isNotBlank()) pickupAddress else "$pickupLat, $pickupLng"
+        Log.i(TAG, "🚕 Using TEXT ADDRESS for DiDi pickup: $textToEnter")
 
         // Try to find focused input first
         val focusedNode = rootNode.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
@@ -5271,27 +5272,27 @@ class PriceReaderService : AccessibilityService() {
 
     /**
      * Enter destination text into focused field
-     * For InDriver: Uses TEXT address so suggestions appear, then click first suggestion
-     * For DiDi: Uses COORDINATES to avoid multiple results
+     * For InDriver: Uses GPS COORDINATES for precise location
+     * For DiDi: Uses TEXT address (DiDi doesn't support coordinate search)
      */
     private fun enterDestinationText(rootNode: AccessibilityNodeInfo, packageName: String): Boolean {
         Log.i(TAG, "🤖 enterDestinationText: Looking for focused input...")
 
         // Determine what to enter:
-        // - InDriver & DiDi: Use GPS COORDINATES for precise location (avoids wrong suggestions)
+        // - InDriver: Use GPS COORDINATES (InDriver supports coordinate search)
+        // - DiDi: Use TEXT address (DiDi does NOT support coordinate search)
         // - Other apps: Use TEXT address
         val textToEnter = when (packageName) {
             INDRIVER_PACKAGE -> {
-                // Use GPS COORDINATES for precise destination
+                // Use GPS COORDINATES for precise destination - InDriver supports this
                 val coordText = "$destLat, $destLng"
                 Log.i(TAG, "🤖 Using GPS COORDINATES for InDriver: $coordText (address was: $destinationAddress)")
                 coordText
             }
             DIDI_PACKAGE -> {
-                // Use coordinates format that DiDi recognizes
-                val coordText = "$destLat, $destLng"
-                Log.i(TAG, "🤖 Using GPS COORDINATES for DiDi: $coordText")
-                coordText
+                // IMPORTANT: DiDi does NOT support GPS coordinate search - must use TEXT address
+                Log.i(TAG, "🤖 Using TEXT ADDRESS for DiDi: $destinationAddress")
+                destinationAddress
             }
             else -> {
                 Log.i(TAG, "🤖 Using TEXT address for $packageName: $destinationAddress")
