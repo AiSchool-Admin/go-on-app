@@ -286,7 +286,7 @@ class PriceReaderService : AccessibilityService() {
         pickupLatitude: Double,
         pickupLongitude: Double,
         destLatitude: Double,
-        destLongitude: Double
+        destLngitude: Double
     ) {
         Log.i(TAG, "🤖 Starting AUTOMATION for $packageName")
         Log.i(TAG, "   From: $pickup")
@@ -302,7 +302,7 @@ class PriceReaderService : AccessibilityService() {
                 packageName,
                 pickup, destination,
                 pickupLatitude, pickupLongitude,
-                destLatitude, destLongitude
+                destLatitude, destLngitude
             )
             return
         }
@@ -318,7 +318,7 @@ class PriceReaderService : AccessibilityService() {
         pickupLat = pickupLatitude
         pickupLng = pickupLongitude
         destLat = destLatitude
-        destLng = destLongitude
+        destLng = destLngitude
 
         // Reset state
         automationStep = 0
@@ -4145,11 +4145,11 @@ class PriceReaderService : AccessibilityService() {
             }
         }
 
-        // STEP 2: Enter new pickup TEXT ADDRESS (NOT coordinates!)
-        // InDriver doesn't find results when searching with coordinates like "30.123, 31.456"
-        // It needs a text address like "Daniel's" or "مدينة العبور"
-        val textToEnter = if (pickupAddress.isNotBlank()) pickupAddress else "$pickupLat, $pickupLng"
-        Log.i(TAG, "🤖 STEP 2: Entering pickup text: $textToEnter")
+        // STEP 2: Enter pickup GPS COORDINATES directly
+        // Using coordinates is more precise than text address - avoids wrong location suggestions
+        // Format: "30.12345, 31.67890"
+        val textToEnter = "$pickupLat, $pickupLng"
+        Log.i(TAG, "🤖 STEP 2: Entering pickup GPS coordinates: $textToEnter (address was: $pickupAddress)")
 
         val focusedNode = rootNode.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
         if (focusedNode != null) {
@@ -5198,18 +5198,19 @@ class PriceReaderService : AccessibilityService() {
         Log.i(TAG, "🤖 enterDestinationText: Looking for focused input...")
 
         // Determine what to enter:
-        // - InDriver: Use TEXT address so suggestions appear (user clicks first suggestion)
-        // - DiDi: Use COORDINATES to avoid multiple results
+        // - InDriver & DiDi: Use GPS COORDINATES for precise location (avoids wrong suggestions)
+        // - Other apps: Use TEXT address
         val textToEnter = when (packageName) {
             INDRIVER_PACKAGE -> {
-                // Use the destination NAME so InDriver shows suggestions
-                Log.i(TAG, "🤖 Using TEXT address for InDriver: $destinationAddress")
-                destinationAddress
+                // Use GPS COORDINATES for precise destination
+                val coordText = "$destLat, $destLng"
+                Log.i(TAG, "🤖 Using GPS COORDINATES for InDriver: $coordText (address was: $destinationAddress)")
+                coordText
             }
             DIDI_PACKAGE -> {
                 // Use coordinates format that DiDi recognizes
                 val coordText = "$destLat, $destLng"
-                Log.i(TAG, "🤖 Using COORDINATES for $packageName: $coordText")
+                Log.i(TAG, "🤖 Using GPS COORDINATES for DiDi: $coordText")
                 coordText
             }
             else -> {
@@ -6642,13 +6643,13 @@ class PriceReaderService : AccessibilityService() {
 
                 // ===== GPS-BASED DISTANCE CALCULATION =====
                 // Calculate expected distance from pickup to destination using Haversine formula
-                val expectedDistanceKm = if (pickupLat != 0.0 && pickupLng != 0.0 && destLat != 0.0 && destLong != 0.0) {
-                    haversineDistance(pickupLat, pickupLng, destLat, destLong)
+                val expectedDistanceKm = if (pickupLat != 0.0 && pickupLng != 0.0 && destLat != 0.0 && destLng != 0.0) {
+                    haversineDistance(pickupLat, pickupLng, destLat, destLng)
                 } else {
                     -1.0  // No GPS data available
                 }
                 Log.i(TAG, "🗺️ SMART RANKING (GPS): destAddress='$destinationAddress'")
-                Log.i(TAG, "🗺️   GPS: pickup=($pickupLat, $pickupLng) → dest=($destLat, $destLong)")
+                Log.i(TAG, "🗺️   GPS: pickup=($pickupLat, $pickupLng) → dest=($destLat, $destLng)")
                 Log.i(TAG, "🗺️   Expected distance: ${String.format("%.2f", expectedDistanceKm)} km")
                 Log.i(TAG, "🗺️   Keywords: $destKeywords")
 
