@@ -6632,13 +6632,25 @@ class PriceReaderService : AccessibilityService() {
                 Log.i(TAG, "🗺️   [$index] '$text'")
             }
 
-            // SMART SUGGESTION SELECTION: For DESTINATION suggestions, rank by keyword match and proximity
+            // SMART SUGGESTION SELECTION: For DESTINATION suggestions, rank by GPS distance match + keywords
+            // Uses GPS coordinates from GO-ON to calculate expected distance and match with suggestions
             // This prevents selecting "البنك الوطني المصري - ماكينة الصراف الآلي" (far ATM)
             // instead of "البنك الوطني المصري" (nearby bank)
             val selectedSuggestion: Pair<AccessibilityNodeInfo, String>? = if (!isPickupSuggestion && realSuggestions.isNotEmpty()) {
                 // Extract keywords from destination address
                 val destKeywords = destinationAddress.split(" ").filter { it.length > 2 }
-                Log.i(TAG, "🗺️ SMART RANKING: destAddress='$destinationAddress', keywords=$destKeywords")
+
+                // ===== GPS-BASED DISTANCE CALCULATION =====
+                // Calculate expected distance from pickup to destination using Haversine formula
+                val expectedDistanceKm = if (pickupLat != 0.0 && pickupLng != 0.0 && destLat != 0.0 && destLong != 0.0) {
+                    haversineDistance(pickupLat, pickupLng, destLat, destLong)
+                } else {
+                    -1.0  // No GPS data available
+                }
+                Log.i(TAG, "🗺️ SMART RANKING (GPS): destAddress='$destinationAddress'")
+                Log.i(TAG, "🗺️   GPS: pickup=($pickupLat, $pickupLng) → dest=($destLat, $destLong)")
+                Log.i(TAG, "🗺️   Expected distance: ${String.format("%.2f", expectedDistanceKm)} km")
+                Log.i(TAG, "🗺️   Keywords: $destKeywords")
 
                 // Score each suggestion
                 val scoredSuggestions = realSuggestions.map { (node, text) ->
@@ -6666,26 +6678,44 @@ class PriceReaderService : AccessibilityService() {
                         score += (10 - lengthDiff) * 5
                     }
 
-                    // 5. Parse distance from suggestion (كم = km, متر = meters)
-                    // Prefer closer distances when available
+                    // 5. GPS-BASED DISTANCE MATCHING (PRIMARY METHOD)
+                    // Parse distance from suggestion and compare with expected GPS distance
                     val distanceKmMatch = Regex("(\\d+\\.?\\d*)\\s*كم").find(text)
                     val distanceMMatch = Regex("(\\d+)\\s*متر").find(text)
                     val distanceKmMatchEn = Regex("(\\d+\\.?\\d*)\\s*km", RegexOption.IGNORE_CASE).find(text)
 
+                    var suggestionDistanceKm: Double? = null
+
                     if (distanceKmMatch != null) {
-                        val km = distanceKmMatch.groupValues[1].toDoubleOrNull() ?: 999.0
-                        // Smaller distance = higher score (up to 200 points for close distances)
-                        score += maxOf(0, (200 - km * 20).toInt())
-                        Log.i(TAG, "🗺️   Distance parsed: ${km}km, adding ${maxOf(0, (200 - km * 20).toInt())} points")
+                        suggestionDistanceKm = distanceKmMatch.groupValues[1].toDoubleOrNull()
                     } else if (distanceMMatch != null) {
-                        val meters = distanceMMatch.groupValues[1].toDoubleOrNull() ?: 9999.0
-                        // Meters is closer, give more points
-                        score += maxOf(0, (200 - meters / 50).toInt())
-                        Log.i(TAG, "🗺️   Distance parsed: ${meters}m, adding ${maxOf(0, (200 - meters / 50).toInt())} points")
+                        val meters = distanceMMatch.groupValues[1].toDoubleOrNull()
+                        if (meters != null) suggestionDistanceKm = meters / 1000.0
                     } else if (distanceKmMatchEn != null) {
-                        val km = distanceKmMatchEn.groupValues[1].toDoubleOrNull() ?: 999.0
-                        score += maxOf(0, (200 - km * 20).toInt())
-                        Log.i(TAG, "🗺️   Distance parsed: ${km}km (EN), adding ${maxOf(0, (200 - km * 20).toInt())} points")
+                        suggestionDistanceKm = distanceKmMatchEn.groupValues[1].toDoubleOrNull()
+                    }
+
+                    if (suggestionDistanceKm != null && expectedDistanceKm > 0) {
+                        // GPS-BASED SCORING: How close is this suggestion's distance to expected?
+                        val distanceDiff = kotlin.math.abs(suggestionDistanceKm - expectedDistanceKm)
+
+                        // Award up to 300 points for exact match, decreasing as difference grows
+                        // If diff < 1km: high score, if diff > 5km: penalty
+                        val gpsScore = when {
+                            distanceDiff < 0.5 -> 300   // Almost exact match!
+                            distanceDiff < 1.0 -> 250   // Very close
+                            distanceDiff < 2.0 -> 150   // Close enough
+                            distanceDiff < 5.0 -> 50    // Acceptable
+                            distanceDiff < 10.0 -> -100 // Getting far
+                            else -> -200                 // Way off - probably wrong location
+                        }
+                        score += gpsScore
+                        Log.i(TAG, "🗺️   GPS Match: suggestion=${String.format("%.1f", suggestionDistanceKm)}km, expected=${String.format("%.1f", expectedDistanceKm)}km, diff=${String.format("%.1f", distanceDiff)}km → ${if (gpsScore >= 0) "+" else ""}${gpsScore} points")
+                    } else if (suggestionDistanceKm != null) {
+                        // Fallback: No GPS data, just prefer closer distances
+                        val fallbackScore = maxOf(0, (200 - suggestionDistanceKm * 20).toInt())
+                        score += fallbackScore
+                        Log.i(TAG, "🗺️   Distance (no GPS): ${String.format("%.1f", suggestionDistanceKm)}km → +$fallbackScore points")
                     }
 
                     // 6. Penalty for generic additions like "ATM", "ماكينة الصراف", etc.
@@ -8758,4 +8788,23 @@ class PriceReaderService : AccessibilityService() {
      * Check if service is running and active
      */
     fun isActive(): Boolean = isServiceActive
+
+    /**
+     * Calculate distance between two GPS coordinates using Haversine formula
+     * Returns distance in kilometers
+     */
+    private fun haversineDistance(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val R = 6371.0 // Earth's radius in kilometers
+
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lon2 - lon1)
+
+        val a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) *
+                Math.sin(dLon / 2) * Math.sin(dLon / 2)
+
+        val c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+
+        return R * c
+    }
 }
