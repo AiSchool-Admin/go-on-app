@@ -41,21 +41,25 @@
 
 ---
 
-### 3. [ ] Testing - الاختبارات
+### 3. [x] Testing - الاختبارات (جزء أول مكتمل)
 **الأولوية:** عالية - قبل Play Store
 
 **المهام:**
-- [ ] Unit tests للـ services الأساسية
-- [ ] Widget tests للشاشات الرئيسية
-- [ ] Integration tests للـ user flows
-- [ ] اختبار الـ Accessibility Service
+- [x] Unit tests للـ services الأساسية (EgyptPricingService)
+- [x] Unit tests للـ models (Ride, PriceOption, UserProfile)
+- [x] Widget tests للشاشات الرئيسية (PriceCard, ServiceCard)
+- [x] Integration tests للـ user flows (Price Comparison)
+- [x] اختبار الـ Accessibility Service (Kotlin tests)
 - [ ] اختبار على أجهزة مختلفة
 - [ ] اختبار الأداء (Performance testing)
 - [ ] اختبار الأمان (Security testing)
 - [ ] Beta testing مع مستخدمين حقيقيين
 
 **الملفات المتأثرة:**
-- `mobile/test/`
+- `mobile/test/unit/` - Unit tests
+- `mobile/test/widget/` - Widget tests
+- `mobile/test/integration/` - Integration tests
+- `mobile/android/app/src/test/` - Kotlin tests
 
 ---
 
