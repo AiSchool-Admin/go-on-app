@@ -5789,7 +5789,10 @@ class PriceReaderService : AccessibilityService() {
         // Skip UI elements and empty nodes
         val skipTexts = listOf(
             "Pin your location", "Select Address", "Powered by",
-            "Back", "Where to", "Add stop", "Pickup point", "Search"
+            "Back", "Where to", "Add stop", "Pickup point", "Search",
+            // Skip map confirmation screen buttons
+            "Set Destination", "Select Destination", "Set Pickup", "Set Location",
+            "Edit", "Confirm"
         )
         val shouldSkip = skipTexts.any { combinedText.contains(it, ignoreCase = true) }
 
@@ -6117,6 +6120,65 @@ class PriceReaderService : AccessibilityService() {
     private fun handleDiDiIntermediateScreens(rootNode: AccessibilityNodeInfo): Boolean {
         val allText = getAllTextFromNode(rootNode)
         val allTextLower = allText.map { it.lowercase() }
+
+        // ============================================================
+        // FIRST: Check for MAP PIN CONFIRMATION screen
+        // This appears after clicking "Pin your location on the map"
+        // Shows: "Select Destination" title + map + "Set Destination" button
+        // ============================================================
+        val isMapPinScreen = allTextLower.any {
+            it.contains("select destination") ||
+            it.contains("select pickup") ||
+            it.contains("حدد الوجهة") ||
+            it.contains("حدد نقطة الانطلاق")
+        }
+        val hasSetButton = allTextLower.any {
+            it.contains("set destination") ||
+            it.contains("set pickup") ||
+            it.contains("set location") ||
+            it.contains("تعيين الوجهة") ||
+            it.contains("تعيين نقطة")
+        }
+
+        if (isMapPinScreen && hasSetButton) {
+            Log.i(TAG, "🗺️ DiDi MAP PIN CONFIRMATION screen detected - clicking 'Set Destination'...")
+
+            // Find and click "Set Destination" button
+            val setButtonTexts = listOf("Set Destination", "Set Pickup", "Set Location", "تعيين الوجهة", "تعيين")
+            for (buttonText in setButtonTexts) {
+                val buttonNodes = rootNode.findAccessibilityNodeInfosByText(buttonText)
+                for (node in buttonNodes) {
+                    val rect = android.graphics.Rect()
+                    node.getBoundsInScreen(rect)
+                    Log.i(TAG, "🗺️ Found '$buttonText' button at Y=${rect.top}")
+
+                    // Try to click
+                    if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK) || clickNodeOrParent(node)) {
+                        Log.i(TAG, "🗺️ ✓ Clicked 'Set Destination' - confirming map location")
+                        node.recycle()
+                        // After clicking Set Destination, DiDi should go to price screen or next step
+                        return true
+                    }
+                    node.recycle()
+                }
+            }
+
+            // Fallback: gesture tap at bottom of screen where button typically is
+            val displayMetrics = resources.displayMetrics
+            val screenHeight = displayMetrics.heightPixels
+            val screenWidth = displayMetrics.widthPixels
+            val buttonY = screenHeight * 0.85f  // Near bottom
+            val centerX = screenWidth / 2f
+
+            Log.i(TAG, "🗺️ Trying gesture tap on 'Set Destination' area at Y=$buttonY")
+            val path = android.graphics.Path()
+            path.moveTo(centerX, buttonY)
+            val gesture = android.accessibilityservice.GestureDescription.Builder()
+                .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 150))
+                .build()
+            dispatchGesture(gesture, null, null)
+            return true
+        }
 
         // ============================================================
         // CRITICAL: Check for "Select Address" screen
@@ -6457,7 +6519,10 @@ class PriceReaderService : AccessibilityService() {
             "Some addresses below", "different country", "different city",
             "select carefully", "Please select carefully",
             // Skip "no results" messages - need to use map pin fallback instead
-            "No results found", "please enter another address", "enter another address"
+            "No results found", "please enter another address", "enter another address",
+            // Skip map confirmation screen buttons (these are NOT address cards!)
+            "Set Destination", "Select Destination", "Set Pickup", "Set Location",
+            "Edit", "Confirm", "تعديل", "تأكيد"
         )
         val shouldSkip = skipTexts.any { combinedText.contains(it, ignoreCase = true) }
 
