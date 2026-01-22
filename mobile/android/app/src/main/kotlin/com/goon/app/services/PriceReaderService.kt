@@ -6151,20 +6151,17 @@ class PriceReaderService : AccessibilityService() {
             it.contains("تعيين موقع")
         }
 
-        // Also check for presence of address selection screen elements
-        val hasSelectAddressTitle = allTextLower.any {
-            it.contains("select address") ||
-            it.contains("select destination") ||
-            it.contains("select pickup") ||
-            it.contains("اختر العنوان") ||
-            it.contains("حدد الوجهة") ||
-            it.contains("حدد نقطة الانطلاق")
-        }
+        // Cache display metrics once for performance
+        val displayMetrics = resources.displayMetrics
+        val screenHeight = displayMetrics.heightPixels
+        val screenWidth = displayMetrics.widthPixels
 
         // If we see "Set Destination" button, this is the MAP PIN CONFIRMATION screen
         // regardless of whether the title says "Select Address" or "Select Destination"
         if (hasSetButton) {
-            Log.i(TAG, "🗺️ DiDi MAP PIN CONFIRMATION screen detected!")
+            // Determine if this is for PICKUP or DESTINATION based on current automation state
+            val isPickupPhase = !didiPickupPhaseComplete
+            Log.i(TAG, "🗺️ DiDi MAP PIN CONFIRMATION screen detected! (${if (isPickupPhase) "PICKUP" else "DESTINATION"} phase)")
             Log.i(TAG, "🗺️ Screen texts: ${allText.take(8).joinToString(" | ") { it.take(30) }}")
 
             // Find and click "Set Destination" button
@@ -6182,8 +6179,6 @@ class PriceReaderService : AccessibilityService() {
                     node.getBoundsInScreen(rect)
 
                     // Only consider buttons in the lower half of the screen (Y > 50%)
-                    val displayMetrics = resources.displayMetrics
-                    val screenHeight = displayMetrics.heightPixels
                     if (rect.top < screenHeight * 0.5) {
                         Log.d(TAG, "🗺️ Skipping '$buttonText' at Y=${rect.top} (too high)")
                         node.recycle()
@@ -6224,16 +6219,32 @@ class PriceReaderService : AccessibilityService() {
                     node.recycle()
 
                     if (clicked) {
-                        Log.i(TAG, "🗺️ ✓ Clicked 'Set Destination' - confirming map location")
+                        Log.i(TAG, "🗺️ ✓ Clicked 'Set ${if (isPickupPhase) "Pickup" else "Destination"}' - confirming map location")
+
+                        // CRITICAL: Transition state appropriately based on which phase we're in
+                        if (isPickupPhase) {
+                            // Pickup phase: move to destination entry
+                            didiPickupPhaseComplete = true
+                            didiPickupFieldClicked = false
+                            automationState = AutomationState.FINDING_DESTINATION_FIELD
+                            automationRetries = 0
+                            automationStep = 0
+                            didiNoAddressCardLoggedCount = 0  // Reset counter for next phase
+                            Log.i(TAG, "🗺️ → Transitioning to FINDING_DESTINATION_FIELD")
+                        } else {
+                            // Destination phase: move to wait for prices
+                            automationState = AutomationState.WAITING_FOR_PRICE
+                            automationRetries = 0
+                            automationStep = 0
+                            didiNoAddressCardLoggedCount = 0  // Reset counter
+                            Log.i(TAG, "🗺️ → Transitioning to WAITING_FOR_PRICE")
+                        }
                         return true
                     }
                 }
             }
 
             // Fallback: gesture tap at bottom center of screen where button typically is
-            val displayMetrics = resources.displayMetrics
-            val screenHeight = displayMetrics.heightPixels
-            val screenWidth = displayMetrics.widthPixels
             val buttonY = screenHeight * 0.90f  // Very near bottom
             val centerX = screenWidth / 2f
 
@@ -6330,22 +6341,23 @@ class PriceReaderService : AccessibilityService() {
             } else {
                 didiNoAddressCardLoggedCount++
 
-                // SMART DETECTION: If pickup address is short (< 10 chars), use "Pin your location" EARLY
+                // Determine which address we're working with (pickup or destination)
+                val isPickupPhase = !didiPickupPhaseComplete
+                val currentAddress = if (isPickupPhase) pickupAddress else destinationAddress
+
+                // SMART DETECTION: If current address is short (< 10 chars), use "Pin your location" EARLY
                 // Short addresses like "احمد" will have many unrelated suggestions
-                val isShortAddress = pickupAddress.length < 10
+                val isShortAddress = currentAddress.length < 10
                 val earlyFallbackAttempt = if (isShortAddress) 5 else 13  // Use pin earlier for short addresses
 
                 // Only log first 3 times to reduce spam
                 if (didiNoAddressCardLoggedCount <= 3) {
-                    Log.w(TAG, "📍 No address card found (attempt $didiNoAddressCardLoggedCount, shortAddr=$isShortAddress)")
+                    Log.w(TAG, "📍 No address card found (attempt $didiNoAddressCardLoggedCount, phase=${if (isPickupPhase) "PICKUP" else "DEST"}, shortAddr=$isShortAddress)")
                 } else if (didiNoAddressCardLoggedCount == earlyFallbackAttempt) {
                     Log.w(TAG, "📍 Using 'Pin your location' fallback for ${if (isShortAddress) "short address" else "missing suggestions"}...")
                 }
 
-                // FALLBACK: If we can't find address cards, try gesture tap at different positions
-                // DiDi layout: Pickup(Y=233-359), Destination(Y=359-485), Suggestions(Y=485+)
-                val displayMetrics = resources.displayMetrics
-                val screenWidth = displayMetrics.widthPixels
+                // Use already-cached screenWidth from displayMetrics at function start
                 val tapX = screenWidth / 2f
 
                 // For SHORT ADDRESSES: Skip gesture taps and go directly to "Pin your location"
@@ -6354,13 +6366,15 @@ class PriceReaderService : AccessibilityService() {
 
                 if (shouldUsePinEarly) {
                     // Skip to PIN fallback for short addresses
-                    Log.i(TAG, "📍 Short address detected ('$pickupAddress') - using 'Pin your location' early")
+                    Log.i(TAG, "📍 Short address detected ('$currentAddress') - using 'Pin your location' early")
                 } else {
+                    // Use screen percentages instead of magic numbers for better device compatibility
+                    // Suggestions list starts around 25% from top of screen
                     when (didiNoAddressCardLoggedCount) {
                         4 -> {
-                            // First fallback: try Y=500 (just below destination field)
-                            val tapY = 500f
-                            Log.i(TAG, "📍 Fallback 1: gesture tap at Y=$tapY")
+                            // First fallback: try 25% from top (just below destination field)
+                            val tapY = screenHeight * 0.25f
+                            Log.i(TAG, "📍 Fallback 1: gesture tap at Y=$tapY (25%)")
                             val path = android.graphics.Path()
                             path.moveTo(tapX, tapY)
                             val gesture = android.accessibilityservice.GestureDescription.Builder()
@@ -6371,9 +6385,9 @@ class PriceReaderService : AccessibilityService() {
                             return true
                         }
                         7 -> {
-                            // Second fallback: try Y=550
-                            val tapY = 550f
-                            Log.i(TAG, "📍 Fallback 2: gesture tap at Y=$tapY")
+                            // Second fallback: try 30% from top
+                            val tapY = screenHeight * 0.30f
+                            Log.i(TAG, "📍 Fallback 2: gesture tap at Y=$tapY (30%)")
                             val path = android.graphics.Path()
                             path.moveTo(tapX, tapY)
                             val gesture = android.accessibilityservice.GestureDescription.Builder()
@@ -6384,9 +6398,9 @@ class PriceReaderService : AccessibilityService() {
                             return true
                         }
                         10 -> {
-                            // Third fallback: try Y=650
-                            val tapY = 650f
-                            Log.i(TAG, "📍 Fallback 3: gesture tap at Y=$tapY")
+                            // Third fallback: try 35% from top
+                            val tapY = screenHeight * 0.35f
+                            Log.i(TAG, "📍 Fallback 3: gesture tap at Y=$tapY (35%)")
                             val path = android.graphics.Path()
                             path.moveTo(tapX, tapY)
                             val gesture = android.accessibilityservice.GestureDescription.Builder()
@@ -6403,16 +6417,14 @@ class PriceReaderService : AccessibilityService() {
                 if (didiNoAddressCardLoggedCount >= 13 || shouldUsePinEarly) {
                         // FINAL FALLBACK: No suggestions found
                         // First SCROLL DOWN to reveal "Pin your location on the map" option
-                        Log.i(TAG, "📍 FINAL FALLBACK: Scrolling down to find 'Pin your location on the map'...")
+                        Log.i(TAG, "📍 FINAL FALLBACK: Scrolling down to find 'Pin your location on the map'... (phase=${if (isPickupPhase) "PICKUP" else "DEST"})")
 
-                        val displayMetrics = resources.displayMetrics
-                        val screenHeight = displayMetrics.heightPixels
-                        val screenWidth = displayMetrics.widthPixels
+                        // Use cached screenHeight/screenWidth from function start
+                        val centerX = screenWidth / 2f
 
                         // Scroll down gesture (from Y=70% to Y=30%)
                         val startY = screenHeight * 0.7f
                         val endY = screenHeight * 0.3f
-                        val centerX = screenWidth / 2f
 
                         val scrollPath = android.graphics.Path()
                         scrollPath.moveTo(centerX, startY)
@@ -6422,7 +6434,7 @@ class PriceReaderService : AccessibilityService() {
                             .build()
                         dispatchGesture(scrollGesture, null, null)
                         Log.i(TAG, "📍 Scrolled down to reveal more options")
-                        Thread.sleep(500)
+                        // Note: Avoid Thread.sleep in accessibility service - next tick will handle
 
                         // Now try "Pin your location on the map" for precise GPS location
                         Log.i(TAG, "📍 Looking for 'Pin your location on the map'...")
@@ -6438,11 +6450,21 @@ class PriceReaderService : AccessibilityService() {
                                     Log.i(TAG, "📍 ✓ Clicked 'Pin your location' - will use GPS to set location")
                                     // Note: After clicking pin, DiDi opens map view where user's GPS location is used
                                     // The map should be centered on current GPS which matches GO-ON's coordinates
-                                    didiPickupPhaseComplete = true
-                                    didiPickupFieldClicked = false
-                                    automationState = AutomationState.FINDING_DESTINATION_FIELD
+
+                                    // CRITICAL: Transition state based on current phase
+                                    if (isPickupPhase) {
+                                        didiPickupPhaseComplete = true
+                                        didiPickupFieldClicked = false
+                                        automationState = AutomationState.FINDING_DESTINATION_FIELD
+                                        Log.i(TAG, "📍 → Transitioning to FINDING_DESTINATION_FIELD")
+                                    } else {
+                                        // Destination phase - map will open, then Set Destination will be clicked
+                                        // Stay in current state - handleDiDiIntermediateScreens will handle the map confirmation
+                                        Log.i(TAG, "📍 → Staying in current state for map confirmation")
+                                    }
                                     automationRetries = 0
                                     automationStep = 0
+                                    didiNoAddressCardLoggedCount = 0  // Reset counter
                                     node.recycle()
                                     lastDiDiSelectAddressClickTime = currentTime
                                     pinClicked = true
@@ -6463,7 +6485,7 @@ class PriceReaderService : AccessibilityService() {
                                 .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(pinPath, 0, 150))
                                 .build()
                             dispatchGesture(pinGesture, null, null)
-                            Thread.sleep(500)
+                            // Note: Removed Thread.sleep - next tick will handle
                         }
 
                         // Fallback: If no "Pin your location" found, click "Where to?" to proceed
@@ -6582,6 +6604,8 @@ class PriceReaderService : AccessibilityService() {
             "Pin your location", "Select Address", "Powered by",
             "Back", "Where to", "Add stop", "Pickup point", "Search",
             "Home", "Work", "Favourites", "Use your", "voucher",
+            // Skip current location indicators
+            "Current location", "موقعك الحالي", "Your location",
             // Skip warning messages about different countries/cities
             "Some addresses below", "different country", "different city",
             "select carefully", "Please select carefully",
@@ -6589,7 +6613,9 @@ class PriceReaderService : AccessibilityService() {
             "No results found", "please enter another address", "enter another address",
             // Skip map confirmation screen buttons (these are NOT address cards!)
             "Set Destination", "Select Destination", "Set Pickup", "Set Location",
-            "Edit", "Confirm", "تعديل", "تأكيد"
+            "Edit", "Confirm", "تعديل", "تأكيد",
+            // Skip GPS/map related texts
+            "Locating", "Searching", "جاري البحث", "تحديد الموقع"
         )
         val shouldSkip = skipTexts.any { combinedText.contains(it, ignoreCase = true) }
 
