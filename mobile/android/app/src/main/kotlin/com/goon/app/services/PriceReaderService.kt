@@ -213,6 +213,7 @@ class PriceReaderService : AccessibilityService() {
     // ==========================================================================
 
     private var automationState = AutomationState.IDLE
+    private var previousAutomationState: AutomationState? = null  // Track state changes to reduce log spam
     private var automationStep = 0
     private var automationRetries = 0
     private var automationStartTime = 0L  // Timestamp when automation started
@@ -323,6 +324,7 @@ class PriceReaderService : AccessibilityService() {
         // Reset state
         automationStep = 0
         automationRetries = 0
+        previousAutomationState = null  // Reset to log first state change
         monitoringPackage = packageName
         isActiveMonitoring = true
         automationStartTime = System.currentTimeMillis()  // Track when automation started
@@ -415,12 +417,11 @@ class PriceReaderService : AccessibilityService() {
                 return
             }
 
-            Log.i(TAG, "🤖 ========================================")
-            Log.i(TAG, "🤖 AUTOMATION STATE: $automationState")
-            Log.i(TAG, "🤖 Package: $packageName")
-            Log.i(TAG, "🤖 Retries: $automationRetries / ${TimingConfig.MAX_RETRIES}")
-            Log.i(TAG, "🤖 Step: $automationStep")
-            Log.i(TAG, "🤖 ========================================")
+            // Only log state when it CHANGES (reduces log spam significantly)
+            if (automationState != previousAutomationState) {
+                Log.i(TAG, "🤖 ═══ State: $previousAutomationState → $automationState ═══")
+                previousAutomationState = automationState
+            }
 
             when (automationState) {
                 AutomationState.WAITING_FOR_APP -> {
