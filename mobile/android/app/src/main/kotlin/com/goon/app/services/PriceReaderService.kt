@@ -639,6 +639,15 @@ class PriceReaderService : AccessibilityService() {
                         Log.i(TAG, "🤖 Searching for destination field...")
                     }
 
+                    // CRITICAL: For DiDi, check for MAP PIN CONFIRMATION screen first!
+                    // This appears after clicking "Pin your location" - user needs to click "Set Destination"
+                    if (packageName == DIDI_PACKAGE) {
+                        if (handleDiDiIntermediateScreens(rootNode)) {
+                            Log.i(TAG, "🚕 📋 Handled DiDi intermediate screen during FINDING_DESTINATION_FIELD")
+                            return
+                        }
+                    }
+
                     // CRITICAL: For InDriver, check if prices are ALREADY cached (InDriver shows prices on initial map)
                     if (packageName == INDRIVER_PACKAGE) {
                         val cachedPrice = latestPrices[packageName]
@@ -692,9 +701,15 @@ class PriceReaderService : AccessibilityService() {
                         }
                     }
 
-                    // CRITICAL: For DiDi, check if we're still on home screen (Where to? button visible)
-                    // This means the click didn't work and we need to retry
+                    // CRITICAL: For DiDi, check for intermediate screens first (map pin confirmation)
                     if (packageName == DIDI_PACKAGE) {
+                        if (handleDiDiIntermediateScreens(rootNode)) {
+                            Log.i(TAG, "🚕 📋 Handled DiDi intermediate screen during ENTERING_DESTINATION")
+                            return
+                        }
+
+                        // Check if we're still on home screen (Where to? button visible)
+                        // This means the click didn't work and we need to retry
                         val allText = getAllTextFromNode(rootNode)
                         val isOnHomeScreen = allText.any { text ->
                             val lower = text.lowercase()
@@ -6124,53 +6139,105 @@ class PriceReaderService : AccessibilityService() {
         // ============================================================
         // FIRST: Check for MAP PIN CONFIRMATION screen
         // This appears after clicking "Pin your location on the map"
-        // Shows: "Select Destination" title + map + "Set Destination" button
+        // IMPORTANT: Both regular address screen AND map pin screen have "Select Address" as title!
+        // The KEY differentiator is the presence of "Set Destination" button
         // ============================================================
-        val isMapPinScreen = allTextLower.any {
-            it.contains("select destination") ||
-            it.contains("select pickup") ||
-            it.contains("حدد الوجهة") ||
-            it.contains("حدد نقطة الانطلاق")
-        }
         val hasSetButton = allTextLower.any {
             it.contains("set destination") ||
             it.contains("set pickup") ||
             it.contains("set location") ||
             it.contains("تعيين الوجهة") ||
-            it.contains("تعيين نقطة")
+            it.contains("تعيين نقطة") ||
+            it.contains("تعيين موقع")
         }
 
-        if (isMapPinScreen && hasSetButton) {
-            Log.i(TAG, "🗺️ DiDi MAP PIN CONFIRMATION screen detected - clicking 'Set Destination'...")
+        // Also check for presence of address selection screen elements
+        val hasSelectAddressTitle = allTextLower.any {
+            it.contains("select address") ||
+            it.contains("select destination") ||
+            it.contains("select pickup") ||
+            it.contains("اختر العنوان") ||
+            it.contains("حدد الوجهة") ||
+            it.contains("حدد نقطة الانطلاق")
+        }
+
+        // If we see "Set Destination" button, this is the MAP PIN CONFIRMATION screen
+        // regardless of whether the title says "Select Address" or "Select Destination"
+        if (hasSetButton) {
+            Log.i(TAG, "🗺️ DiDi MAP PIN CONFIRMATION screen detected!")
+            Log.i(TAG, "🗺️ Screen texts: ${allText.take(8).joinToString(" | ") { it.take(30) }}")
 
             // Find and click "Set Destination" button
-            val setButtonTexts = listOf("Set Destination", "Set Pickup", "Set Location", "تعيين الوجهة", "تعيين")
+            // Order matters: try most specific first
+            val setButtonTexts = listOf(
+                "Set Destination", "Set Pickup", "Set Location",
+                "تعيين الوجهة", "تعيين نقطة", "تعيين موقع", "تعيين",
+                "Confirm", "تأكيد"
+            )
+
             for (buttonText in setButtonTexts) {
                 val buttonNodes = rootNode.findAccessibilityNodeInfosByText(buttonText)
                 for (node in buttonNodes) {
                     val rect = android.graphics.Rect()
                     node.getBoundsInScreen(rect)
-                    Log.i(TAG, "🗺️ Found '$buttonText' button at Y=${rect.top}")
 
-                    // Try to click
-                    if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK) || clickNodeOrParent(node)) {
-                        Log.i(TAG, "🗺️ ✓ Clicked 'Set Destination' - confirming map location")
+                    // Only consider buttons in the lower half of the screen (Y > 50%)
+                    val displayMetrics = resources.displayMetrics
+                    val screenHeight = displayMetrics.heightPixels
+                    if (rect.top < screenHeight * 0.5) {
+                        Log.d(TAG, "🗺️ Skipping '$buttonText' at Y=${rect.top} (too high)")
                         node.recycle()
-                        // After clicking Set Destination, DiDi should go to price screen or next step
+                        continue
+                    }
+
+                    Log.i(TAG, "🗺️ Found '$buttonText' button at Y=${rect.top} - clicking...")
+
+                    // Try multiple click strategies
+                    var clicked = false
+
+                    // Strategy 1: Direct click
+                    if (node.isClickable) {
+                        clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        if (clicked) Log.i(TAG, "🗺️ ✓ Direct ACTION_CLICK succeeded")
+                    }
+
+                    // Strategy 2: Click parent
+                    if (!clicked) {
+                        clicked = clickNodeOrParent(node)
+                        if (clicked) Log.i(TAG, "🗺️ ✓ clickNodeOrParent succeeded")
+                    }
+
+                    // Strategy 3: Gesture tap on button location
+                    if (!clicked) {
+                        val centerX = (rect.left + rect.right) / 2f
+                        val centerY = (rect.top + rect.bottom) / 2f
+                        Log.i(TAG, "🗺️ Trying gesture tap at ($centerX, $centerY)")
+                        val path = android.graphics.Path()
+                        path.moveTo(centerX, centerY)
+                        val gesture = android.accessibilityservice.GestureDescription.Builder()
+                            .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 150))
+                            .build()
+                        dispatchGesture(gesture, null, null)
+                        clicked = true
+                    }
+
+                    node.recycle()
+
+                    if (clicked) {
+                        Log.i(TAG, "🗺️ ✓ Clicked 'Set Destination' - confirming map location")
                         return true
                     }
-                    node.recycle()
                 }
             }
 
-            // Fallback: gesture tap at bottom of screen where button typically is
+            // Fallback: gesture tap at bottom center of screen where button typically is
             val displayMetrics = resources.displayMetrics
             val screenHeight = displayMetrics.heightPixels
             val screenWidth = displayMetrics.widthPixels
-            val buttonY = screenHeight * 0.85f  // Near bottom
+            val buttonY = screenHeight * 0.90f  // Very near bottom
             val centerX = screenWidth / 2f
 
-            Log.i(TAG, "🗺️ Trying gesture tap on 'Set Destination' area at Y=$buttonY")
+            Log.i(TAG, "🗺️ Button not found by text, trying gesture tap at Y=$buttonY")
             val path = android.graphics.Path()
             path.moveTo(centerX, buttonY)
             val gesture = android.accessibilityservice.GestureDescription.Builder()
