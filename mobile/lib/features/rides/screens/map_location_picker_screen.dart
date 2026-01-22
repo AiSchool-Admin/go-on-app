@@ -128,13 +128,28 @@ class _MapLocationPickerScreenState extends ConsumerState<MapLocationPickerScree
     return plusCodeRegex.hasMatch(trimmed);
   }
 
+  /// Minimum address length for automation (short addresses don't work well with DiDi/other apps)
+  static const int _minAddressLength = 10;
+
   Future<void> _getAddressFromLocation(LatLng location) async {
     setState(() => _isLoadingAddress = true);
 
     try {
-      // STEP 1: Try Google Places API to get actual place name (like Google Maps does)
+      // STEP 1: Get detailed street address from Geocoding API FIRST
+      // This gives us the most detailed address (street name + area)
+      final streetAddress = await _getDetailedStreetAddress(location);
+      if (streetAddress != null && streetAddress.length >= _minAddressLength) {
+        debugPrint('✓ Got detailed street address: $streetAddress');
+        setState(() {
+          _selectedAddress = streetAddress;
+          _isLoadingAddress = false;
+        });
+        return;
+      }
+
+      // STEP 2: Try Google Places API to get actual place name
       final placeName = await _getNearbyPlaceName(location);
-      if (placeName != null && placeName.isNotEmpty) {
+      if (placeName != null && placeName.length >= _minAddressLength) {
         debugPrint('✓ Got place name from Places API: $placeName');
         setState(() {
           _selectedAddress = placeName;
@@ -143,9 +158,9 @@ class _MapLocationPickerScreenState extends ConsumerState<MapLocationPickerScree
         return;
       }
 
-      // STEP 2: Fallback to Geocoding API for street address
+      // STEP 3: Fallback to general Geocoding API
       final address = await _getAddressFromGoogleAPI(location);
-      if (address != null && address.isNotEmpty) {
+      if (address != null && address.length >= _minAddressLength) {
         debugPrint('✓ Got address from Geocoding API: $address');
         setState(() {
           _selectedAddress = address;
@@ -154,9 +169,21 @@ class _MapLocationPickerScreenState extends ConsumerState<MapLocationPickerScree
         return;
       }
 
-      // STEP 3: Fallback to coordinates
+      // STEP 4: If all addresses are too short, combine them with area name
+      final combinedAddress = await _getCombinedAddress(location, streetAddress ?? placeName ?? address);
+      if (combinedAddress != null && combinedAddress.length >= _minAddressLength) {
+        debugPrint('✓ Got combined address: $combinedAddress');
+        setState(() {
+          _selectedAddress = combinedAddress;
+          _isLoadingAddress = false;
+        });
+        return;
+      }
+
+      // STEP 5: Last resort - use whatever we have or coordinates
+      final bestAddress = streetAddress ?? placeName ?? address;
       setState(() {
-        _selectedAddress = '${location.latitude.toStringAsFixed(6)}, ${location.longitude.toStringAsFixed(6)}';
+        _selectedAddress = bestAddress ?? '${location.latitude.toStringAsFixed(6)}, ${location.longitude.toStringAsFixed(6)}';
         _isLoadingAddress = false;
       });
     } catch (e) {
@@ -168,16 +195,139 @@ class _MapLocationPickerScreenState extends ConsumerState<MapLocationPickerScree
     }
   }
 
+  /// Get detailed street address with components (street name + neighborhood)
+  Future<String?> _getDetailedStreetAddress(LatLng location) async {
+    try {
+      final apiKey = AppConstants.googleMapsApiKey;
+      final url = Uri.parse(
+        'https://maps.googleapis.com/maps/api/geocode/json'
+        '?latlng=${location.latitude},${location.longitude}'
+        '&language=ar'
+        '&key=$apiKey'
+      );
+
+      final response = await http.get(url).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['status'] == 'OK') {
+          final results = data['results'] as List?;
+          if (results != null && results.isNotEmpty) {
+            // Extract components from first result
+            final components = results.first['address_components'] as List?;
+            if (components != null) {
+              String? streetNumber;
+              String? route;  // Street name
+              String? neighborhood;
+              String? sublocality;
+              String? locality;
+
+              for (final comp in components) {
+                final types = (comp['types'] as List?)?.cast<String>() ?? [];
+                final name = comp['long_name'] as String?;
+
+                if (types.contains('street_number')) {
+                  streetNumber = name;
+                } else if (types.contains('route')) {
+                  route = name;
+                } else if (types.contains('neighborhood')) {
+                  neighborhood = name;
+                } else if (types.contains('sublocality') || types.contains('sublocality_level_1')) {
+                  sublocality = name;
+                } else if (types.contains('locality')) {
+                  locality = name;
+                }
+              }
+
+              // Build detailed address
+              final parts = <String>[];
+
+              // Add street with number
+              if (route != null && route.isNotEmpty && !_isPlusCode(route)) {
+                if (streetNumber != null) {
+                  parts.add('$streetNumber $route');
+                } else {
+                  parts.add(route);
+                }
+              }
+
+              // Add neighborhood/area
+              final area = neighborhood ?? sublocality ?? locality;
+              if (area != null && area.isNotEmpty && !_isPlusCode(area)) {
+                // Don't duplicate if area is same as route
+                if (parts.isEmpty || !parts.first.contains(area)) {
+                  parts.add(area);
+                }
+              }
+
+              if (parts.isNotEmpty) {
+                final result = parts.join('، ');
+                debugPrint('Detailed address components: street=$route, area=$area -> $result');
+                return result;
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Detailed address error: $e');
+    }
+    return null;
+  }
+
+  /// Combine short address with area name to make it longer
+  Future<String?> _getCombinedAddress(LatLng location, String? shortAddress) async {
+    if (shortAddress == null || shortAddress.isEmpty) return null;
+
+    try {
+      final apiKey = AppConstants.googleMapsApiKey;
+      final url = Uri.parse(
+        'https://maps.googleapis.com/maps/api/geocode/json'
+        '?latlng=${location.latitude},${location.longitude}'
+        '&language=ar'
+        '&result_type=sublocality|locality|administrative_area_level_2'
+        '&key=$apiKey'
+      );
+
+      final response = await http.get(url).timeout(const Duration(seconds: 5));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['status'] == 'OK') {
+          final results = data['results'] as List?;
+          if (results != null && results.isNotEmpty) {
+            final formattedAddress = results.first['formatted_address'] as String?;
+            if (formattedAddress != null) {
+              // Extract area name (first part before comma)
+              final parts = formattedAddress.split(RegExp(r'[,،]'));
+              final areaName = parts.isNotEmpty ? parts.first.trim() : null;
+
+              if (areaName != null &&
+                  areaName.isNotEmpty &&
+                  !_isPlusCode(areaName) &&
+                  !shortAddress.contains(areaName)) {
+                return '$shortAddress، $areaName';
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Combined address error: $e');
+    }
+    return null;
+  }
+
   /// Get nearby place name using Google Places API (this is what Google Maps uses!)
   Future<String?> _getNearbyPlaceName(LatLng location) async {
     try {
       final apiKey = AppConstants.googleMapsApiKey;
 
-      // Use Places Nearby Search API
+      // Use Places Nearby Search API with larger radius for better results
       final url = Uri.parse(
         'https://maps.googleapis.com/maps/api/place/nearbysearch/json'
         '?location=${location.latitude},${location.longitude}'
-        '&radius=50'  // 50 meters - very close places only
+        '&radius=100'  // 100 meters - wider search for more results
         '&language=ar'
         '&key=$apiKey'
       );
@@ -197,7 +347,11 @@ class _MapLocationPickerScreenState extends ConsumerState<MapLocationPickerScree
           if (results != null && results.isNotEmpty) {
             debugPrint('Places API found ${results.length} nearby places');
 
-            // Get the closest/most relevant place
+            // Get the closest/most relevant place - prefer longer, more descriptive names
+            String? bestName;
+            String? bestVicinity;
+            int bestScore = 0;
+
             for (final place in results) {
               final name = place['name'] as String?;
               final vicinity = place['vicinity'] as String?;
@@ -213,19 +367,44 @@ class _MapLocationPickerScreenState extends ConsumerState<MapLocationPickerScree
                 t == 'administrative_area_level_2'
               );
 
-              if (name != null && name.isNotEmpty && !isGenericType) {
-                debugPrint('Found place: $name, vicinity: $vicinity (types: $types)');
+              if (name == null || name.isEmpty || isGenericType) continue;
 
-                // Clean vicinity - extract only Arabic location name
-                final cleanVicinity = _cleanVicinity(vicinity);
-                debugPrint('Clean vicinity: $cleanVicinity');
+              // Skip very short names (less than 5 characters)
+              if (name.length < 5) continue;
 
-                // Return name with clean vicinity
-                if (cleanVicinity != null && cleanVicinity.isNotEmpty) {
-                  return '$name، $cleanVicinity';
-                }
-                return name;
+              // Skip Plus Codes
+              if (_isPlusCode(name)) continue;
+
+              debugPrint('Found place: $name, vicinity: $vicinity (types: $types)');
+
+              // Score the name - prefer longer, more descriptive names
+              int score = name.length;
+
+              // Bonus for specific place types
+              if (types.contains('establishment')) score += 10;
+              if (types.contains('point_of_interest')) score += 8;
+              if (types.contains('store') || types.contains('restaurant')) score += 5;
+
+              // Bonus for Arabic names
+              if (RegExp(r'[\u0600-\u06FF]').hasMatch(name)) score += 5;
+
+              if (score > bestScore) {
+                bestScore = score;
+                bestName = name;
+                bestVicinity = vicinity;
               }
+            }
+
+            if (bestName != null) {
+              // Clean vicinity - extract only Arabic location name
+              final cleanVicinity = _cleanVicinity(bestVicinity);
+              debugPrint('Best place: $bestName, clean vicinity: $cleanVicinity');
+
+              // Return name with clean vicinity for longer address
+              if (cleanVicinity != null && cleanVicinity.isNotEmpty) {
+                return '$bestName، $cleanVicinity';
+              }
+              return bestName;
             }
           }
         } else if (status == 'REQUEST_DENIED') {
