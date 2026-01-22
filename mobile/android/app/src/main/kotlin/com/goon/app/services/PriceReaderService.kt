@@ -8529,15 +8529,18 @@ class PriceReaderService : AccessibilityService() {
 
         if (prices.isNotEmpty()) {
             val bestPrice = findBestPrice(prices)
+            val uniquePrices = prices.distinct().sorted()
             val priceInfo = PriceInfo(
                 appName = "Careem",
                 packageName = CAREEM_PACKAGE,
                 price = bestPrice,
                 serviceType = detectServiceType(CAREEM_PACKAGE, allText),
-                eta = extractETA(allText)
+                eta = extractETA(allText),
+                allPricesFound = uniquePrices,  // FIX: Include all prices found
+                rawTexts = allText.take(30)  // Store some raw text for debugging
             )
             updatePrice(priceInfo)
-            Log.d(TAG, "Careem price: $bestPrice EGP")
+            Log.d(TAG, "Careem price: $bestPrice EGP (all: $uniquePrices)")
         }
     }
 
@@ -8605,13 +8608,16 @@ class PriceReaderService : AccessibilityService() {
 
         if (bestPrice != null) {
             val priceSource = if (suggestedFare != null) "الأجر المقترح" else "extracted"
+            val uniquePrices = prices.distinct().sorted()
             Log.i(TAG, "InDriver prices: $prices -> best: $bestPrice EGP (source: $priceSource)")
             val priceInfo = PriceInfo(
                 appName = "InDriver",
                 packageName = INDRIVER_PACKAGE,
                 price = bestPrice,
                 serviceType = "Economy",
-                eta = extractETA(allText)
+                eta = extractETA(allText),
+                allPricesFound = uniquePrices,  // FIX: Include all prices found
+                rawTexts = allText.take(30)  // Store some raw text for debugging
             )
             updatePrice(priceInfo)
         } else {
@@ -8641,15 +8647,18 @@ class PriceReaderService : AccessibilityService() {
 
         if (prices.isNotEmpty()) {
             val bestPrice = findBestPrice(prices)
+            val uniquePrices = prices.distinct().sorted()
             val priceInfo = PriceInfo(
                 appName = "DiDi",
                 packageName = DIDI_PACKAGE,
                 price = bestPrice,
                 serviceType = "Express",
-                eta = extractETA(allText)
+                eta = extractETA(allText),
+                allPricesFound = uniquePrices,  // FIX: Include all prices found
+                rawTexts = allText.take(30)  // Store some raw text for debugging
             )
             updatePrice(priceInfo)
-            Log.d(TAG, "DiDi price: $bestPrice EGP")
+            Log.d(TAG, "DiDi price: $bestPrice EGP (all: $uniquePrices)")
         }
     }
 
@@ -8669,15 +8678,18 @@ class PriceReaderService : AccessibilityService() {
 
         if (prices.isNotEmpty()) {
             val bestPrice = findBestPrice(prices)
+            val uniquePrices = prices.distinct().sorted()
             val priceInfo = PriceInfo(
                 appName = "Bolt",
                 packageName = BOLT_PACKAGE,
                 price = bestPrice,
                 serviceType = detectServiceType(BOLT_PACKAGE, allText),
-                eta = extractETA(allText)
+                eta = extractETA(allText),
+                allPricesFound = uniquePrices,  // FIX: Include all prices found
+                rawTexts = allText.take(30)  // Store some raw text for debugging
             )
             updatePrice(priceInfo)
-            Log.d(TAG, "Bolt price: $bestPrice EGP")
+            Log.d(TAG, "Bolt price: $bestPrice EGP (all: $uniquePrices)")
         }
     }
 
