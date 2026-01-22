@@ -272,6 +272,8 @@ class PriceReaderService : AccessibilityService() {
     private var didiPickupEntered = false
     private var didiPickupPhaseComplete = false
     private var didiPickupFieldClicked = false
+    private var didiNoAddressCardLoggedCount = 0  // Track log count to reduce spam
+    private var didiStillOnSelectAddressLogCount = 0  // Track log count to reduce spam
 
     /**
      * FULLY AUTOMATED PRICE FETCH
@@ -336,6 +338,8 @@ class PriceReaderService : AccessibilityService() {
         didiPickupEntered = false  // Reset DiDi pickup flag (PICKUP FIRST flow)
         didiPickupPhaseComplete = false  // Reset DiDi pickup phase complete flag
         didiPickupFieldClicked = false  // Reset DiDi pickup field click flag
+        didiNoAddressCardLoggedCount = 0  // Reset log spam counter
+        didiStillOnSelectAddressLogCount = 0  // Reset log spam counter
         careemCarButtonClicked = false  // Reset Careem car button flag
         careemCarButtonClickAttempts = 0  // Reset Careem car button click attempts
         careemSearchBarClicked = false  // Reset Careem search bar click flag
@@ -745,7 +749,7 @@ class PriceReaderService : AccessibilityService() {
                 AutomationState.WAITING_FOR_SUGGESTIONS -> {
                     // Wait a moment then try to select
                     automationStep++
-                    Log.i(TAG, "🤖 Waiting for suggestions (step $automationStep/3)...")
+                    if (automationStep == 1) Log.i(TAG, "🤖 Waiting for suggestions...")
 
                     // For InDriver: Handle intermediate screens (No Results, Map Confirmation)
                     // Price detection is BLOCKED during automation, so we just handle UI navigation
@@ -829,7 +833,8 @@ class PriceReaderService : AccessibilityService() {
                 }
 
                 AutomationState.SELECTING_SUGGESTION -> {
-                    Log.i(TAG, "🤖 Selecting first suggestion...")
+                    automationStep++
+                    if (automationStep == 1) Log.i(TAG, "🤖 Selecting first suggestion...")
 
                     // InDriver should not reach this state (handled separately)
                     // But if it does, just go to WAITING_FOR_PRICE
@@ -857,7 +862,10 @@ class PriceReaderService : AccessibilityService() {
                             it.lowercase().contains("pin your location")
                         }
                         if (stillOnSelectAddress) {
-                            Log.i(TAG, "🤖 📋 DiDi still on 'Select Address' screen - waiting for transition...")
+                            didiStillOnSelectAddressLogCount++
+                            if (didiStillOnSelectAddressLogCount <= 2) {
+                                Log.i(TAG, "🤖 📋 DiDi still on 'Select Address' - waiting...")
+                            }
                             return
                         }
 
@@ -6103,16 +6111,11 @@ class PriceReaderService : AccessibilityService() {
         }
 
         if (hasSelectAddressScreen) {
-            Log.i(TAG, "📍 Detected DiDi 'Select Address' screen")
-
             // Check cooldown to prevent clicking too fast (2s for DiDi stability)
             val currentTime = System.currentTimeMillis()
             if (currentTime - lastDiDiSelectAddressClickTime < 2000) {
-                Log.i(TAG, "📍 Waiting for cooldown (${2000 - (currentTime - lastDiDiSelectAddressClickTime)}ms remaining)")
                 return false // Don't handle - let automation continue waiting
             }
-
-            Log.i(TAG, "📍 Selecting first address card...")
 
             // Find the first clickable address card
             val addressCard = findFirstDiDiAddressCard(rootNode)
@@ -6169,7 +6172,13 @@ class PriceReaderService : AccessibilityService() {
                     return true
                 }
             } else {
-                Log.w(TAG, "📍 No address card found on Select Address screen")
+                didiNoAddressCardLoggedCount++
+                // Only log first 3 times to reduce spam
+                if (didiNoAddressCardLoggedCount <= 3) {
+                    Log.w(TAG, "📍 No address card found (attempt $didiNoAddressCardLoggedCount)")
+                } else if (didiNoAddressCardLoggedCount == 10) {
+                    Log.w(TAG, "📍 Still no address card after 10 attempts...")
+                }
             }
         }
 
