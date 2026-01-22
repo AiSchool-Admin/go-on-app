@@ -6117,6 +6117,15 @@ class PriceReaderService : AccessibilityService() {
                 return false // Don't handle - let automation continue waiting
             }
 
+            // DEBUG: Log visible text on first attempt
+            if (didiNoAddressCardLoggedCount == 0) {
+                Log.i(TAG, "📍 === VISIBLE TEXT ON SELECT ADDRESS SCREEN ===")
+                allText.take(10).forEachIndexed { idx, text ->
+                    Log.i(TAG, "📍 [$idx] '${text.take(60)}'")
+                }
+                Log.i(TAG, "📍 === END ===")
+            }
+
             // Find the first clickable address card
             val addressCard = findFirstDiDiAddressCard(rootNode)
             if (addressCard != null) {
