@@ -6271,22 +6271,29 @@ class PriceReaderService : AccessibilityService() {
         val skipTexts = listOf(
             "Pin your location", "Select Address", "Powered by",
             "Back", "Where to", "Add stop", "Pickup point", "Search",
-            "Home", "Work", "Favourites"  // Also skip saved places header
+            "Home", "Work", "Favourites", "Use your", "voucher"
         )
         val shouldSkip = skipTexts.any { combinedText.contains(it, ignoreCase = true) }
 
-        if (!shouldSkip && combinedText.length > 15) {
-            // Check if it looks like an address card
-            // Address cards have: location name AND (distance OR governorate)
-            val hasDistance = combinedText.contains("km") || combinedText.contains("كم") || combinedText.contains("m")
-            val hasLocation = combinedText.contains("محافظة") || combinedText.contains("مصر") ||
+        if (!shouldSkip && combinedText.length > 10) {
+            // MORE FLEXIBLE: Accept any text that looks like an address
+            // Option 1: Has location keywords
+            val hasLocationKeyword = combinedText.contains("محافظة") || combinedText.contains("مصر") ||
                               combinedText.contains("العبور") || combinedText.contains("القاهرة") ||
                               combinedText.contains("الجيزة") || combinedText.contains("Egypt") ||
                               combinedText.contains("شارع") || combinedText.contains("الحي") ||
-                              combinedText.contains("Governorate") || combinedText.contains("Obour")
+                              combinedText.contains("Governorate") || combinedText.contains("Obour") ||
+                              combinedText.contains("km") || combinedText.contains("كم")
 
-            // Must have EITHER distance OR location indicator (more flexible)
-            if (hasDistance || hasLocation) {
+            // Option 2: Has comma (typical address format: "Name, Street, City")
+            val hasComma = combinedText.contains(",")
+
+            // Option 3: Has multiple words (at least 3 words = likely an address)
+            val wordCount = combinedText.trim().split("\\s+".toRegex()).size
+            val hasMultipleWords = wordCount >= 3
+
+            // Accept if ANY of these conditions are met
+            if (hasLocationKeyword || hasComma || hasMultipleWords) {
                 // Get bounds to verify it's a visible card (not tiny or off-screen)
                 val rect = android.graphics.Rect()
                 node.getBoundsInScreen(rect)
