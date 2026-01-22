@@ -6200,11 +6200,17 @@ class PriceReaderService : AccessibilityService() {
                 }
             } else {
                 didiNoAddressCardLoggedCount++
+
+                // SMART DETECTION: If pickup address is short (< 10 chars), use "Pin your location" EARLY
+                // Short addresses like "احمد" will have many unrelated suggestions
+                val isShortAddress = pickupAddress.length < 10
+                val earlyFallbackAttempt = if (isShortAddress) 5 else 13  // Use pin earlier for short addresses
+
                 // Only log first 3 times to reduce spam
                 if (didiNoAddressCardLoggedCount <= 3) {
-                    Log.w(TAG, "📍 No address card found (attempt $didiNoAddressCardLoggedCount)")
-                } else if (didiNoAddressCardLoggedCount == 10) {
-                    Log.w(TAG, "📍 Still no address card after 10 attempts...")
+                    Log.w(TAG, "📍 No address card found (attempt $didiNoAddressCardLoggedCount, shortAddr=$isShortAddress)")
+                } else if (didiNoAddressCardLoggedCount == earlyFallbackAttempt) {
+                    Log.w(TAG, "📍 Using 'Pin your location' fallback for ${if (isShortAddress) "short address" else "missing suggestions"}...")
                 }
 
                 // FALLBACK: If we can't find address cards, try gesture tap at different positions
@@ -6213,51 +6219,85 @@ class PriceReaderService : AccessibilityService() {
                 val screenWidth = displayMetrics.widthPixels
                 val tapX = screenWidth / 2f
 
-                when (didiNoAddressCardLoggedCount) {
-                    4 -> {
-                        // First fallback: try Y=500 (just below destination field)
-                        val tapY = 500f
-                        Log.i(TAG, "📍 Fallback 1: gesture tap at Y=$tapY")
-                        val path = android.graphics.Path()
-                        path.moveTo(tapX, tapY)
-                        val gesture = android.accessibilityservice.GestureDescription.Builder()
-                            .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 150))
-                            .build()
-                        dispatchGesture(gesture, null, null)
-                        lastDiDiSelectAddressClickTime = currentTime
-                        return true
+                // For SHORT ADDRESSES: Skip gesture taps and go directly to "Pin your location"
+                // Short addresses (like "احمد") have many unrelated suggestions - better to use GPS pin
+                val shouldUsePinEarly = isShortAddress && didiNoAddressCardLoggedCount >= 5
+
+                if (shouldUsePinEarly) {
+                    // Skip to PIN fallback for short addresses
+                    Log.i(TAG, "📍 Short address detected ('$pickupAddress') - using 'Pin your location' early")
+                } else {
+                    when (didiNoAddressCardLoggedCount) {
+                        4 -> {
+                            // First fallback: try Y=500 (just below destination field)
+                            val tapY = 500f
+                            Log.i(TAG, "📍 Fallback 1: gesture tap at Y=$tapY")
+                            val path = android.graphics.Path()
+                            path.moveTo(tapX, tapY)
+                            val gesture = android.accessibilityservice.GestureDescription.Builder()
+                                .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 150))
+                                .build()
+                            dispatchGesture(gesture, null, null)
+                            lastDiDiSelectAddressClickTime = currentTime
+                            return true
+                        }
+                        7 -> {
+                            // Second fallback: try Y=550
+                            val tapY = 550f
+                            Log.i(TAG, "📍 Fallback 2: gesture tap at Y=$tapY")
+                            val path = android.graphics.Path()
+                            path.moveTo(tapX, tapY)
+                            val gesture = android.accessibilityservice.GestureDescription.Builder()
+                                .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 150))
+                                .build()
+                            dispatchGesture(gesture, null, null)
+                            lastDiDiSelectAddressClickTime = currentTime
+                            return true
+                        }
+                        10 -> {
+                            // Third fallback: try Y=650
+                            val tapY = 650f
+                            Log.i(TAG, "📍 Fallback 3: gesture tap at Y=$tapY")
+                            val path = android.graphics.Path()
+                            path.moveTo(tapX, tapY)
+                            val gesture = android.accessibilityservice.GestureDescription.Builder()
+                                .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 150))
+                                .build()
+                            dispatchGesture(gesture, null, null)
+                            lastDiDiSelectAddressClickTime = currentTime
+                            return true
+                        }
                     }
-                    7 -> {
-                        // Second fallback: try Y=550
-                        val tapY = 550f
-                        Log.i(TAG, "📍 Fallback 2: gesture tap at Y=$tapY")
-                        val path = android.graphics.Path()
-                        path.moveTo(tapX, tapY)
-                        val gesture = android.accessibilityservice.GestureDescription.Builder()
-                            .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 150))
-                            .build()
-                        dispatchGesture(gesture, null, null)
-                        lastDiDiSelectAddressClickTime = currentTime
-                        return true
-                    }
-                    10 -> {
-                        // Third fallback: try Y=650
-                        val tapY = 650f
-                        Log.i(TAG, "📍 Fallback 3: gesture tap at Y=$tapY")
-                        val path = android.graphics.Path()
-                        path.moveTo(tapX, tapY)
-                        val gesture = android.accessibilityservice.GestureDescription.Builder()
-                            .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 150))
-                            .build()
-                        dispatchGesture(gesture, null, null)
-                        lastDiDiSelectAddressClickTime = currentTime
-                        return true
-                    }
-                    13 -> {
+                }
+
+                // FINAL FALLBACK (or early for short addresses)
+                if (didiNoAddressCardLoggedCount >= 13 || shouldUsePinEarly) {
                         // FINAL FALLBACK: No suggestions found
-                        // First try "Pin your location on the map" for precise GPS location
-                        Log.i(TAG, "📍 FINAL FALLBACK: No pickup suggestions - trying 'Pin your location on the map'...")
-                        val pinTexts = listOf("Pin your location on the map", "Pin your location", "حدد موقعك على الخريطة")
+                        // First SCROLL DOWN to reveal "Pin your location on the map" option
+                        Log.i(TAG, "📍 FINAL FALLBACK: Scrolling down to find 'Pin your location on the map'...")
+
+                        val displayMetrics = resources.displayMetrics
+                        val screenHeight = displayMetrics.heightPixels
+                        val screenWidth = displayMetrics.widthPixels
+
+                        // Scroll down gesture (from Y=70% to Y=30%)
+                        val startY = screenHeight * 0.7f
+                        val endY = screenHeight * 0.3f
+                        val centerX = screenWidth / 2f
+
+                        val scrollPath = android.graphics.Path()
+                        scrollPath.moveTo(centerX, startY)
+                        scrollPath.lineTo(centerX, endY)
+                        val scrollGesture = android.accessibilityservice.GestureDescription.Builder()
+                            .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(scrollPath, 0, 300))
+                            .build()
+                        dispatchGesture(scrollGesture, null, null)
+                        Log.i(TAG, "📍 Scrolled down to reveal more options")
+                        Thread.sleep(500)
+
+                        // Now try "Pin your location on the map" for precise GPS location
+                        Log.i(TAG, "📍 Looking for 'Pin your location on the map'...")
+                        val pinTexts = listOf("Pin your location on the map", "Pin your location", "حدد موقعك على الخريطة", "pin your location")
                         var pinClicked = false
                         for (pinText in pinTexts) {
                             val pinNodes = rootNode.findAccessibilityNodeInfosByText(pinText)
@@ -6284,9 +6324,22 @@ class PriceReaderService : AccessibilityService() {
                             if (pinClicked) break
                         }
 
+                        // Also try gesture tap at bottom of screen where "Pin your location" typically is
+                        if (!pinClicked) {
+                            val pinY = screenHeight * 0.85f  // Near bottom of screen
+                            Log.i(TAG, "📍 'Pin your location' not found by text, trying gesture tap at Y=$pinY")
+                            val pinPath = android.graphics.Path()
+                            pinPath.moveTo(centerX, pinY)
+                            val pinGesture = android.accessibilityservice.GestureDescription.Builder()
+                                .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(pinPath, 0, 150))
+                                .build()
+                            dispatchGesture(pinGesture, null, null)
+                            Thread.sleep(500)
+                        }
+
                         // Fallback: If no "Pin your location" found, click "Where to?" to proceed
                         if (!pinClicked) {
-                            Log.i(TAG, "📍 'Pin your location' not found, clicking 'Where to?' to proceed")
+                            Log.i(TAG, "📍 Fallback: clicking 'Where to?' to proceed")
                             val whereToNodes = rootNode.findAccessibilityNodeInfosByText("Where to?")
                             for (node in whereToNodes) {
                                 val rect = android.graphics.Rect()
@@ -6306,10 +6359,9 @@ class PriceReaderService : AccessibilityService() {
                                 node.recycle()
                             }
                         }
-                    }
-                }
-            }
-        }
+                } // end of FINAL FALLBACK if
+            } // end of else (no address card)
+        } // end of if (hasSelectAddressScreen)
 
         // Check for airline selection screen
         val hasAirlineScreen = allTextLower.any {
