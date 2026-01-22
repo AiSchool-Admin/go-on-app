@@ -53,6 +53,10 @@ class InDriverAutomation(
     private val clickCooldown = 800L  // Reduced from 1500ms - InDriver handles faster clicks now
     private var mapConfirmAttempts = 0
     private var priceScreenDetectionAttempts = 0
+    private var mapSwipeAttempts = 0
+    private var isOnMapScreen = false
+    private var lastMapSwipeTime = 0L
+    private val mapSwipeCooldown = 1500L  // Wait between swipes
 
     // Trip details
     var pickupAddress: String = ""
@@ -75,6 +79,9 @@ class InDriverAutomation(
         lastClickTime = 0L
         mapConfirmAttempts = 0
         priceScreenDetectionAttempts = 0
+        mapSwipeAttempts = 0
+        isOnMapScreen = false
+        lastMapSwipeTime = 0L
     }
 
     /**
@@ -481,6 +488,9 @@ class InDriverAutomation(
 
         // ============================================================
         // STEP 1: Check for Map Confirmation screen (تأكيد الموقع على الخريطة)
+        // This screen appears after clicking "Choose on map" when coordinates show "No Results"
+        // The map starts at user's CURRENT LOCATION, not at entered coordinates!
+        // We need to SWIPE the map to move the pin to the correct location before clicking "تم"
         // ============================================================
         val mapConfirmIndicators = listOf(
             "تأكيد الموقع",
@@ -490,7 +500,9 @@ class InDriverAutomation(
             "Confirm drop-off",
             "حدد الموقع",
             "Set location",
-            "تعيين الموقع"
+            "تعيين الموقع",
+            "الموقع الحالي",  // "Current location" - indicator that map is showing GPS position
+            "Current location"
         )
 
         val hasMapConfirm = allText.any { text ->
@@ -499,30 +511,122 @@ class InDriverAutomation(
             }
         }
 
-        // Check for confirm button on map screen
-        val confirmButtons = listOf("تأكيد", "Confirm", "موافق", "OK", "تم", "Done")
+        // Check for the Done/Confirm button on map screen
+        val confirmButtons = listOf("تم", "Done", "تأكيد", "Confirm", "موافق", "OK")
+        val hasDoneButton = allText.any { text ->
+            confirmButtons.any { btn -> text.equals(btn, ignoreCase = true) }
+        }
 
-        if (hasMapConfirm || (mapConfirmAttempts < 3 && allText.any { it.contains("الخريطة") || it.contains("map", ignoreCase = true) })) {
-            AppLogger.automation(TAG, "Detected map confirmation screen", state = "MAP_CONFIRM")
+        // Map screen detection: has map indicators OR has Done button with map-related context
+        val isMapScreen = hasMapConfirm ||
+            (hasDoneButton && allText.any { it.contains("الخريطة") || it.contains("map", ignoreCase = true) })
 
+        if (isMapScreen && mapConfirmAttempts < 5) {
+            AppLogger.automation(TAG, "Detected map confirmation screen (attempts: $mapConfirmAttempts, swipes: $mapSwipeAttempts)", state = "MAP_CONFIRM")
+            isOnMapScreen = true
+
+            // CRITICAL: Before clicking "تم", we need to swipe the map to move the pin
+            // The pin starts at the user's current GPS location, not the entered coordinates
+            // We need to swipe the map so the pin moves to the target location
+
+            if (mapSwipeAttempts < 4 && (currentTime - lastMapSwipeTime > mapSwipeCooldown)) {
+                AppLogger.automation(TAG, "Performing map swipe #$mapSwipeAttempts to move pin to target", state = "MAP_SWIPE")
+
+                // Use smart swipe on first attempt if we have coordinates, then fall back to pattern swipes
+                val swipeResult = if (mapSwipeAttempts == 0 && (pickupLat != 0.0 || destLat != 0.0)) {
+                    performSmartMapSwipe()
+                } else {
+                    performMapSwipe(mapSwipeAttempts)
+                }
+
+                mapSwipeAttempts++
+                lastMapSwipeTime = currentTime
+
+                if (swipeResult) {
+                    AppLogger.automation(TAG, "Map swipe completed, waiting for map to settle...", state = "MAP_SWIPE_DONE")
+                    Thread.sleep(800)  // Wait for map animation to complete
+                    return AutomationResult(true, "Swiped map to move pin")
+                }
+            }
+
+            // After swipes, try to click the Done button
             for (buttonText in confirmButtons) {
                 val node = findNodeWithText(rootNode, buttonText)
                 if (node != null) {
-                    if (gentleClick(node)) {
-                        mapConfirmAttempts++
-                        lastClickTime = currentTime
-                        AppLogger.automation(TAG, "Clicked '$buttonText' on map screen (#$mapConfirmAttempts)", state = "MAP_CONFIRMED")
-                        node.recycle()
-                        Thread.sleep(300)
-                        return AutomationResult(true, "Confirmed map location")
+                    val rect = android.graphics.Rect()
+                    node.getBoundsInScreen(rect)
+
+                    // Validate bounds - InDriver sometimes reports invalid bounds
+                    if (rect.width() > 0 && rect.height() > 0) {
+                        if (gentleClick(node)) {
+                            mapConfirmAttempts++
+                            lastClickTime = currentTime
+                            AppLogger.automation(TAG, "Clicked '$buttonText' on map screen (#$mapConfirmAttempts)", state = "MAP_CONFIRMED")
+                            node.recycle()
+                            Thread.sleep(300)
+                            return AutomationResult(true, "Confirmed map location")
+                        }
+
+                        // Try gesture click if gentle click fails
+                        val centerX = rect.centerX().toFloat()
+                        val centerY = rect.centerY().toFloat()
+                        if (clickAtPositionWithDuration(centerX, centerY, 150)) {
+                            mapConfirmAttempts++
+                            lastClickTime = currentTime
+                            AppLogger.automation(TAG, "Clicked '$buttonText' via gesture (#$mapConfirmAttempts)", state = "MAP_CONFIRMED")
+                            node.recycle()
+                            Thread.sleep(300)
+                            return AutomationResult(true, "Confirmed map location via gesture")
+                        }
+                    } else {
+                        AppLogger.w(TAG, "Done button '$buttonText' has invalid bounds: $rect - trying hardcoded click")
+                        // Hardcoded fallback - bottom center of screen where Done button typically is
+                        val displayMetrics = service.resources.displayMetrics
+                        val screenWidth = displayMetrics.widthPixels
+                        val screenHeight = displayMetrics.heightPixels
+                        val hardcodedX = screenWidth / 2f
+                        val hardcodedY = screenHeight * 0.9f  // 90% down - where Done button typically is
+
+                        if (clickAtPositionWithDuration(hardcodedX, hardcodedY, 150)) {
+                            mapConfirmAttempts++
+                            lastClickTime = currentTime
+                            AppLogger.automation(TAG, "Clicked Done via hardcoded position ($hardcodedX, $hardcodedY)", state = "MAP_CONFIRMED")
+                            node.recycle()
+                            Thread.sleep(300)
+                            return AutomationResult(true, "Confirmed map via hardcoded click")
+                        }
                     }
                     node.recycle()
+                }
+            }
+
+            // If no button found, try clicking at common Done button positions
+            val displayMetrics = service.resources.displayMetrics
+            val screenWidth = displayMetrics.widthPixels
+            val screenHeight = displayMetrics.heightPixels
+
+            // Try bottom-center area where Done button is typically located
+            val fallbackPositions = listOf(
+                Pair(screenWidth / 2f, screenHeight * 0.9f),
+                Pair(screenWidth / 2f, screenHeight * 0.85f),
+                Pair(screenWidth / 2f, screenHeight * 0.95f)
+            )
+
+            for ((x, y) in fallbackPositions) {
+                if (clickAtPositionWithDuration(x, y, 150)) {
+                    mapConfirmAttempts++
+                    lastClickTime = currentTime
+                    AppLogger.automation(TAG, "Clicked fallback position ($x, $y) for Done button", state = "MAP_FALLBACK")
+                    Thread.sleep(300)
+                    return AutomationResult(true, "Clicked fallback Done position")
                 }
             }
         }
 
         // ============================================================
         // STEP 2: Check for "No Results" screen
+        // When coordinates are entered, InDriver may show "No Results"
+        // We then need to click "Choose on map" which will open map at GPS location
         // ============================================================
         val hasNoResults = allText.any {
             it.contains("لا توجد نتائج") ||
@@ -534,6 +638,9 @@ class InDriverAutomation(
 
         if (hasNoResults) {
             AppLogger.automation(TAG, "Detected 'No Results' screen", state = "NO_RESULTS")
+            // Reset map swipe attempts since we're about to go to a new map screen
+            mapSwipeAttempts = 0
+            isOnMapScreen = false
 
             val chooseMapTexts = listOf(
                 "اختر على الخريطة",
@@ -548,9 +655,11 @@ class InDriverAutomation(
                 val node = findNodeWithText(rootNode, chooseText)
                 if (node != null) {
                     if (gentleClick(node)) {
-                        AppLogger.automation(TAG, "Clicked '$chooseText'", state = "CHOOSE_MAP")
+                        AppLogger.automation(TAG, "Clicked '$chooseText' - will now go to MAP SCREEN", state = "CHOOSE_MAP")
                         lastClickTime = currentTime
                         node.recycle()
+                        // Map screen will open next - prepare for swipes
+                        Thread.sleep(500)  // Wait for map screen to load
                         return AutomationResult(true, "Clicked choose on map")
                     }
                     node.recycle()
@@ -768,6 +877,137 @@ class InDriverAutomation(
         }
 
         return (hasIndicators && hasPrice) || (hasPrice && hasSlider)
+    }
+
+    // ============================================================
+    // MAP SWIPE METHODS
+    // ============================================================
+
+    /**
+     * سحب الخريطة لتحريك الدبوس نحو الإحداثيات المستهدفة
+     * Swipe the map to move the pin toward target coordinates
+     *
+     * Since InDriver's "Choose on map" opens at the user's GPS location (not entered coords),
+     * we need to swipe the map so the pin (which is fixed in center) moves to the target.
+     *
+     * Note: Without knowing the exact current GPS position, we use a multi-attempt
+     * strategy with different swipe directions.
+     */
+    private fun performMapSwipe(attemptNumber: Int): Boolean {
+        try {
+            val displayMetrics = service.resources.displayMetrics
+            val screenWidth = displayMetrics.widthPixels
+            val screenHeight = displayMetrics.heightPixels
+
+            // Map area is typically in the middle of the screen (excluding header/footer)
+            val mapCenterX = screenWidth / 2f
+            val mapCenterY = screenHeight * 0.45f  // Map is usually in upper-middle area
+
+            // Calculate swipe distance (30% of screen for meaningful movement)
+            val swipeDistance = (screenWidth * 0.3f)
+
+            // Determine swipe direction based on attempt number
+            // We'll try different directions to cover possible target locations
+            val (startX, startY, endX, endY) = when (attemptNumber % 4) {
+                0 -> {
+                    // Swipe UP (map moves down, pin moves up/north)
+                    AppLogger.d(TAG, "Map swipe #$attemptNumber: UP (north)")
+                    listOf(mapCenterX, mapCenterY + swipeDistance/2, mapCenterX, mapCenterY - swipeDistance/2)
+                }
+                1 -> {
+                    // Swipe LEFT (map moves right, pin moves left/west)
+                    AppLogger.d(TAG, "Map swipe #$attemptNumber: LEFT (west)")
+                    listOf(mapCenterX + swipeDistance/2, mapCenterY, mapCenterX - swipeDistance/2, mapCenterY)
+                }
+                2 -> {
+                    // Swipe DOWN (map moves up, pin moves down/south)
+                    AppLogger.d(TAG, "Map swipe #$attemptNumber: DOWN (south)")
+                    listOf(mapCenterX, mapCenterY - swipeDistance/2, mapCenterX, mapCenterY + swipeDistance/2)
+                }
+                else -> {
+                    // Swipe RIGHT (map moves left, pin moves right/east)
+                    AppLogger.d(TAG, "Map swipe #$attemptNumber: RIGHT (east)")
+                    listOf(mapCenterX - swipeDistance/2, mapCenterY, mapCenterX + swipeDistance/2, mapCenterY)
+                }
+            }
+
+            AppLogger.automation(TAG, "Performing map swipe from ($startX, $startY) to ($endX, $endY)", state = "SWIPING")
+
+            return GestureHelper.swipe(service, startX, startY, endX, endY, 400)
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "Map swipe failed", e)
+            return false
+        }
+    }
+
+    /**
+     * Intelligent map swipe based on target coordinates
+     * If we have target coordinates, try to swipe toward them
+     */
+    private fun performSmartMapSwipe(): Boolean {
+        // Get target coordinates (pickup or destination based on current phase)
+        val targetLat = if (!pickupEntered || pickupLat == 0.0) destLat else pickupLat
+        val targetLng = if (!pickupEntered || pickupLng == 0.0) destLng else pickupLng
+
+        if (targetLat == 0.0 || targetLng == 0.0) {
+            AppLogger.d(TAG, "No target coordinates available for smart swipe")
+            return performMapSwipe(mapSwipeAttempts)
+        }
+
+        // For Egypt (Cairo area), typical coordinates are around:
+        // Cairo: 30.0444° N, 31.2357° E
+        // Giza/Pyramids: 29.9792° N, 31.1342° E
+        // If target is south of 30.0 (Giza/Pyramids area), swipe down
+        // If target is north of 30.1 (Heliopolis area), swipe up
+
+        val displayMetrics = service.resources.displayMetrics
+        val screenWidth = displayMetrics.widthPixels
+        val screenHeight = displayMetrics.heightPixels
+        val mapCenterX = screenWidth / 2f
+        val mapCenterY = screenHeight * 0.45f
+        val swipeDistance = screenWidth * 0.35f
+
+        // Determine swipe direction based on target relative to Cairo center
+        val cairoCenterLat = 30.05
+        val cairoCenterLng = 31.23
+
+        var swipeX = 0f
+        var swipeY = 0f
+
+        // Calculate swipe direction (opposite of where we want to go)
+        // To move pin SOUTH, we swipe UP (drag map up)
+        // To move pin NORTH, we swipe DOWN (drag map down)
+        if (targetLat < cairoCenterLat - 0.02) {
+            // Target is south (like Giza) - swipe up to move pin south
+            swipeY = -swipeDistance
+        } else if (targetLat > cairoCenterLat + 0.02) {
+            // Target is north (like Heliopolis) - swipe down to move pin north
+            swipeY = swipeDistance
+        }
+
+        // To move pin WEST, we swipe RIGHT (drag map right)
+        // To move pin EAST, we swipe LEFT (drag map left)
+        if (targetLng < cairoCenterLng - 0.02) {
+            // Target is west - swipe right to move pin west
+            swipeX = swipeDistance
+        } else if (targetLng > cairoCenterLng + 0.02) {
+            // Target is east - swipe left to move pin east
+            swipeX = -swipeDistance
+        }
+
+        if (swipeX == 0f && swipeY == 0f) {
+            AppLogger.d(TAG, "Target coords close to Cairo center, using default swipe")
+            return performMapSwipe(mapSwipeAttempts)
+        }
+
+        val startX = mapCenterX - swipeX / 2
+        val startY = mapCenterY - swipeY / 2
+        val endX = mapCenterX + swipeX / 2
+        val endY = mapCenterY + swipeY / 2
+
+        AppLogger.automation(TAG, "Smart swipe toward target ($targetLat, $targetLng): ($startX,$startY) -> ($endX,$endY)", state = "SMART_SWIPE")
+
+        return GestureHelper.swipe(service, startX, startY, endX, endY, 500)
     }
 
     // ============================================================
