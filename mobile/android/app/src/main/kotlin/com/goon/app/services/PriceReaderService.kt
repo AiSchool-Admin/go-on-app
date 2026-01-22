@@ -6252,14 +6252,16 @@ class PriceReaderService : AccessibilityService() {
      * Find the first clickable address card on DiDi's "Select Address" screen
      * Address cards contain: place name, full address, distance (km)
      * Returns the CLICKABLE node (either the card itself or its clickable ancestor)
+     * IMPORTANT: Only considers nodes BELOW Y=500 (to skip pickup/destination fields)
      */
-    private fun findFirstDiDiAddressCard(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+    private fun findFirstDiDiAddressCard(node: AccessibilityNodeInfo, minY: Int = 500): AccessibilityNodeInfo? {
         val combinedText = getNodeText(node)
 
         // Skip UI elements that are not address cards
         val skipTexts = listOf(
             "Pin your location", "Select Address", "Powered by",
-            "Back", "Where to", "Add stop", "Pickup point", "Search"
+            "Back", "Where to", "Add stop", "Pickup point", "Search",
+            "Home", "Work", "Favourites"  // Also skip saved places header
         )
         val shouldSkip = skipTexts.any { combinedText.contains(it, ignoreCase = true) }
 
@@ -6270,7 +6272,8 @@ class PriceReaderService : AccessibilityService() {
             val hasLocation = combinedText.contains("محافظة") || combinedText.contains("مصر") ||
                               combinedText.contains("العبور") || combinedText.contains("القاهرة") ||
                               combinedText.contains("الجيزة") || combinedText.contains("Egypt") ||
-                              combinedText.contains("شارع") || combinedText.contains("الحي")
+                              combinedText.contains("شارع") || combinedText.contains("الحي") ||
+                              combinedText.contains("Governorate") || combinedText.contains("Obour")
 
             // Must have EITHER distance OR location indicator (more flexible)
             if (hasDistance || hasLocation) {
@@ -6278,9 +6281,15 @@ class PriceReaderService : AccessibilityService() {
                 val rect = android.graphics.Rect()
                 node.getBoundsInScreen(rect)
 
-                // Valid card should have reasonable size (at least 100x40 pixels)
-                if (rect.width() > 100 && rect.height() > 40) {
-                    Log.i(TAG, "📍 Found DiDi address text: '${combinedText.take(50)}...' bounds=$rect clickable=${node.isClickable}")
+                // CRITICAL FIX: Only consider cards BELOW the input fields (Y > minY)
+                // This prevents clicking on the pickup/destination field text itself
+                // Pickup field is typically at Y=233-359, Destination at Y=359-485
+                // Suggestions list starts around Y=500+
+                if (rect.top < minY) {
+                    Log.d(TAG, "📍 Skipping node at Y=${rect.top} (above minY=$minY): '${combinedText.take(30)}...'")
+                    // Don't return, continue searching children
+                } else if (rect.width() > 100 && rect.height() > 40) {
+                    Log.i(TAG, "📍 Found DiDi address card: '${combinedText.take(50)}...' bounds=$rect clickable=${node.isClickable}")
 
                     // If this node is clickable, return it
                     if (node.isClickable) {
@@ -6318,7 +6327,7 @@ class PriceReaderService : AccessibilityService() {
         // Recurse into children
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
-            val found = findFirstDiDiAddressCard(child)
+            val found = findFirstDiDiAddressCard(child, minY)
             if (found != null) {
                 child.recycle()
                 return found
