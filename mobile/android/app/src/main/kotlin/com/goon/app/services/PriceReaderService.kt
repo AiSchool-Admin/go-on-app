@@ -6180,24 +6180,52 @@ class PriceReaderService : AccessibilityService() {
                     Log.w(TAG, "📍 Still no address card after 10 attempts...")
                 }
 
-                // FALLBACK: If we can't find address cards, try gesture tap at suggestion area
-                // DiDi suggestions typically appear around Y=550-700
-                if (didiNoAddressCardLoggedCount == 5) {
-                    Log.i(TAG, "📍 Trying fallback: gesture tap at suggestion area (Y=600)")
-                    val displayMetrics = resources.displayMetrics
-                    val screenWidth = displayMetrics.widthPixels
-                    val tapX = screenWidth / 2f
-                    val tapY = 600f
+                // FALLBACK: If we can't find address cards, try gesture tap at different positions
+                // DiDi layout: Pickup(Y=233-359), Destination(Y=359-485), Suggestions(Y=485+)
+                val displayMetrics = resources.displayMetrics
+                val screenWidth = displayMetrics.widthPixels
+                val tapX = screenWidth / 2f
 
-                    val path = android.graphics.Path()
-                    path.moveTo(tapX, tapY)
-                    val gesture = android.accessibilityservice.GestureDescription.Builder()
-                        .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 150))
-                        .build()
-                    dispatchGesture(gesture, null, null)
-                    Log.i(TAG, "📍 Fallback gesture tap at ($tapX, $tapY)")
-                    lastDiDiSelectAddressClickTime = currentTime
-                    return true
+                when (didiNoAddressCardLoggedCount) {
+                    4 -> {
+                        // First fallback: try Y=500 (just below destination field)
+                        val tapY = 500f
+                        Log.i(TAG, "📍 Fallback 1: gesture tap at Y=$tapY")
+                        val path = android.graphics.Path()
+                        path.moveTo(tapX, tapY)
+                        val gesture = android.accessibilityservice.GestureDescription.Builder()
+                            .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 150))
+                            .build()
+                        dispatchGesture(gesture, null, null)
+                        lastDiDiSelectAddressClickTime = currentTime
+                        return true
+                    }
+                    7 -> {
+                        // Second fallback: try Y=550
+                        val tapY = 550f
+                        Log.i(TAG, "📍 Fallback 2: gesture tap at Y=$tapY")
+                        val path = android.graphics.Path()
+                        path.moveTo(tapX, tapY)
+                        val gesture = android.accessibilityservice.GestureDescription.Builder()
+                            .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 150))
+                            .build()
+                        dispatchGesture(gesture, null, null)
+                        lastDiDiSelectAddressClickTime = currentTime
+                        return true
+                    }
+                    10 -> {
+                        // Third fallback: try Y=650
+                        val tapY = 650f
+                        Log.i(TAG, "📍 Fallback 3: gesture tap at Y=$tapY")
+                        val path = android.graphics.Path()
+                        path.moveTo(tapX, tapY)
+                        val gesture = android.accessibilityservice.GestureDescription.Builder()
+                            .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 150))
+                            .build()
+                        dispatchGesture(gesture, null, null)
+                        lastDiDiSelectAddressClickTime = currentTime
+                        return true
+                    }
                 }
             }
         }
