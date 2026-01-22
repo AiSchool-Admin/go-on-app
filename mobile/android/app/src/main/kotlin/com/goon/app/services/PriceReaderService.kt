@@ -237,6 +237,12 @@ class PriceReaderService : AccessibilityService() {
     // This prevents the 95 EGP default price from being cached during automation
     private var inDriverAutomationComplete = false
 
+    // Track InDriver map swipe attempts (to move pin from GPS location to entered coordinates)
+    private var inDriverMapSwipeAttempts = 0
+    private var inDriverLastMapSwipeTime = 0L
+    private val INDRIVER_MAP_SWIPE_COOLDOWN = 1200L  // Wait between swipes
+    private val INDRIVER_MAX_MAP_SWIPES = 3  // Max swipes before clicking تم
+
     enum class AutomationState {
         IDLE,
         WAITING_FOR_APP,
@@ -362,6 +368,8 @@ class PriceReaderService : AccessibilityService() {
         inDriverDoneClickedTime = 0L  // Reset InDriver Done click time
         inDriverDoneClickCount = 0  // Reset Done click counter (3 clicks needed for InDriver)
         inDriverAutomationComplete = false  // CRITICAL: Block price detection until automation is complete
+        inDriverMapSwipeAttempts = 0  // Reset map swipe attempts
+        inDriverLastMapSwipeTime = 0L  // Reset last swipe time
 
         // Clear any old cached prices for this app
         latestPrices.remove(packageName)
@@ -6993,6 +7001,9 @@ class PriceReaderService : AccessibilityService() {
                         // so any price shown before is NOT the real trip price
                         latestPrices.remove(INDRIVER_PACKAGE)
                         Log.i(TAG, "🗺️ ✓ Cleared cached price after 'Choose on map' click")
+                        // Reset map swipe attempts for the new map screen
+                        inDriverMapSwipeAttempts = 0
+                        inDriverLastMapSwipeTime = 0L
                         node.recycle()
                         return true
                     }
@@ -7475,9 +7486,78 @@ class PriceReaderService : AccessibilityService() {
                 return true  // Return true to stay in handling mode
             }
 
-            // REMOVED: Don't block waiting for pickup screen markers - just click "تم" when we see it
-            // After entering both pickup and destination, InDriver may show multiple "تم" screens
-            // Just click through them all to get to "البحث عن عروض"
+            // ============================================================
+            // MAP SWIPE: Move the pin from GPS location to entered coordinates
+            // When InDriver shows "No Results" and user clicks "Choose on map",
+            // the map opens at the USER'S GPS LOCATION, not the entered coordinates!
+            // We need to SWIPE the map to move the pin before clicking "تم"
+            // ============================================================
+            val timeSinceLastSwipe = currentTime - inDriverLastMapSwipeTime
+            if (inDriverMapSwipeAttempts < INDRIVER_MAX_MAP_SWIPES && timeSinceLastSwipe > INDRIVER_MAP_SWIPE_COOLDOWN) {
+                Log.i(TAG, "🗺️ MAP SWIPE: Performing swipe #$inDriverMapSwipeAttempts to move pin toward target coordinates")
+
+                val displayMetrics = resources.displayMetrics
+                val screenWidth = displayMetrics.widthPixels.toFloat()
+                val screenHeight = displayMetrics.heightPixels.toFloat()
+
+                // Map is in upper-middle area of screen
+                val mapCenterX = screenWidth / 2
+                val mapCenterY = screenHeight * 0.4f
+                val swipeDistance = screenWidth * 0.3f
+
+                // Swipe in different directions based on attempt number
+                val (startX, startY, endX, endY) = when (inDriverMapSwipeAttempts % 4) {
+                    0 -> {
+                        // Swipe DOWN (to move pin south toward Giza/Pyramids)
+                        Log.i(TAG, "🗺️ Swipe DOWN (south)")
+                        listOf(mapCenterX, mapCenterY - swipeDistance/2, mapCenterX, mapCenterY + swipeDistance/2)
+                    }
+                    1 -> {
+                        // Swipe LEFT (to move pin west)
+                        Log.i(TAG, "🗺️ Swipe LEFT (west)")
+                        listOf(mapCenterX + swipeDistance/2, mapCenterY, mapCenterX - swipeDistance/2, mapCenterY)
+                    }
+                    2 -> {
+                        // Swipe UP (to move pin north)
+                        Log.i(TAG, "🗺️ Swipe UP (north)")
+                        listOf(mapCenterX, mapCenterY + swipeDistance/2, mapCenterX, mapCenterY - swipeDistance/2)
+                    }
+                    else -> {
+                        // Swipe RIGHT (to move pin east)
+                        Log.i(TAG, "🗺️ Swipe RIGHT (east)")
+                        listOf(mapCenterX - swipeDistance/2, mapCenterY, mapCenterX + swipeDistance/2, mapCenterY)
+                    }
+                }
+
+                // Perform the swipe gesture
+                try {
+                    val path = android.graphics.Path()
+                    path.moveTo(startX, startY)
+                    path.lineTo(endX, endY)
+
+                    val gesture = android.accessibilityservice.GestureDescription.Builder()
+                        .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 400))
+                        .build()
+
+                    dispatchGesture(gesture, null, null)
+                    Log.i(TAG, "🗺️ ✓ Map swipe dispatched: ($startX,$startY) -> ($endX,$endY)")
+
+                    inDriverMapSwipeAttempts++
+                    inDriverLastMapSwipeTime = currentTime
+
+                    // Wait for map to settle before next action
+                    Thread.sleep(600)
+                    return true  // Return true to retry - don't click تم yet
+                } catch (e: Exception) {
+                    Log.e(TAG, "🗺️ Map swipe failed: ${e.message}")
+                }
+            }
+
+            // Reset swipe counter after clicking تم (for next map screen)
+            if (inDriverMapSwipeAttempts >= INDRIVER_MAX_MAP_SWIPES) {
+                Log.i(TAG, "🗺️ Max swipes reached ($inDriverMapSwipeAttempts), now clicking تم button")
+                inDriverMapSwipeAttempts = 0  // Reset for next map screen
+            }
 
             val clickType = when (inDriverDoneClickCount) {
                 0 -> "DESTINATION"
