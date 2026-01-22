@@ -6235,6 +6235,39 @@ class PriceReaderService : AccessibilityService() {
                         lastDiDiSelectAddressClickTime = currentTime
                         return true
                     }
+                    13 -> {
+                        // FINAL FALLBACK: No suggestions found - click on "Where to?" to proceed to destination
+                        // This handles cases where DiDi doesn't find pickup suggestions (e.g. "ORO Villa")
+                        Log.i(TAG, "📍 FINAL FALLBACK: No pickup suggestions - clicking 'Where to?' to proceed")
+                        val whereToNodes = rootNode.findAccessibilityNodeInfosByText("Where to?")
+                        for (node in whereToNodes) {
+                            val rect = android.graphics.Rect()
+                            node.getBoundsInScreen(rect)
+                            // Click on "Where to?" that's in the destination area (Y > 300)
+                            if (rect.top > 300) {
+                                Log.i(TAG, "📍 Found 'Where to?' at Y=${rect.top} - clicking to proceed to destination")
+                                if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                                    Log.i(TAG, "📍 ✓ Clicked 'Where to?' - proceeding to destination entry")
+                                    didiPickupPhaseComplete = true  // Mark pickup as done (even without suggestion)
+                                    node.recycle()
+                                    lastDiDiSelectAddressClickTime = currentTime
+                                    return true
+                                }
+                                // Try gesture tap as fallback
+                                val gestureClickPath = android.graphics.Path()
+                                gestureClickPath.moveTo(rect.centerX().toFloat(), rect.centerY().toFloat())
+                                val gestureClick = android.accessibilityservice.GestureDescription.Builder()
+                                    .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(gestureClickPath, 0, 150))
+                                    .build()
+                                dispatchGesture(gestureClick, null, null)
+                                didiPickupPhaseComplete = true
+                                node.recycle()
+                                lastDiDiSelectAddressClickTime = currentTime
+                                return true
+                            }
+                            node.recycle()
+                        }
+                    }
                 }
             }
         }
