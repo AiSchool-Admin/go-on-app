@@ -50,7 +50,9 @@ class InDriverAutomation(
     private var doneClickCount = 0
     private var automationComplete = false
     private var lastClickTime = 0L
-    private val clickCooldown = 1500L  // InDriver crashes with rapid clicks
+    private val clickCooldown = 800L  // Reduced from 1500ms - InDriver handles faster clicks now
+    private var mapConfirmAttempts = 0
+    private var priceScreenDetectionAttempts = 0
 
     // Trip details
     var pickupAddress: String = ""
@@ -71,6 +73,8 @@ class InDriverAutomation(
         doneClickCount = 0
         automationComplete = false
         lastClickTime = 0L
+        mapConfirmAttempts = 0
+        priceScreenDetectionAttempts = 0
     }
 
     /**
@@ -417,39 +421,115 @@ class InDriverAutomation(
         // ============================================================
         // STEP 0: Check if we're on PRICE SCREEN already
         // ============================================================
-        val hasPriceScreen = allText.any {
-            it.contains("البحث عن عروض") ||
-            it.contains("الأجر المقترح") ||
-            it.contains("اطلب رحلة") ||
-            it.contains("السعر المقترح") ||
-            it.contains("Search for offers") ||
-            it.contains("Suggested fare")
+        val priceScreenIndicators = listOf(
+            "البحث عن عروض",
+            "الأجر المقترح",
+            "اطلب رحلة",
+            "السعر المقترح",
+            "Search for offers",
+            "Suggested fare",
+            "اطلب سائق",
+            "Request driver",
+            "عرض السعر",
+            "Your offer",
+            "قدم عرضك",
+            "Make your offer"
+        )
+
+        val hasPriceScreen = allText.any { text ->
+            priceScreenIndicators.any { indicator ->
+                text.contains(indicator, ignoreCase = true)
+            }
         }
 
         val hasPriceIndicator = allText.any {
-            it.contains("EGP") || it.matches(Regex(".*\\d+\\s*(جنيه|ج\\.م|EGP).*"))
+            it.contains("EGP") ||
+            it.contains("ج.م") ||
+            it.contains("جنيه") ||
+            it.matches(Regex(".*\\d+\\s*(جنيه|ج\\.م|EGP).*"))
         }
 
-        val hasVehicleTypes = allText.count {
-            it == "رحلة" || it == "مريحة" || it == "درجة نارية" || it == "بريميوم" ||
-            it == "Economy" || it == "Comfort" || it == "Premium"
-        } >= 2
+        val vehicleTypeIndicators = listOf(
+            "رحلة", "مريحة", "درجة نارية", "بريميوم",
+            "Economy", "Comfort", "Premium", "Ride",
+            "سيارة", "موتوسيكل", "Motorcycle"
+        )
 
-        val isFinalPriceScreen = hasPriceScreen || (hasPriceIndicator && hasVehicleTypes)
+        val hasVehicleTypes = allText.count { text ->
+            vehicleTypeIndicators.any { indicator ->
+                text.equals(indicator, ignoreCase = true) ||
+                text.contains(indicator, ignoreCase = true)
+            }
+        } >= 1
+
+        // Also check for slider or price input
+        val hasSlider = allText.any {
+            it.contains("اسحب") || it.contains("Slide") ||
+            it.contains("حرك") || it.contains("Drag")
+        }
+
+        val isFinalPriceScreen = hasPriceScreen ||
+            (hasPriceIndicator && hasVehicleTypes) ||
+            (hasPriceIndicator && hasSlider)
 
         if (isFinalPriceScreen) {
-            AppLogger.automation(TAG, "DETECTED PRICE SCREEN!", state = "PRICE_SCREEN")
+            priceScreenDetectionAttempts++
+            AppLogger.automation(TAG, "DETECTED PRICE SCREEN! (attempt #$priceScreenDetectionAttempts)", state = "PRICE_SCREEN")
             automationComplete = true
             return AutomationResult(true, "On price screen", nextState = AutomationState.WAITING_FOR_PRICE)
         }
 
         // ============================================================
-        // STEP 1: Check for "No Results" screen
+        // STEP 1: Check for Map Confirmation screen (تأكيد الموقع على الخريطة)
+        // ============================================================
+        val mapConfirmIndicators = listOf(
+            "تأكيد الموقع",
+            "Confirm location",
+            "تأكيد النقطة",
+            "Confirm pickup",
+            "Confirm drop-off",
+            "حدد الموقع",
+            "Set location",
+            "تعيين الموقع"
+        )
+
+        val hasMapConfirm = allText.any { text ->
+            mapConfirmIndicators.any { indicator ->
+                text.contains(indicator, ignoreCase = true)
+            }
+        }
+
+        // Check for confirm button on map screen
+        val confirmButtons = listOf("تأكيد", "Confirm", "موافق", "OK", "تم", "Done")
+
+        if (hasMapConfirm || (mapConfirmAttempts < 3 && allText.any { it.contains("الخريطة") || it.contains("map", ignoreCase = true) })) {
+            AppLogger.automation(TAG, "Detected map confirmation screen", state = "MAP_CONFIRM")
+
+            for (buttonText in confirmButtons) {
+                val node = findNodeWithText(rootNode, buttonText)
+                if (node != null) {
+                    if (gentleClick(node)) {
+                        mapConfirmAttempts++
+                        lastClickTime = currentTime
+                        AppLogger.automation(TAG, "Clicked '$buttonText' on map screen (#$mapConfirmAttempts)", state = "MAP_CONFIRMED")
+                        node.recycle()
+                        Thread.sleep(300)
+                        return AutomationResult(true, "Confirmed map location")
+                    }
+                    node.recycle()
+                }
+            }
+        }
+
+        // ============================================================
+        // STEP 2: Check for "No Results" screen
         // ============================================================
         val hasNoResults = allText.any {
             it.contains("لا توجد نتائج") ||
             it.contains("No results") ||
-            it.contains("لا توجد")
+            it.contains("لا توجد") ||
+            it.contains("لم يتم العثور") ||
+            it.contains("Not found")
         }
 
         if (hasNoResults) {
@@ -459,7 +539,9 @@ class InDriverAutomation(
                 "اختر على الخريطة",
                 "Choose on map",
                 "على الخريطة",
-                "الخريطة"
+                "الخريطة",
+                "حدد على الخريطة",
+                "Select on map"
             )
 
             for (chooseText in chooseMapTexts) {
@@ -479,11 +561,13 @@ class InDriverAutomation(
         }
 
         // ============================================================
-        // STEP 2: Check for suggestions screen
+        // STEP 3: Check for suggestions screen
         // ============================================================
         val hasSuggestions = allText.any {
             it.contains("متر") || it.contains("كم") || it.contains("km") ||
-            it.contains("Egypt") || it.contains("مصر")
+            it.contains("Egypt") || it.contains("مصر") ||
+            it.contains("القاهرة") || it.contains("Cairo") ||
+            it.contains("الجيزة") || it.contains("Giza")
         }
 
         if (hasSuggestions) {
@@ -495,15 +579,17 @@ class InDriverAutomation(
         }
 
         // ============================================================
-        // STEP 3: Check for "تم" (Done) button
+        // STEP 4: Check for "تم" (Done) button - Allow up to 5 clicks
         // ============================================================
-        val hasTamButton = allText.any { it == "تم" || it == "Done" }
+        val hasTamButton = allText.any { it == "تم" || it == "Done" || it == "التالي" || it == "Next" }
 
-        if (hasTamButton) {
+        if (hasTamButton && doneClickCount < 5) {
             AppLogger.automation(TAG, "Found 'تم' button (click #${doneClickCount + 1})", state = "TAM_BUTTON")
 
             val tamNode = findNodeWithText(rootNode, "تم")
                 ?: findNodeWithText(rootNode, "Done")
+                ?: findNodeWithText(rootNode, "التالي")
+                ?: findNodeWithText(rootNode, "Next")
 
             if (tamNode != null) {
                 if (gentleClick(tamNode)) {
@@ -513,15 +599,32 @@ class InDriverAutomation(
                     AppLogger.automation(TAG, "Clicked 'تم' (#$doneClickCount)", state = "TAM_CLICKED")
                     tamNode.recycle()
 
-                    // After 3 clicks, assume automation is near complete
-                    if (doneClickCount >= 3) {
-                        AppLogger.d(TAG, "3 Done clicks - nearing completion")
+                    // After 4 clicks, check more aggressively for price screen
+                    if (doneClickCount >= 4) {
+                        AppLogger.d(TAG, "$doneClickCount Done clicks - checking for price screen")
                     }
 
-                    Thread.sleep(500)
+                    Thread.sleep(400)
                     return AutomationResult(true, "Clicked Done button")
                 }
                 tamNode.recycle()
+            }
+        }
+
+        // ============================================================
+        // STEP 5: Check for any clickable "Continue" or action buttons
+        // ============================================================
+        val actionButtons = listOf("متابعة", "Continue", "استمرار", "إرسال", "Send", "طلب", "Request")
+        for (buttonText in actionButtons) {
+            val node = findNodeWithText(rootNode, buttonText)
+            if (node != null) {
+                if (gentleClick(node)) {
+                    lastClickTime = currentTime
+                    AppLogger.automation(TAG, "Clicked action button '$buttonText'", state = "ACTION_CLICKED")
+                    node.recycle()
+                    return AutomationResult(true, "Clicked action button")
+                }
+                node.recycle()
             }
         }
 
@@ -540,39 +643,96 @@ class InDriverAutomation(
         }
 
         val allText = getAllTextFromNode(rootNode)
+        AppLogger.d(TAG, "Extracting prices from ${allText.size} text nodes")
 
         val prices = mutableListOf<Double>()
         val vehiclePrices = mutableMapOf<String, Double>()
         val rawTexts = mutableListOf<String>()
 
+        // InDriver-specific patterns for manual extraction
+        val inDriverPatterns = listOf(
+            Regex("(\\d+)\\s*[-–]\\s*(\\d+)"),  // Range: "65-85" - take average
+            Regex("(\\d+)\\s*ج\\.?م"),           // "65 ج.م"
+            Regex("ج\\.?م\\s*(\\d+)"),           // "ج.م 65"
+            Regex("(\\d{2,3})\\s*EGP"),          // "65 EGP"
+            Regex("EGP\\s*(\\d{2,3})"),          // "EGP 65"
+            Regex("(\\d{2,3})\\s*جنيه"),         // "65 جنيه"
+            Regex("^(\\d{2,3})$")                // Standalone number "65"
+        )
+
         for (text in allText) {
-            val extracted = PricePatterns.extractPriceForApp(text, packageName)
+            // First try standard extraction
+            var extracted = PricePatterns.extractPriceForApp(text, packageName)
+
+            // If not found, try InDriver-specific patterns
+            if (extracted == null) {
+                for (pattern in inDriverPatterns) {
+                    val match = pattern.find(text)
+                    if (match != null) {
+                        extracted = try {
+                            // For range pattern, take the lower bound
+                            if (match.groupValues.size > 2 && match.groupValues[2].isNotEmpty()) {
+                                match.groupValues[1].toDoubleOrNull()
+                            } else {
+                                match.groupValues[1].toDoubleOrNull()
+                            }
+                        } catch (e: Exception) {
+                            null
+                        }
+                        if (extracted != null && extracted > 0) break
+                    }
+                }
+            }
+
             if (extracted != null && extracted > 0) {
-                // Filter out unreasonable prices (default 95 EGP)
-                if (extracted < 30 || extracted > 5000) continue
+                // Lower minimum to 15 EGP for short trips
+                // Upper limit 5000 EGP for long trips
+                if (extracted < 15 || extracted > 5000) {
+                    AppLogger.d(TAG, "Skipping price $extracted (out of range 15-5000)")
+                    continue
+                }
 
                 prices.add(extracted)
                 rawTexts.add(text)
+                AppLogger.d(TAG, "Found price: $extracted from '$text'")
             }
 
-            // Vehicle types
-            val vehicleTypes = listOf("رحلة", "مريحة", "بريميوم", "Economy", "Comfort", "Premium")
-            for (vehicleType in vehicleTypes) {
-                if (text.contains(vehicleType, ignoreCase = true)) {
+            // Vehicle types with expanded list
+            val vehicleTypes = listOf(
+                "رحلة" to "Economy",
+                "مريحة" to "Comfort",
+                "بريميوم" to "Premium",
+                "Economy" to "Economy",
+                "Comfort" to "Comfort",
+                "Premium" to "Premium",
+                "سيارة" to "Car",
+                "موتوسيكل" to "Motorcycle",
+                "درجة نارية" to "Motorcycle"
+            )
+
+            for ((arabicType, englishType) in vehicleTypes) {
+                if (text.contains(arabicType, ignoreCase = true) ||
+                    text.contains(englishType, ignoreCase = true)) {
                     val price = PricePatterns.extractPriceForApp(text, packageName)
-                    if (price != null && price > 30) {
-                        vehiclePrices[vehicleType] = price
+                    if (price != null && price >= 15) {
+                        vehiclePrices[englishType] = price
+                        AppLogger.d(TAG, "Found vehicle price: $englishType = $price")
                     }
                 }
             }
         }
 
-        if (prices.isEmpty()) return null
+        if (prices.isEmpty()) {
+            AppLogger.d(TAG, "No prices found in InDriver")
+            return null
+        }
 
         val minPrice = prices.minOrNull() ?: return null
+        AppLogger.automation(TAG, "Extracted InDriver price: $minPrice (found ${prices.size} prices)", state = "PRICE_EXTRACTED")
+
         return ExtractedPrice(
             price = minPrice,
-            allPrices = prices,
+            allPrices = prices.distinct().sorted(),
             vehiclePrices = vehiclePrices,
             rawTexts = rawTexts
         )
@@ -584,19 +744,30 @@ class InDriverAutomation(
         val priceIndicators = listOf(
             "البحث عن عروض", "الأجر المقترح",
             "اطلب رحلة", "Request ride",
-            "Search for offers"
+            "Search for offers", "اطلب سائق",
+            "Request driver", "عرض السعر",
+            "Your offer", "قدم عرضك",
+            "Make your offer", "السعر المقترح",
+            "Suggested fare"
         )
 
         val hasIndicators = priceIndicators.any { indicator ->
             allText.any { it.contains(indicator, ignoreCase = true) }
         }
 
+        // Lower threshold to 15 EGP
         val hasPrice = allText.any { text ->
             val price = PricePatterns.extractPriceForApp(text, packageName)
-            price != null && price > 30
+            price != null && price >= 15
         }
 
-        return hasIndicators && hasPrice
+        // Also check for slider presence (InDriver price adjustment)
+        val hasSlider = allText.any {
+            it.contains("اسحب") || it.contains("Slide") ||
+            it.contains("حرك") || it.contains("Drag")
+        }
+
+        return (hasIndicators && hasPrice) || (hasPrice && hasSlider)
     }
 
     // ============================================================
@@ -606,59 +777,85 @@ class InDriverAutomation(
     private fun tryClickFirstSuggestion(rootNode: AccessibilityNodeInfo): AutomationResult {
         val allText = getAllTextFromNode(rootNode)
 
-        // Filter for real suggestions
+        // Exclude patterns
+        val excludePatterns = listOf(
+            "اختر على الخريطة",
+            "Choose on map",
+            "لا توجد نتائج",
+            "No results",
+            "من",
+            "إلى",
+            "From",
+            "To"
+        )
+
+        // Filter for real suggestions - expanded criteria
         val suggestions = allText.filter { text ->
-            !text.contains("اختر على الخريطة") &&
-            !text.contains("Choose on map") &&
-            !text.contains("لا توجد نتائج") &&
-            !text.matches(Regex("^\\d+\\.\\d+.*")) &&
-            text.length > 5 &&
+            excludePatterns.none { pattern -> text.contains(pattern, ignoreCase = true) } &&
+            !text.matches(Regex("^\\d+\\.\\d+,\\s*\\d+\\.\\d+$")) && // Skip coordinates
+            text.length > 3 &&
             (text.contains("متر") || text.contains("كم") ||
              text.contains("Egypt") || text.contains("مصر") ||
-             text.contains("شارع") || text.contains("ميدان"))
+             text.contains("شارع") || text.contains("ميدان") ||
+             text.contains("القاهرة") || text.contains("Cairo") ||
+             text.contains("الجيزة") || text.contains("Giza") ||
+             text.contains("مدينة") || text.contains("City") ||
+             text.contains("حي") || text.contains("District") ||
+             text.contains("طريق") || text.contains("Road"))
         }
 
         if (suggestions.isEmpty()) {
+            AppLogger.d(TAG, "No valid suggestions found")
             return AutomationResult(false, "No suggestions found", shouldRetry = true)
         }
 
-        val firstSuggestion = suggestions.first()
-        val node = findNodeWithText(rootNode, firstSuggestion)
+        // Try clicking each suggestion until one works
+        for (suggestion in suggestions.take(3)) {
+            val node = findNodeWithText(rootNode, suggestion)
+            if (node != null) {
+                val rect = Rect()
+                node.getBoundsInScreen(rect)
 
-        if (node != null) {
-            val rect = Rect()
-            node.getBoundsInScreen(rect)
+                // Try multiple click strategies
+                var clicked = false
 
-            // Try multiple click strategies
-            var clicked = false
+                // Strategy 1: ACTION_CLICK
+                if (node.isClickable) {
+                    clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                }
 
-            // Strategy 1: ACTION_CLICK
-            if (node.isClickable) {
-                clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-            }
+                // Strategy 2: Gentle click on node
+                if (!clicked) {
+                    clicked = gentleClick(node)
+                }
 
-            // Strategy 2: Gentle click
-            if (!clicked) {
-                clicked = gentleClick(node)
-            }
+                // Strategy 3: Click parent if node is not clickable
+                if (!clicked) {
+                    val parent = node.parent
+                    if (parent != null && parent.isClickable) {
+                        clicked = parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        parent.recycle()
+                    }
+                }
 
-            // Strategy 3: Gesture with longer duration
-            if (!clicked && rect.width() > 0) {
-                clicked = clickAtPositionWithDuration(
-                    rect.centerX().toFloat(),
-                    rect.centerY().toFloat(),
-                    200
-                )
-            }
+                // Strategy 4: Gesture with longer duration
+                if (!clicked && rect.width() > 0) {
+                    clicked = clickAtPositionWithDuration(
+                        rect.centerX().toFloat(),
+                        rect.centerY().toFloat(),
+                        200
+                    )
+                }
 
-            node.recycle()
+                node.recycle()
 
-            if (clicked) {
-                AppLogger.automation(TAG, "Clicked suggestion: '$firstSuggestion'", state = "SUGGESTION_CLICKED")
-                return AutomationResult(true, "Selected suggestion")
+                if (clicked) {
+                    AppLogger.automation(TAG, "Clicked suggestion: '$suggestion'", state = "SUGGESTION_CLICKED")
+                    return AutomationResult(true, "Selected suggestion")
+                }
             }
         }
 
-        return AutomationResult(false, "Could not click suggestion", shouldRetry = true)
+        return AutomationResult(false, "Could not click any suggestion", shouldRetry = true)
     }
 }

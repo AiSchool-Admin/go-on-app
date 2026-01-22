@@ -104,12 +104,25 @@ object PricePatterns {
 
     /**
      * InDriver-specific patterns
+     * InDriver has unique price display including ranges and sliders
      */
     val INDRIVER_PATTERNS: List<Pattern> = listOf(
         // InDriver shows "XX ج.م" format
         Pattern.compile("(\\d+)\\s*ج\\.?م"),
-        // Also shows ranges like "65-85"
-        Pattern.compile("(\\d+)\\s*[-–]\\s*\\d+")
+        // "ج.م XX" format
+        Pattern.compile("ج\\.?م\\s*(\\d+)"),
+        // Also shows ranges like "65-85" or "65–85"
+        Pattern.compile("(\\d+)\\s*[-–]\\s*\\d+"),
+        // EGP format
+        Pattern.compile("(\\d+)\\s*EGP", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("EGP\\s*(\\d+)", Pattern.CASE_INSENSITIVE),
+        // جنيه format
+        Pattern.compile("(\\d+)\\s*جنيه"),
+        Pattern.compile("جنيه\\s*(\\d+)"),
+        // Slider value (standalone number 2-3 digits)
+        Pattern.compile("^\\s*(\\d{2,3})\\s*$"),
+        // Price with decimal
+        Pattern.compile("(\\d{2,3}[.,]\\d{1,2})\\s*(?:ج\\.?م|EGP|جنيه)?", Pattern.CASE_INSENSITIVE)
     )
 
     /**
