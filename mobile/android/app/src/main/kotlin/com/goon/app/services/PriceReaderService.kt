@@ -2141,23 +2141,10 @@ class PriceReaderService : AccessibilityService() {
     private fun enterDiDiPickupText(rootNode: AccessibilityNodeInfo): Boolean {
         Log.i(TAG, "🚕 enterDiDiPickupText: Looking for focused input...")
 
-        // IMPROVED: Use Plus Codes (Google Open Location Code) for precise location
-        // Plus Codes are more reliable than text addresses for locations that have
-        // common names (like "Hero Kids" which exists in multiple countries)
-        val textToEnter: String
-        if (pickupLat != 0.0 && pickupLng != 0.0) {
-            val plusCode = latLngToPlusCode(pickupLat, pickupLng)
-            if (plusCode != null) {
-                textToEnter = plusCode
-                Log.i(TAG, "🚕 Using PLUS CODE for DiDi pickup: $plusCode (from GPS: $pickupLat, $pickupLng)")
-            } else {
-                textToEnter = if (pickupAddress.isNotBlank()) pickupAddress else "$pickupLat, $pickupLng"
-                Log.i(TAG, "🚕 Plus Code failed, using TEXT ADDRESS: $textToEnter")
-            }
-        } else {
-            textToEnter = if (pickupAddress.isNotBlank()) pickupAddress else "$pickupLat, $pickupLng"
-            Log.i(TAG, "🚕 No GPS coordinates, using TEXT ADDRESS: $textToEnter")
-        }
+        // DiDi does NOT support Plus Code search (tested: "8G2H6F9C+M8" returns "No results")
+        // Use text address for initial search, then rely on "Pin your location" fallback if needed
+        val textToEnter = if (pickupAddress.isNotBlank()) pickupAddress else "$pickupLat, $pickupLng"
+        Log.i(TAG, "🚕 Using TEXT ADDRESS for DiDi pickup: $textToEnter (GPS: $pickupLat, $pickupLng)")
 
         // Try to find focused input first
         val focusedNode = rootNode.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
@@ -5312,21 +5299,10 @@ class PriceReaderService : AccessibilityService() {
                 coordText
             }
             DIDI_PACKAGE -> {
-                // IMPROVED: Use Plus Codes for precise location
-                // Plus Codes are more reliable than text addresses for locations with common names
-                if (destLat != 0.0 && destLng != 0.0) {
-                    val plusCode = latLngToPlusCode(destLat, destLng)
-                    if (plusCode != null) {
-                        Log.i(TAG, "🤖 Using PLUS CODE for DiDi destination: $plusCode (from GPS: $destLat, $destLng)")
-                        plusCode
-                    } else {
-                        Log.i(TAG, "🤖 Plus Code failed, using TEXT ADDRESS for DiDi: $destinationAddress")
-                        destinationAddress
-                    }
-                } else {
-                    Log.i(TAG, "🤖 No GPS coords, using TEXT ADDRESS for DiDi: $destinationAddress")
-                    destinationAddress
-                }
+                // DiDi does NOT support Plus Code search - use text address
+                // Rely on "Pin your location on the map" fallback for precise GPS location
+                Log.i(TAG, "🤖 Using TEXT ADDRESS for DiDi: $destinationAddress")
+                destinationAddress
             }
             else -> {
                 Log.i(TAG, "🤖 Using TEXT address for $packageName: $destinationAddress")
@@ -6261,38 +6237,57 @@ class PriceReaderService : AccessibilityService() {
                         return true
                     }
                     13 -> {
-                        // FINAL FALLBACK: No suggestions found - click on "Where to?" to proceed to destination
-                        // This handles cases where DiDi doesn't find pickup suggestions (e.g. "ORO Villa")
-                        Log.i(TAG, "📍 FINAL FALLBACK: No pickup suggestions - clicking 'Where to?' to proceed")
-                        val whereToNodes = rootNode.findAccessibilityNodeInfosByText("Where to?")
-                        for (node in whereToNodes) {
-                            val rect = android.graphics.Rect()
-                            node.getBoundsInScreen(rect)
-                            // Click on "Where to?" that's in the destination area (Y > 300)
-                            if (rect.top > 300) {
-                                Log.i(TAG, "📍 Found 'Where to?' at Y=${rect.top} - clicking to proceed to destination")
-                                val clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                                if (!clicked) {
-                                    // Try gesture tap as fallback
-                                    val gestureClickPath = android.graphics.Path()
-                                    gestureClickPath.moveTo(rect.centerX().toFloat(), rect.centerY().toFloat())
-                                    val gestureClick = android.accessibilityservice.GestureDescription.Builder()
-                                        .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(gestureClickPath, 0, 150))
-                                        .build()
-                                    dispatchGesture(gestureClick, null, null)
+                        // FINAL FALLBACK: No suggestions found
+                        // First try "Pin your location on the map" for precise GPS location
+                        Log.i(TAG, "📍 FINAL FALLBACK: No pickup suggestions - trying 'Pin your location on the map'...")
+                        val pinTexts = listOf("Pin your location on the map", "Pin your location", "حدد موقعك على الخريطة")
+                        var pinClicked = false
+                        for (pinText in pinTexts) {
+                            val pinNodes = rootNode.findAccessibilityNodeInfosByText(pinText)
+                            for (node in pinNodes) {
+                                val rect = android.graphics.Rect()
+                                node.getBoundsInScreen(rect)
+                                Log.i(TAG, "📍 Found '$pinText' at Y=${rect.top} - clicking...")
+                                if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK) || clickNodeOrParent(node)) {
+                                    Log.i(TAG, "📍 ✓ Clicked 'Pin your location' - will use GPS to set location")
+                                    // Note: After clicking pin, DiDi opens map view where user's GPS location is used
+                                    // The map should be centered on current GPS which matches GO-ON's coordinates
+                                    didiPickupPhaseComplete = true
+                                    didiPickupFieldClicked = false
+                                    automationState = AutomationState.FINDING_DESTINATION_FIELD
+                                    automationRetries = 0
+                                    automationStep = 0
+                                    node.recycle()
+                                    lastDiDiSelectAddressClickTime = currentTime
+                                    pinClicked = true
+                                    return true
                                 }
-                                Log.i(TAG, "📍 ✓ FINAL FALLBACK clicked 'Where to?' - transitioning DIRECTLY to FINDING_DESTINATION_FIELD")
-                                didiPickupPhaseComplete = true  // Mark pickup as done (even without suggestion)
-                                didiPickupFieldClicked = false  // Reset for destination phase
-                                // CRITICAL: Transition directly to FINDING_DESTINATION_FIELD instead of relying on SELECTING_SUGGESTION logic
-                                automationState = AutomationState.FINDING_DESTINATION_FIELD
-                                automationRetries = 0
-                                automationStep = 0
                                 node.recycle()
-                                lastDiDiSelectAddressClickTime = currentTime
-                                return true
                             }
-                            node.recycle()
+                            if (pinClicked) break
+                        }
+
+                        // Fallback: If no "Pin your location" found, click "Where to?" to proceed
+                        if (!pinClicked) {
+                            Log.i(TAG, "📍 'Pin your location' not found, clicking 'Where to?' to proceed")
+                            val whereToNodes = rootNode.findAccessibilityNodeInfosByText("Where to?")
+                            for (node in whereToNodes) {
+                                val rect = android.graphics.Rect()
+                                node.getBoundsInScreen(rect)
+                                if (rect.top > 300) {
+                                    Log.i(TAG, "📍 Found 'Where to?' at Y=${rect.top} - clicking to proceed to destination")
+                                    node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                                    didiPickupPhaseComplete = true
+                                    didiPickupFieldClicked = false
+                                    automationState = AutomationState.FINDING_DESTINATION_FIELD
+                                    automationRetries = 0
+                                    automationStep = 0
+                                    node.recycle()
+                                    lastDiDiSelectAddressClickTime = currentTime
+                                    return true
+                                }
+                                node.recycle()
+                            }
                         }
                     }
                 }
@@ -6391,7 +6386,9 @@ class PriceReaderService : AccessibilityService() {
             "Home", "Work", "Favourites", "Use your", "voucher",
             // Skip warning messages about different countries/cities
             "Some addresses below", "different country", "different city",
-            "select carefully", "Please select carefully"
+            "select carefully", "Please select carefully",
+            // Skip "no results" messages - need to use map pin fallback instead
+            "No results found", "please enter another address", "enter another address"
         )
         val shouldSkip = skipTexts.any { combinedText.contains(it, ignoreCase = true) }
 
