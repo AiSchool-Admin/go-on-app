@@ -6246,21 +6246,23 @@ class PriceReaderService : AccessibilityService() {
                             // Click on "Where to?" that's in the destination area (Y > 300)
                             if (rect.top > 300) {
                                 Log.i(TAG, "📍 Found 'Where to?' at Y=${rect.top} - clicking to proceed to destination")
-                                if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                                    Log.i(TAG, "📍 ✓ Clicked 'Where to?' - proceeding to destination entry")
-                                    didiPickupPhaseComplete = true  // Mark pickup as done (even without suggestion)
-                                    node.recycle()
-                                    lastDiDiSelectAddressClickTime = currentTime
-                                    return true
+                                val clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                                if (!clicked) {
+                                    // Try gesture tap as fallback
+                                    val gestureClickPath = android.graphics.Path()
+                                    gestureClickPath.moveTo(rect.centerX().toFloat(), rect.centerY().toFloat())
+                                    val gestureClick = android.accessibilityservice.GestureDescription.Builder()
+                                        .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(gestureClickPath, 0, 150))
+                                        .build()
+                                    dispatchGesture(gestureClick, null, null)
                                 }
-                                // Try gesture tap as fallback
-                                val gestureClickPath = android.graphics.Path()
-                                gestureClickPath.moveTo(rect.centerX().toFloat(), rect.centerY().toFloat())
-                                val gestureClick = android.accessibilityservice.GestureDescription.Builder()
-                                    .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(gestureClickPath, 0, 150))
-                                    .build()
-                                dispatchGesture(gestureClick, null, null)
-                                didiPickupPhaseComplete = true
+                                Log.i(TAG, "📍 ✓ FINAL FALLBACK clicked 'Where to?' - transitioning DIRECTLY to FINDING_DESTINATION_FIELD")
+                                didiPickupPhaseComplete = true  // Mark pickup as done (even without suggestion)
+                                didiPickupFieldClicked = false  // Reset for destination phase
+                                // CRITICAL: Transition directly to FINDING_DESTINATION_FIELD instead of relying on SELECTING_SUGGESTION logic
+                                automationState = AutomationState.FINDING_DESTINATION_FIELD
+                                automationRetries = 0
+                                automationStep = 0
                                 node.recycle()
                                 lastDiDiSelectAddressClickTime = currentTime
                                 return true
