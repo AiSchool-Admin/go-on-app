@@ -6179,6 +6179,26 @@ class PriceReaderService : AccessibilityService() {
                 } else if (didiNoAddressCardLoggedCount == 10) {
                     Log.w(TAG, "📍 Still no address card after 10 attempts...")
                 }
+
+                // FALLBACK: If we can't find address cards, try gesture tap at suggestion area
+                // DiDi suggestions typically appear around Y=550-700
+                if (didiNoAddressCardLoggedCount == 5) {
+                    Log.i(TAG, "📍 Trying fallback: gesture tap at suggestion area (Y=600)")
+                    val displayMetrics = resources.displayMetrics
+                    val screenWidth = displayMetrics.widthPixels
+                    val tapX = screenWidth / 2f
+                    val tapY = 600f
+
+                    val path = android.graphics.Path()
+                    path.moveTo(tapX, tapY)
+                    val gesture = android.accessibilityservice.GestureDescription.Builder()
+                        .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 150))
+                        .build()
+                    dispatchGesture(gesture, null, null)
+                    Log.i(TAG, "📍 Fallback gesture tap at ($tapX, $tapY)")
+                    lastDiDiSelectAddressClickTime = currentTime
+                    return true
+                }
             }
         }
 
@@ -6303,8 +6323,7 @@ class PriceReaderService : AccessibilityService() {
                 // Pickup field is typically at Y=233-359, Destination at Y=359-485
                 // Suggestions list starts around Y=500+
                 if (rect.top < minY) {
-                    Log.d(TAG, "📍 Skipping node at Y=${rect.top} (above minY=$minY): '${combinedText.take(30)}...'")
-                    // Don't return, continue searching children
+                    // Skip nodes above minY (input fields area) - don't log to reduce spam
                 } else if (rect.width() > 100 && rect.height() > 40) {
                     Log.i(TAG, "📍 Found DiDi address card: '${combinedText.take(50)}...' bounds=$rect clickable=${node.isClickable}")
 
