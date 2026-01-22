@@ -896,13 +896,30 @@ class PriceReaderService : AccessibilityService() {
                             lower.contains("wasalny") ||
                             lower.contains("comfort") ||
                             lower.contains("dropoff") ||
-                            lower.contains("choose your driver")
+                            lower.contains("choose your driver") ||
+                            // DiDi-specific price screen indicators
+                            lower.contains("express") ||
+                            lower.contains("request") ||
+                            lower.contains("book now") ||
+                            lower.contains("طلب") ||
+                            lower.contains("احجز")
                         }
                         if (hasPriceIndicators) {
                             Log.i(TAG, "🤖 📋 DiDi already on price screen - skipping SELECTING_SUGGESTION")
                             automationState = AutomationState.WAITING_FOR_PRICE
                             automationRetries = 0
                             automationStep = 0
+                            return
+                        }
+
+                        // CRITICAL FIX: If we've been waiting too long on "Select Address" (10+ times),
+                        // transition to WAITING_FOR_PRICE anyway and let the price reader do its job
+                        if (didiStillOnSelectAddressLogCount > 10) {
+                            Log.w(TAG, "🚕 DiDi stuck on 'Select Address' after $didiStillOnSelectAddressLogCount attempts - forcing transition to WAITING_FOR_PRICE")
+                            automationState = AutomationState.WAITING_FOR_PRICE
+                            automationRetries = 0
+                            automationStep = 0
+                            didiStillOnSelectAddressLogCount = 0
                             return
                         }
                     }
