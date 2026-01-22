@@ -6363,7 +6363,10 @@ class PriceReaderService : AccessibilityService() {
         val skipTexts = listOf(
             "Pin your location", "Select Address", "Powered by",
             "Back", "Where to", "Add stop", "Pickup point", "Search",
-            "Home", "Work", "Favourites", "Use your", "voucher"
+            "Home", "Work", "Favourites", "Use your", "voucher",
+            // Skip warning messages about different countries/cities
+            "Some addresses below", "different country", "different city",
+            "select carefully", "Please select carefully"
         )
         val shouldSkip = skipTexts.any { combinedText.contains(it, ignoreCase = true) }
 
