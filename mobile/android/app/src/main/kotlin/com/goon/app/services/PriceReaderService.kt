@@ -6136,12 +6136,28 @@ class PriceReaderService : AccessibilityService() {
         val allText = getAllTextFromNode(rootNode)
         val allTextLower = allText.map { it.lowercase() }
 
+        // Cache display metrics once for performance (used by multiple screen handlers)
+        val displayMetrics = resources.displayMetrics
+        val screenHeight = displayMetrics.heightPixels
+        val screenWidth = displayMetrics.widthPixels
+
         // ============================================================
-        // FIRST: Check for MAP PIN CONFIRMATION screen
-        // This appears after clicking "Pin your location on the map"
-        // IMPORTANT: Both regular address screen AND map pin screen have "Select Address" as title!
-        // The KEY differentiator is the presence of "Set Destination" button
+        // FIRST: Check for PAYMENT METHOD CONFIRMATION screen
+        // This appears when DiDi needs the user to confirm the payment method
+        // before showing prices. Screen shows "Payment Method" and "Confirm" button.
         // ============================================================
+        val hasPaymentMethodScreen = allTextLower.any {
+            it.contains("payment method") || it.contains("طريقة الدفع")
+        }
+
+        // Only treat as Payment Method screen if it has Confirm but NO prices visible
+        // and NO "Set Destination" button (to avoid confusion with other screens)
+        val hasConfirmButton = allTextLower.any { it == "confirm" || it == "تأكيد" }
+        val hasPricesVisible = allText.any { text ->
+            text.matches(Regex(".*\\d+\\.\\d{2}.*")) ||
+            text.contains("EGP") ||
+            text.contains("ج.م")
+        }
         val hasSetButton = allTextLower.any {
             it.contains("set destination") ||
             it.contains("set pickup") ||
@@ -6151,10 +6167,81 @@ class PriceReaderService : AccessibilityService() {
             it.contains("تعيين موقع")
         }
 
-        // Cache display metrics once for performance
-        val displayMetrics = resources.displayMetrics
-        val screenHeight = displayMetrics.heightPixels
-        val screenWidth = displayMetrics.widthPixels
+        if (hasPaymentMethodScreen && hasConfirmButton && !hasPricesVisible && !hasSetButton) {
+            Log.i(TAG, "💳 DiDi PAYMENT METHOD screen detected!")
+            Log.i(TAG, "💳 Screen texts: ${allText.take(8).joinToString(" | ") { it.take(30) }}")
+
+            // Find and click "Confirm" button
+            val confirmTexts = listOf("Confirm", "تأكيد", "OK", "موافق")
+
+            for (confirmText in confirmTexts) {
+                val confirmNodes = rootNode.findAccessibilityNodeInfosByText(confirmText)
+                for (node in confirmNodes) {
+                    val rect = android.graphics.Rect()
+                    node.getBoundsInScreen(rect)
+
+                    Log.i(TAG, "💳 Found '$confirmText' button at Y=${rect.top} - clicking...")
+
+                    // Try multiple click strategies
+                    var clicked = false
+
+                    // Strategy 1: Direct click
+                    if (node.isClickable) {
+                        clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        if (clicked) Log.i(TAG, "💳 ✓ Direct ACTION_CLICK succeeded")
+                    }
+
+                    // Strategy 2: Click parent
+                    if (!clicked) {
+                        clicked = clickNodeOrParent(node)
+                        if (clicked) Log.i(TAG, "💳 ✓ clickNodeOrParent succeeded")
+                    }
+
+                    // Strategy 3: Gesture tap on button location
+                    if (!clicked) {
+                        val centerX = (rect.left + rect.right) / 2f
+                        val centerY = (rect.top + rect.bottom) / 2f
+                        Log.i(TAG, "💳 Trying gesture tap at ($centerX, $centerY)")
+                        val path = android.graphics.Path()
+                        path.moveTo(centerX, centerY)
+                        val gesture = android.accessibilityservice.GestureDescription.Builder()
+                            .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 150))
+                            .build()
+                        dispatchGesture(gesture, null, null)
+                        clicked = true
+                    }
+
+                    node.recycle()
+
+                    if (clicked) {
+                        Log.i(TAG, "💳 ✓ Clicked 'Confirm' on Payment Method screen - proceeding to prices")
+                        return true
+                    }
+                }
+            }
+
+            // If Confirm button not found by text, try gesture tap at common button location
+            Log.w(TAG, "💳 Confirm button not found by text - trying fallback gesture tap")
+            val buttonY = screenHeight * 0.85f  // Near bottom where Confirm typically is
+            val centerX = screenWidth / 2f
+
+            val path = android.graphics.Path()
+            path.moveTo(centerX, buttonY)
+            val gesture = android.accessibilityservice.GestureDescription.Builder()
+                .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 150))
+                .build()
+            dispatchGesture(gesture, null, null)
+            Log.i(TAG, "💳 Fallback gesture tap at Y=$buttonY")
+            return true
+        }
+
+        // ============================================================
+        // SECOND: Check for MAP PIN CONFIRMATION screen
+        // This appears after clicking "Pin your location on the map"
+        // IMPORTANT: Both regular address screen AND map pin screen have "Select Address" as title!
+        // The KEY differentiator is the presence of "Set Destination" button
+        // Note: hasSetButton already defined above for Payment Method check
+        // ============================================================
 
         // If we see "Set Destination" button, this is the MAP PIN CONFIRMATION screen
         // regardless of whether the title says "Select Address" or "Select Destination"
