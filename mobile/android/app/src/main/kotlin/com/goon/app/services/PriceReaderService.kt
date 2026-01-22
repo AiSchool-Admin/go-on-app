@@ -2136,15 +2136,28 @@ class PriceReaderService : AccessibilityService() {
 
     /**
      * Enter pickup address text into DiDi's pickup field
-     * Uses coordinates format that DiDi recognizes well
+     * Uses Plus Codes for precision when GPS coordinates are available
      */
     private fun enterDiDiPickupText(rootNode: AccessibilityNodeInfo): Boolean {
         Log.i(TAG, "🚕 enterDiDiPickupText: Looking for focused input...")
 
-        // IMPORTANT: DiDi does NOT support GPS coordinate search - must use TEXT address
-        // Unlike InDriver, DiDi needs a readable address to show suggestions
-        val textToEnter = if (pickupAddress.isNotBlank()) pickupAddress else "$pickupLat, $pickupLng"
-        Log.i(TAG, "🚕 Using TEXT ADDRESS for DiDi pickup: $textToEnter")
+        // IMPROVED: Use Plus Codes (Google Open Location Code) for precise location
+        // Plus Codes are more reliable than text addresses for locations that have
+        // common names (like "Hero Kids" which exists in multiple countries)
+        val textToEnter: String
+        if (pickupLat != 0.0 && pickupLng != 0.0) {
+            val plusCode = latLngToPlusCode(pickupLat, pickupLng)
+            if (plusCode != null) {
+                textToEnter = plusCode
+                Log.i(TAG, "🚕 Using PLUS CODE for DiDi pickup: $plusCode (from GPS: $pickupLat, $pickupLng)")
+            } else {
+                textToEnter = if (pickupAddress.isNotBlank()) pickupAddress else "$pickupLat, $pickupLng"
+                Log.i(TAG, "🚕 Plus Code failed, using TEXT ADDRESS: $textToEnter")
+            }
+        } else {
+            textToEnter = if (pickupAddress.isNotBlank()) pickupAddress else "$pickupLat, $pickupLng"
+            Log.i(TAG, "🚕 No GPS coordinates, using TEXT ADDRESS: $textToEnter")
+        }
 
         // Try to find focused input first
         val focusedNode = rootNode.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
@@ -5299,9 +5312,21 @@ class PriceReaderService : AccessibilityService() {
                 coordText
             }
             DIDI_PACKAGE -> {
-                // IMPORTANT: DiDi does NOT support GPS coordinate search - must use TEXT address
-                Log.i(TAG, "🤖 Using TEXT ADDRESS for DiDi: $destinationAddress")
-                destinationAddress
+                // IMPROVED: Use Plus Codes for precise location
+                // Plus Codes are more reliable than text addresses for locations with common names
+                if (destLat != 0.0 && destLng != 0.0) {
+                    val plusCode = latLngToPlusCode(destLat, destLng)
+                    if (plusCode != null) {
+                        Log.i(TAG, "🤖 Using PLUS CODE for DiDi destination: $plusCode (from GPS: $destLat, $destLng)")
+                        plusCode
+                    } else {
+                        Log.i(TAG, "🤖 Plus Code failed, using TEXT ADDRESS for DiDi: $destinationAddress")
+                        destinationAddress
+                    }
+                } else {
+                    Log.i(TAG, "🤖 No GPS coords, using TEXT ADDRESS for DiDi: $destinationAddress")
+                    destinationAddress
+                }
             }
             else -> {
                 Log.i(TAG, "🤖 Using TEXT address for $packageName: $destinationAddress")
@@ -9008,5 +9033,67 @@ class PriceReaderService : AccessibilityService() {
         val c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 
         return R * c
+    }
+
+    /**
+     * Convert GPS coordinates to Google Plus Code (Open Location Code)
+     * Plus Codes are more precise than text addresses and work better for ride apps
+     *
+     * Algorithm based on: https://github.com/google/open-location-code
+     *
+     * @param latitude GPS latitude (-90 to 90)
+     * @param longitude GPS longitude (-180 to 180)
+     * @return Plus Code string like "5FP7+XX3" or null if invalid coordinates
+     */
+    private fun latLngToPlusCode(latitude: Double, longitude: Double): String? {
+        // Validate coordinates
+        if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+            Log.w(TAG, "📍 Invalid coordinates for Plus Code: $latitude, $longitude")
+            return null
+        }
+
+        // Open Location Code character set (20 characters)
+        val codeAlphabet = "23456789CFGHJMPQRVWX"
+        val base = codeAlphabet.length // 20
+
+        // Normalize latitude to [0, 180] and longitude to [0, 360]
+        var lat = latitude + 90.0
+        var lng = longitude + 180.0
+
+        // Clamp values
+        lat = lat.coerceIn(0.0, 180.0)
+        lng = lng.coerceIn(0.0, 360.0)
+
+        // Generate 10-character code (8 digits + '+' + 2 digits = 11 chars total)
+        val code = StringBuilder()
+
+        // Pair encoding for first 5 pairs (10 characters)
+        var latValue = lat
+        var lngValue = lng
+
+        // Each pair of characters encodes lat and lng with increasing precision
+        // Pair 1: 20° precision, Pair 2: 1° precision, etc.
+        val latPrecisions = doubleArrayOf(20.0, 1.0, 0.05, 0.0025, 0.000125)
+        val lngPrecisions = doubleArrayOf(20.0, 1.0, 0.05, 0.0025, 0.000125)
+
+        for (i in 0 until 5) {
+            // Calculate lat digit
+            val latDigit = (latValue / latPrecisions[i]).toInt().coerceIn(0, base - 1)
+            latValue -= latDigit * latPrecisions[i]
+
+            // Calculate lng digit
+            val lngDigit = (lngValue / lngPrecisions[i]).toInt().coerceIn(0, base - 1)
+            lngValue -= lngDigit * lngPrecisions[i]
+
+            code.append(codeAlphabet[latDigit])
+            code.append(codeAlphabet[lngDigit])
+
+            // Insert '+' after 8 characters
+            if (i == 3) {
+                code.append('+')
+            }
+        }
+
+        return code.toString()
     }
 }
