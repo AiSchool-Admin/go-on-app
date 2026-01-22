@@ -14,6 +14,7 @@ import '../../features/wallet/screens/wallet_screen.dart';
 import '../../features/profile/screens/profile_screen.dart';
 import '../../features/permissions/screens/permissions_setup_screen.dart';
 import '../../features/drivers/screens/driver_registration_screen.dart';
+import '../../features/testing/screens/automation_test_screen.dart';
 import '../../providers/auth_provider.dart';
 
 /// Route names
@@ -32,6 +33,7 @@ class AppRoutes {
   static const String wallet = '/wallet';
   static const String profile = '/profile';
   static const String driverRegistration = '/driver-registration';
+  static const String automationTest = '/automation-test';
 }
 
 /// Router provider
@@ -132,6 +134,11 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.driverRegistration,
         builder: (context, state) => const DriverRegistrationScreen(),
+      ),
+      // Testing Routes (Dev Only)
+      GoRoute(
+        path: AppRoutes.automationTest,
+        builder: (context, state) => const AutomationTestScreen(),
       ),
     ],
     errorBuilder: (context, state) => ErrorScreen(error: state.error),

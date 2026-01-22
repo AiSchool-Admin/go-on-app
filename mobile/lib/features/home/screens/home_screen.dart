@@ -101,6 +101,13 @@ class _HomeContent extends StatelessWidget {
               ],
             ),
             actions: [
+              // Dev: Automation Test
+              IconButton(
+                icon: const Icon(Icons.bug_report_outlined),
+                color: AppColors.textSecondary,
+                onPressed: () => context.push(AppRoutes.automationTest),
+                tooltip: 'اختبار الأتمتة',
+              ),
               IconButton(
                 icon: const Icon(Icons.notifications_outlined),
                 color: AppColors.textPrimary,
