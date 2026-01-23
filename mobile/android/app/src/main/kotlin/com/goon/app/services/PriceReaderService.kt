@@ -2212,9 +2212,32 @@ class PriceReaderService : AccessibilityService() {
 
             if (result) {
                 Log.i(TAG, "🚕 ✓ Successfully entered pickup: $textToEnter")
+
+                // CRITICAL FIX: Trigger search by adding space then removing it
+                // ACTION_SET_TEXT doesn't always trigger text watchers in DiDi
+                // This forces DiDi to recognize the text change and trigger search
+                Thread.sleep(200)
+
+                // Add a space to trigger text change listener
+                val triggerArgs = android.os.Bundle()
+                triggerArgs.putCharSequence(
+                    AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                    "$textToEnter "
+                )
+                focusedNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, triggerArgs)
+                Thread.sleep(150)
+
+                // Remove the space - back to original text
+                val finalArgs = android.os.Bundle()
+                finalArgs.putCharSequence(
+                    AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                    textToEnter
+                )
+                focusedNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, finalArgs)
+
                 focusedNode.recycle()
-                // Wait a moment for suggestions to appear
-                Thread.sleep(TimingConfig.textInputDelay * 2)
+                // Wait longer for suggestions to load from server
+                Thread.sleep(TimingConfig.textInputDelay * 3)
                 return true
             } else {
                 Log.w(TAG, "🚕 ✗ ACTION_SET_TEXT failed on focused node")
@@ -5431,6 +5454,31 @@ class PriceReaderService : AccessibilityService() {
 
             if (result) {
                 Log.i(TAG, "🤖 ✓ Successfully entered destination: $textToEnter")
+
+                // CRITICAL FIX FOR DIDI: Trigger search by adding space then removing it
+                // ACTION_SET_TEXT doesn't always trigger text watchers
+                if (packageName == DIDI_PACKAGE) {
+                    Log.i(TAG, "🚕 [DiDi] Triggering search with space trick...")
+                    Thread.sleep(200)
+
+                    // Add a space to trigger text change listener
+                    val triggerArgs = android.os.Bundle()
+                    triggerArgs.putCharSequence(
+                        AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                        "$textToEnter "
+                    )
+                    focusedNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, triggerArgs)
+                    Thread.sleep(150)
+
+                    // Remove the space - back to original text
+                    val finalArgs = android.os.Bundle()
+                    finalArgs.putCharSequence(
+                        AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                        textToEnter
+                    )
+                    focusedNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, finalArgs)
+                    Thread.sleep(TimingConfig.textInputDelay * 2)  // Wait for suggestions
+                }
 
                 // CRITICAL FOR INDRIVER: After entering destination, press Enter to submit
                 // This should trigger navigation to the price screen
