@@ -980,6 +980,7 @@ class PriceReaderService : AccessibilityService() {
                             Log.i(TAG, "🚕 [DiDi] PICKUP suggestion selected! Now moving to DESTINATION entry...")
                             didiPickupPhaseComplete = true  // Mark pickup phase as done
                             didiPickupFieldClicked = false  // Reset for destination phase
+                            didiNoAddressCardLoggedCount = 0  // CRITICAL: Reset counter for destination phase
 
                             // Go to FINDING_DESTINATION_FIELD for destination entry
                             automationState = AutomationState.FINDING_DESTINATION_FIELD
@@ -6726,6 +6727,7 @@ class PriceReaderService : AccessibilityService() {
                                     node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
                                     didiPickupPhaseComplete = true
                                     didiPickupFieldClicked = false
+                                    didiNoAddressCardLoggedCount = 0  // CRITICAL: Reset counter for destination phase
                                     automationState = AutomationState.FINDING_DESTINATION_FIELD
                                     automationRetries = 0
                                     automationStep = 0
