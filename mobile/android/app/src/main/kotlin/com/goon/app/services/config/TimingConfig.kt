@@ -163,6 +163,41 @@ object TimingConfig {
     }
 
     // ============================================================
+    // SCREEN POSITION CONFIGURATION
+    // ============================================================
+
+    /**
+     * Screen positions as fractions of screen dimensions
+     * These replace hardcoded pixel values for better device compatibility
+     */
+    object ScreenPositions {
+        /**
+         * Button positions (as fraction of screen height from top)
+         */
+        const val BOTTOM_BUTTON_Y_FRACTION = 0.85f      // Common position for bottom buttons
+        const val BOTTOM_BUTTON_Y_ALT_1 = 0.88f         // Alternative position
+        const val BOTTOM_BUTTON_Y_ALT_2 = 0.90f         // Alternative position
+        const val BOTTOM_BUTTON_Y_ALT_3 = 0.92f         // Alternative position
+
+        /**
+         * DiDi specific positions
+         */
+        const val DIDI_PICKUP_FIELD_Y = 350f            // Pickup field approximate Y position (pixels)
+        const val DIDI_PICKUP_FIELD_Y_FRACTION = 0.18f  // As fraction of screen height
+
+        /**
+         * Pin/marker positions
+         */
+        const val PIN_Y_FRACTION = 0.85f                // Pin location for map screens
+
+        /**
+         * Search/input field positions
+         */
+        const val SEARCH_FIELD_Y_FRACTION = 0.15f       // Top search field
+        const val DESTINATION_FIELD_Y_FRACTION = 0.25f  // Destination input field
+    }
+
+    // ============================================================
     // CALIBRATION METHODS
     // ============================================================
 

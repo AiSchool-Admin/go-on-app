@@ -1897,8 +1897,10 @@ class PriceReaderService : AccessibilityService() {
             try {
                 val displayMetrics = resources.displayMetrics
                 val screenWidth = displayMetrics.widthPixels
+                val screenHeight = displayMetrics.heightPixels
                 val tapX = screenWidth / 2f
-                val tapY = 350f  // Pickup point is usually around this Y position
+                // Use config fraction instead of hardcoded pixel value
+                val tapY = screenHeight * TimingConfig.ScreenPositions.DIDI_PICKUP_FIELD_Y_FRACTION
                 Log.i(TAG, "🚕 Fallback: Tapping at ($tapX, $tapY) for pickup field")
                 clickAtPositionWithDuration(tapX, tapY, 150)
                 Thread.sleep(TimingConfig.animationWait)
@@ -3391,6 +3393,35 @@ class PriceReaderService : AccessibilityService() {
 
         Log.w(TAG, "🚖 ✗ Could not find pickup field to click")
         return false
+    }
+
+    /**
+     * Safely recycle a list of nodes, catching any exceptions
+     * Use this when you have a list from findAccessibilityNodeInfosByText
+     */
+    private fun safeRecycleNodes(nodes: List<AccessibilityNodeInfo>) {
+        nodes.forEach { node ->
+            try {
+                node.recycle()
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to recycle node: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Safely perform an operation on nodes and ensure cleanup
+     * Example: safeWithNodes(rootNode.findAccessibilityNodeInfosByText("text")) { nodes -> ... }
+     */
+    private inline fun <R> safeWithNodes(
+        nodes: List<AccessibilityNodeInfo>,
+        block: (List<AccessibilityNodeInfo>) -> R
+    ): R {
+        return try {
+            block(nodes)
+        } finally {
+            safeRecycleNodes(nodes)
+        }
     }
 
     /**
@@ -5418,7 +5449,7 @@ class PriceReaderService : AccessibilityService() {
 
                     // Method 2: Try clicking slightly above (85% of screen)
                     Thread.sleep(TimingConfig.textInputDelay * 2)
-                    val upperY = screenHeight * 0.85f
+                    val upperY = screenHeight * TimingConfig.ScreenPositions.BOTTOM_BUTTON_Y_FRACTION
                     Log.i(TAG, "🤖 [InDriver] Trying upper bottom click at ($centerX, $upperY)")
                     if (clickAtPosition(centerX, upperY)) {
                         Log.i(TAG, "🤖 [InDriver] ✓ Upper bottom click succeeded!")
@@ -6267,7 +6298,7 @@ class PriceReaderService : AccessibilityService() {
 
             // If Confirm button not found by text, try gesture tap at common button location
             Log.w(TAG, "💳 Confirm button not found by text - trying fallback gesture tap")
-            val buttonY = screenHeight * 0.85f  // Near bottom where Confirm typically is
+            val buttonY = screenHeight * TimingConfig.ScreenPositions.BOTTOM_BUTTON_Y_FRACTION  // Near bottom where Confirm typically is
             val centerX = screenWidth / 2f
 
             val path = android.graphics.Path()
@@ -6609,7 +6640,7 @@ class PriceReaderService : AccessibilityService() {
 
                         // Also try gesture tap at bottom of screen where "Pin your location" typically is
                         if (!pinClicked) {
-                            val pinY = screenHeight * 0.85f  // Near bottom of screen
+                            val pinY = screenHeight * TimingConfig.ScreenPositions.BOTTOM_BUTTON_Y_FRACTION  // Near bottom of screen
                             Log.i(TAG, "📍 'Pin your location' not found by text, trying gesture tap at Y=$pinY")
                             val pinPath = android.graphics.Path()
                             pinPath.moveTo(centerX, pinY)
@@ -7689,7 +7720,7 @@ class PriceReaderService : AccessibilityService() {
                         val screenHeight = displayMetrics.heightPixels.toFloat()
                         // Button is at bottom center - try 85% down the screen
                         val hardcodedX = screenWidth / 2
-                        val hardcodedY = screenHeight * 0.85f
+                        val hardcodedY = screenHeight * TimingConfig.ScreenPositions.BOTTOM_BUTTON_Y_FRACTION
                         Log.i(TAG, "🗺️ Hardcoded click at ($hardcodedX, $hardcodedY) - screen size: ${screenWidth}x${screenHeight}")
 
                         if (clickAtPosition(hardcodedX, hardcodedY)) {
@@ -7859,7 +7890,7 @@ class PriceReaderService : AccessibilityService() {
             val screenWidth = displayMetrics.widthPixels.toFloat()
             val screenHeight = displayMetrics.heightPixels.toFloat()
             val hardcodedX = screenWidth / 2
-            val hardcodedY = screenHeight * 0.85f
+            val hardcodedY = screenHeight * TimingConfig.ScreenPositions.BOTTOM_BUTTON_Y_FRACTION
             Log.i(TAG, "🗺️ [findAndClickDoneButton] Hardcoded click at ($hardcodedX, $hardcodedY)")
 
             if (clickAtPosition(hardcodedX, hardcodedY)) {
@@ -8029,9 +8060,101 @@ class PriceReaderService : AccessibilityService() {
     }
 
     /**
+     * UNIFIED MULTI-STRATEGY CLICK
+     * Tries all click strategies in order of reliability based on app type.
+     *
+     * Strategy order:
+     * 1. ACTION_CLICK on node (if clickable)
+     * 2. ACTION_CLICK on parent (if clickable)
+     * 3. ACTION_CLICK on grandparent (if clickable)
+     * 4. Gesture tap at center (100ms)
+     * 5. Gesture tap with longer duration (200ms)
+     * 6. Gesture tap at different positions (upper, lower)
+     *
+     * @param node The accessibility node to click
+     * @param appType "didi", "indriver", "careem", or "default"
+     * @param maxAncestorLevels How many parent levels to try (default 3)
+     * @return true if any strategy succeeded
+     */
+    private fun multiStrategyClick(
+        node: AccessibilityNodeInfo,
+        appType: String = "default",
+        maxAncestorLevels: Int = 3
+    ): Boolean {
+        val rect = android.graphics.Rect()
+        node.getBoundsInScreen(rect)
+        val centerX = rect.centerX().toFloat()
+        val centerY = rect.centerY().toFloat()
+
+        // Validate bounds
+        if (rect.width() <= 0 || rect.height() <= 0) {
+            Log.w(TAG, "🎯 multiStrategyClick: Invalid bounds $rect")
+            return false
+        }
+
+        Log.i(TAG, "🎯 multiStrategyClick($appType): bounds=$rect")
+
+        // Strategy 1-3: ACTION_CLICK on node and ancestors
+        if (appType != "careem") { // Careem doesn't respond to ACTION_CLICK
+            // Try node itself
+            if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                Log.i(TAG, "🎯 ✓ Strategy 1: ACTION_CLICK on node succeeded")
+                return true
+            }
+
+            // Try ancestors
+            var current = node.parent
+            for (level in 1..maxAncestorLevels) {
+                if (current == null) break
+                if (current.isClickable && current.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    Log.i(TAG, "🎯 ✓ Strategy ${level + 1}: ACTION_CLICK on ancestor level $level succeeded")
+                    current.recycle()
+                    return true
+                }
+                val next = current.parent
+                current.recycle()
+                current = next
+            }
+            current?.recycle()
+        }
+
+        // Strategy 4-6: Gesture taps (for apps that need gestures)
+        if (appType != "indriver") { // InDriver crashes with too many gestures
+            // Short tap at center
+            if (clickAtPosition(centerX, centerY)) {
+                Log.i(TAG, "🎯 ✓ Strategy 4: Gesture tap at center succeeded")
+                return true
+            }
+
+            // Longer tap at center
+            if (clickAtPositionWithDuration(centerX, centerY, 200)) {
+                Log.i(TAG, "🎯 ✓ Strategy 5: Long gesture tap succeeded")
+                return true
+            }
+
+            // Try upper and lower positions
+            val upperY = rect.top + rect.height() * 0.3f
+            val lowerY = rect.top + rect.height() * 0.7f
+            if (clickAtPositionWithDuration(centerX, upperY, 150)) {
+                Log.i(TAG, "🎯 ✓ Strategy 6a: Upper position tap succeeded")
+                return true
+            }
+            if (clickAtPositionWithDuration(centerX, lowerY, 150)) {
+                Log.i(TAG, "🎯 ✓ Strategy 6b: Lower position tap succeeded")
+                return true
+            }
+        }
+
+        Log.w(TAG, "🎯 multiStrategyClick: All strategies failed")
+        return false
+    }
+
+    /**
      * SMART CLICK: Try multiple click strategies in order of reliability
      * For CLICKABLE nodes: ACTION_CLICK first (more reliable for apps that block gestures)
      * For non-clickable: Try gesture tap with delay to verify
+     *
+     * @deprecated Use multiStrategyClick() for new code
      */
     private fun smartClick(node: AccessibilityNodeInfo): Boolean {
         val rect = android.graphics.Rect()
