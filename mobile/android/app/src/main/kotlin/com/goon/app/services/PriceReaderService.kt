@@ -1633,7 +1633,8 @@ class PriceReaderService : AccessibilityService() {
                     }
 
                     // After minimum wait, check cache (for non-InDriver apps)
-                    if (cachedPrice != null && cachedPrice.price > 0 && cachedPrice.allPricesFound.size >= 2) {
+                    val minPricesRequired = TimingConfig.PriceValidation.getMinPricesForApp(packageName)
+                    if (cachedPrice != null && cachedPrice.price > 0 && cachedPrice.allPricesFound.size >= minPricesRequired) {
                         Log.i(TAG, "🤖 ✓✓✓ PRICE FOUND: ${cachedPrice.price} EGP (${cachedPrice.allPricesFound.size} prices: ${cachedPrice.allPricesFound})")
                         automationState = AutomationState.PRICE_CAPTURED
                         autoReturnToGoOn()
@@ -1651,7 +1652,7 @@ class PriceReaderService : AccessibilityService() {
                     // No valid cache, try aggressive scan
                     Log.i(TAG, "🤖 No valid cache, trying aggressive scan...")
                     val priceInfo = performAggressiveScan(packageName)
-                    if (priceInfo != null && priceInfo.price > 0 && priceInfo.allPricesFound.size >= 2) {
+                    if (priceInfo != null && priceInfo.price > 0 && priceInfo.allPricesFound.size >= minPricesRequired) {
                         Log.i(TAG, "🤖 ✓✓✓ PRICE SCANNED: ${priceInfo.price} EGP (${priceInfo.allPricesFound.size} prices)")
                         automationState = AutomationState.PRICE_CAPTURED
                         notifyPriceCaptured(priceInfo)
@@ -6202,7 +6203,8 @@ class PriceReaderService : AccessibilityService() {
         // This prevents getting stuck on "Please Select Pickup Point" or other screens
         // ============================================================
         val didiPrice = latestPrices[DIDI_PACKAGE]
-        if (didiPrice != null && didiPrice.price > 0 && didiPrice.allPricesFound.size >= 2) {
+        val didiMinPrices = TimingConfig.PriceValidation.getMinPricesForApp(DIDI_PACKAGE)
+        if (didiPrice != null && didiPrice.price > 0 && didiPrice.allPricesFound.size >= didiMinPrices) {
             Log.i(TAG, "🚕 DiDi price already captured (${didiPrice.price} EGP) - AUTO-RETURN to GO-ON")
             automationState = AutomationState.PRICE_CAPTURED
             autoReturnToGoOn()
@@ -6959,9 +6961,8 @@ class PriceReaderService : AccessibilityService() {
         }
 
         // Cooldown to prevent clicking too fast (InDriver crashes with rapid interactions)
-        // Reduced from 3000 to 1500ms to allow faster retries
         val currentTime = System.currentTimeMillis()
-        if (currentTime - lastInDriverClickTime < 1500) {
+        if (currentTime - lastInDriverClickTime < TimingConfig.Cooldowns.INDRIVER_CLICK_COOLDOWN_MS) {
             Log.i(TAG, "🗺️ InDriver cooldown active, waiting...")
             return true // Return true to prevent other actions
         }
@@ -7536,7 +7537,7 @@ class PriceReaderService : AccessibilityService() {
             // We need to allow both clicks but prevent rapid double-clicking
 
             val timeSinceDoneClick = if (inDriverDoneClickedTime > 0) System.currentTimeMillis() - inDriverDoneClickedTime else Long.MAX_VALUE
-            val minTimeBetweenClicks = 800L  // OPTIMIZED: Reduced from 2000ms to 800ms for faster navigation
+            val minTimeBetweenClicks = TimingConfig.Cooldowns.INDRIVER_DONE_BUTTON_COOLDOWN_MS
 
             // Check for pickup screen markers (indicates we need second click)
             val isPickupScreen = allText.any {

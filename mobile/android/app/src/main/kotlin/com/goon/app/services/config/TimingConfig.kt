@@ -127,6 +127,32 @@ object TimingConfig {
     }
 
     // ============================================================
+    // COOLDOWN CONFIGURATION
+    // ============================================================
+
+    /**
+     * Cooldown periods to prevent rapid clicking that can crash apps
+     * or cause unexpected behavior
+     */
+    object Cooldowns {
+        /**
+         * InDriver cooldowns - this app crashes with rapid interactions
+         */
+        const val INDRIVER_CLICK_COOLDOWN_MS = 1500L     // General click cooldown
+        const val INDRIVER_DONE_BUTTON_COOLDOWN_MS = 800L // Between تم clicks
+
+        /**
+         * DiDi cooldowns - needs stability between actions
+         */
+        const val DIDI_ADDRESS_CLICK_COOLDOWN_MS = 2000L // Address selection cooldown
+
+        /**
+         * General cooldowns
+         */
+        const val DEFAULT_CLICK_COOLDOWN_MS = 500L       // Default between clicks
+    }
+
+    // ============================================================
     // PRICE VALIDATION
     // ============================================================
 
@@ -134,6 +160,29 @@ object TimingConfig {
         const val UBER_MIN_PRICE = 50.0
         const val GENERAL_MIN_PRICE = 10.0
         const val GENERAL_MAX_PRICE = 5000.0
+
+        /**
+         * Minimum number of prices required to consider price capture complete
+         * Some apps show multiple vehicle options (Uber, Careem), others may show just one
+         */
+        const val MIN_PRICES_FOR_COMPLETION = 1  // Changed from 2 to 1 for flexibility
+
+        /**
+         * Preferred minimum prices (for apps that typically show multiple options)
+         */
+        const val PREFERRED_MIN_PRICES = 2
+
+        /**
+         * App-specific minimum prices
+         */
+        fun getMinPricesForApp(packageName: String): Int = when {
+            packageName.contains("uber") -> 2      // Uber shows multiple vehicle types
+            packageName.contains("careem") -> 2    // Careem shows multiple options
+            packageName.contains("didi") -> 1      // DiDi may show just one
+            packageName.contains("inDriver") -> 1  // InDriver shows suggested fare
+            packageName.contains("bolt") -> 2      // Bolt shows multiple
+            else -> MIN_PRICES_FOR_COMPLETION
+        }
     }
 
     // ============================================================
