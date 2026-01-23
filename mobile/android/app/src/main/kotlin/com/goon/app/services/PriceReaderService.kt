@@ -803,7 +803,13 @@ class PriceReaderService : AccessibilityService() {
                     }
 
                     // CRITICAL: DiDi may show "Select Address" screen here
+                    // IMPORTANT: Wait at least 4 steps (~2 seconds) before searching for suggestions
+                    // This gives DiDi time to load suggestions from the server
                     if (packageName == DIDI_PACKAGE) {
+                        if (automationStep <= 4) {
+                            Log.d(TAG, "🚕 DiDi: Waiting for suggestions to load (step $automationStep/4)...")
+                            return  // Don't search yet, give DiDi time to load
+                        }
                         if (handleDiDiIntermediateScreens(rootNode)) {
                             Log.i(TAG, "🤖 📋 Handled DiDi intermediate screen during WAITING_FOR_SUGGESTIONS")
                             // Don't return - continue to check state transition
