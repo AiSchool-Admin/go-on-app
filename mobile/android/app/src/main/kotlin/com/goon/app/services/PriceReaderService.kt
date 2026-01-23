@@ -7160,6 +7160,13 @@ class PriceReaderService : AccessibilityService() {
                         val nodeClass = node.className?.toString() ?: ""
                         Log.i(TAG, "🗺️   Node: text='$nodeText', class='$nodeClass', clickable=${node.isClickable}")
 
+                        // Skip EditText elements - they are input fields, not suggestions
+                        if (nodeClass.contains("EditText")) {
+                            Log.i(TAG, "🗺️   ⏭️ Skipping EditText (input field, not a suggestion)")
+                            node.recycle()
+                            continue
+                        }
+
                         // Try to find clickable parent if node itself isn't clickable
                         var clickableNode: AccessibilityNodeInfo? = null
                         if (node.isClickable) {
