@@ -398,13 +398,29 @@ class PriceReaderService : AccessibilityService() {
     private fun startAutomationLoop(packageName: String) {
         scanRunnable = object : Runnable {
             override fun run() {
-                if (isActiveMonitoring && automationState != AutomationState.IDLE) {
-                    performAutomationStep(packageName)
+                try {
+                    if (isActiveMonitoring && automationState != AutomationState.IDLE) {
+                        performAutomationStep(packageName)
 
-                    // Continue if not done
-                    if (automationState != AutomationState.PRICE_CAPTURED &&
-                        automationState != AutomationState.FAILED &&
-                        automationState != AutomationState.IDLE) {
+                        // Continue if not done
+                        if (automationState != AutomationState.PRICE_CAPTURED &&
+                            automationState != AutomationState.FAILED &&
+                            automationState != AutomationState.IDLE) {
+                            val scheduled = scanHandler?.postDelayed(this, TimingConfig.scanInterval)
+                            if (scheduled == null) {
+                                Log.e(TAG, "🤖 ⚠️ WARNING: scanHandler is null, loop cannot continue!")
+                            }
+                        } else {
+                            Log.i(TAG, "🤖 ✓ Automation loop completed with state: $automationState")
+                        }
+                    } else {
+                        Log.w(TAG, "🤖 ⚠️ Loop stopped: isActiveMonitoring=$isActiveMonitoring, state=$automationState")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "🤖 ✗ Exception in automation loop: ${e.message}", e)
+                    // Try to continue the loop despite the error
+                    if (isActiveMonitoring && automationState != AutomationState.PRICE_CAPTURED &&
+                        automationState != AutomationState.FAILED && automationState != AutomationState.IDLE) {
                         scanHandler?.postDelayed(this, TimingConfig.scanInterval)
                     }
                 }
@@ -6262,10 +6278,13 @@ class PriceReaderService : AccessibilityService() {
         // ============================================================
         // PRIORITY CHECK: If DiDi price already captured, return to GO-ON immediately
         // This prevents getting stuck on "Please Select Pickup Point" or other screens
+        // CRITICAL: Only do this check in WAITING_FOR_PRICE state to avoid premature return
+        // during address entry (accessibility events may detect old prices on screen)
         // ============================================================
         val didiPrice = latestPrices[DIDI_PACKAGE]
         val didiMinPrices = TimingConfig.PriceValidation.getMinPricesForApp(DIDI_PACKAGE)
-        if (didiPrice != null && didiPrice.price > 0 && didiPrice.allPricesFound.size >= didiMinPrices) {
+        val isWaitingForPrice = automationState == AutomationState.WAITING_FOR_PRICE
+        if (isWaitingForPrice && didiPrice != null && didiPrice.price > 0 && didiPrice.allPricesFound.size >= didiMinPrices) {
             Log.i(TAG, "🚕 DiDi price already captured (${didiPrice.price} EGP) - AUTO-RETURN to GO-ON")
             automationState = AutomationState.PRICE_CAPTURED
             autoReturnToGoOn()
