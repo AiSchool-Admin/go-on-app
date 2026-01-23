@@ -2236,8 +2236,8 @@ class PriceReaderService : AccessibilityService() {
                 focusedNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, finalArgs)
 
                 focusedNode.recycle()
-                // Wait longer for suggestions to load from server
-                Thread.sleep(TimingConfig.textInputDelay * 3)
+                // Wait longer for suggestions to load from server (DiDi needs ~1.5-2 seconds)
+                Thread.sleep(TimingConfig.suggestionWait * 2)
                 return true
             } else {
                 Log.w(TAG, "🚕 ✗ ACTION_SET_TEXT failed on focused node")
@@ -6567,7 +6567,7 @@ class PriceReaderService : AccessibilityService() {
                 // SMART DETECTION: If current address is short (< 10 chars), use "Pin your location" EARLY
                 // Short addresses like "احمد" will have many unrelated suggestions
                 val isShortAddress = currentAddress.length < 10
-                val earlyFallbackAttempt = if (isShortAddress) 5 else 13  // Use pin earlier for short addresses
+                val earlyFallbackAttempt = if (isShortAddress) 7 else 15  // Use pin earlier for short addresses
 
                 // Only log first 3 times to reduce spam
                 if (didiNoAddressCardLoggedCount <= 3) {
@@ -6581,7 +6581,7 @@ class PriceReaderService : AccessibilityService() {
 
                 // For SHORT ADDRESSES: Skip gesture taps and go directly to "Pin your location"
                 // Short addresses (like "احمد") have many unrelated suggestions - better to use GPS pin
-                val shouldUsePinEarly = isShortAddress && didiNoAddressCardLoggedCount >= 5
+                val shouldUsePinEarly = isShortAddress && didiNoAddressCardLoggedCount >= 7
 
                 if (shouldUsePinEarly) {
                     // Skip to PIN fallback for short addresses
@@ -6589,8 +6589,9 @@ class PriceReaderService : AccessibilityService() {
                 } else {
                     // Use screen percentages instead of magic numbers for better device compatibility
                     // Suggestions list starts around 25% from top of screen
+                    // NOTE: Wait longer (6, 9, 12) before fallback to give suggestions time to load
                     when (didiNoAddressCardLoggedCount) {
-                        4 -> {
+                        6 -> {
                             // First fallback: try 25% from top (just below destination field)
                             val tapY = screenHeight * TimingConfig.ScreenPositions.DIDI_SEARCH_Y_FRACTION_2
                             Log.i(TAG, "📍 Fallback 1: gesture tap at Y=$tapY (25%)")
@@ -6603,7 +6604,7 @@ class PriceReaderService : AccessibilityService() {
                             lastDiDiSelectAddressClickTime = currentTime
                             return true
                         }
-                        7 -> {
+                        9 -> {
                             // Second fallback: try 30% from top
                             val tapY = screenHeight * TimingConfig.ScreenPositions.DIDI_SEARCH_Y_FRACTION_1
                             Log.i(TAG, "📍 Fallback 2: gesture tap at Y=$tapY (30%)")
@@ -6616,7 +6617,7 @@ class PriceReaderService : AccessibilityService() {
                             lastDiDiSelectAddressClickTime = currentTime
                             return true
                         }
-                        10 -> {
+                        12 -> {
                             // Third fallback: try 35% from top
                             val tapY = screenHeight * TimingConfig.ScreenPositions.DIDI_SEARCH_Y_FRACTION_4
                             Log.i(TAG, "📍 Fallback 3: gesture tap at Y=$tapY (35%)")
@@ -6633,7 +6634,7 @@ class PriceReaderService : AccessibilityService() {
                 }
 
                 // FINAL FALLBACK (or early for short addresses)
-                if (didiNoAddressCardLoggedCount >= 13 || shouldUsePinEarly) {
+                if (didiNoAddressCardLoggedCount >= 15 || shouldUsePinEarly) {
                         // FINAL FALLBACK: No suggestions found
                         // First SCROLL DOWN to reveal "Pin your location on the map" option
                         Log.i(TAG, "📍 FINAL FALLBACK: Scrolling down to find 'Pin your location on the map'... (phase=${if (isPickupPhase) "PICKUP" else "DEST"})")
