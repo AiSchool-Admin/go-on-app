@@ -5835,9 +5835,12 @@ class PriceReaderService : AccessibilityService() {
 
         if (!shouldSkip && node.isClickable && combinedText.length > 20) {
             // Check if it looks like a FULL address card (has distance + location)
-            val hasDistance = combinedText.contains("km") || combinedText.contains("كم")
+            // Distance can be in: km, كم, m (meters), or just a number followed by m
+            val hasDistance = combinedText.contains("km") || combinedText.contains("كم") ||
+                              combinedText.contains(Regex("\\d+m\\b")) || combinedText.contains("متر")
             val hasLocation = combinedText.contains("محافظة") || combinedText.contains("مصر") ||
-                              combinedText.contains("العبور") || combinedText.contains("القاهرة")
+                              combinedText.contains("العبور") || combinedText.contains("القاهرة") ||
+                              combinedText.contains("الجيزة") || combinedText.contains("فيلا")
 
             if (hasDistance && hasLocation) {
                 Log.i(TAG, "📍 DiDi FULL address card: '${combinedText.take(60)}...'")
