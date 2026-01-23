@@ -6167,6 +6167,18 @@ class PriceReaderService : AccessibilityService() {
      * - Other promotional/info dialogs
      */
     private fun handleDiDiIntermediateScreens(rootNode: AccessibilityNodeInfo): Boolean {
+        // ============================================================
+        // PRIORITY CHECK: If DiDi price already captured, return to GO-ON immediately
+        // This prevents getting stuck on "Please Select Pickup Point" or other screens
+        // ============================================================
+        val didiPrice = latestPrices[DIDI_PACKAGE]
+        if (didiPrice != null && didiPrice.price > 0 && didiPrice.allPricesFound.size >= 2) {
+            Log.i(TAG, "🚕 DiDi price already captured (${didiPrice.price} EGP) - AUTO-RETURN to GO-ON")
+            automationState = AutomationState.PRICE_CAPTURED
+            autoReturnToGoOn()
+            return true
+        }
+
         val allText = getAllTextFromNode(rootNode)
         val allTextLower = allText.map { it.lowercase() }
 
