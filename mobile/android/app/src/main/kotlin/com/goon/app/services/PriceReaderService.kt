@@ -4276,11 +4276,17 @@ class PriceReaderService : AccessibilityService() {
             }
         }
 
-        // STEP 2: Enter pickup GPS COORDINATES directly
-        // Using coordinates is more precise than text address - avoids wrong location suggestions
-        // Format: "30.12345, 31.67890"
-        val textToEnter = "$pickupLat, $pickupLng"
-        Log.i(TAG, "🤖 STEP 2: Entering pickup GPS coordinates: $textToEnter (address was: $pickupAddress)")
+        // STEP 2: Enter pickup TEXT ADDRESS
+        // Using text address because InDriver doesn't recognize GPS coordinates well
+        // GPS coordinates cause "No results" and require map selection which is unreliable
+        val textToEnter = if (pickupAddress.isNotBlank()) {
+            Log.i(TAG, "🤖 STEP 2: Entering pickup TEXT ADDRESS: $pickupAddress (coords: $pickupLat, $pickupLng)")
+            pickupAddress
+        } else {
+            // Fallback to coordinates only if no address available
+            Log.i(TAG, "🤖 STEP 2: No address available, using GPS coordinates: $pickupLat, $pickupLng")
+            "$pickupLat, $pickupLng"
+        }
 
         val focusedNode = rootNode.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
         if (focusedNode != null) {
@@ -5334,10 +5340,17 @@ class PriceReaderService : AccessibilityService() {
         // - Other apps: Use TEXT address
         val textToEnter = when (packageName) {
             INDRIVER_PACKAGE -> {
-                // Use GPS COORDINATES for precise destination - InDriver supports this
-                val coordText = "$destLat, $destLng"
-                Log.i(TAG, "🤖 Using GPS COORDINATES for InDriver: $coordText (address was: $destinationAddress)")
-                coordText
+                // Use TEXT ADDRESS for InDriver - coordinates cause "No results" and require map selection
+                // Text addresses are recognized better and show suggestions
+                if (destinationAddress.isNotBlank()) {
+                    Log.i(TAG, "🤖 Using TEXT ADDRESS for InDriver: $destinationAddress (coords: $destLat, $destLng)")
+                    destinationAddress
+                } else {
+                    // Fallback to coordinates only if no address
+                    val coordText = "$destLat, $destLng"
+                    Log.i(TAG, "🤖 No address available, using GPS coordinates for InDriver: $coordText")
+                    coordText
+                }
             }
             DIDI_PACKAGE -> {
                 // DiDi does NOT support Plus Code search - use text address
