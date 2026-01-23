@@ -5836,11 +5836,20 @@ class PriceReaderService : AccessibilityService() {
         if (!shouldSkip && node.isClickable && combinedText.length > 20) {
             // Check if it looks like a FULL address card (has distance + location)
             // Distance can be in: km, كم, m (meters), or just a number followed by m
-            val hasDistance = combinedText.contains("km") || combinedText.contains("كم") ||
+            val hasDistance = combinedText.contains("km", ignoreCase = true) || combinedText.contains("كم") ||
                               combinedText.contains(Regex("\\d+m\\b")) || combinedText.contains("متر")
+            // Location keywords in BOTH Arabic AND English (DiDi shows English sometimes)
             val hasLocation = combinedText.contains("محافظة") || combinedText.contains("مصر") ||
                               combinedText.contains("العبور") || combinedText.contains("القاهرة") ||
-                              combinedText.contains("الجيزة") || combinedText.contains("فيلا")
+                              combinedText.contains("الجيزة") || combinedText.contains("فيلا") ||
+                              combinedText.contains("شارع") || combinedText.contains("حارة") ||
+                              // English keywords
+                              combinedText.contains("Governorate", ignoreCase = true) ||
+                              combinedText.contains("Egypt", ignoreCase = true) ||
+                              combinedText.contains("Obour", ignoreCase = true) ||
+                              combinedText.contains("Cairo", ignoreCase = true) ||
+                              combinedText.contains("Giza", ignoreCase = true) ||
+                              combinedText.contains("Street", ignoreCase = true)
 
             if (hasDistance && hasLocation) {
                 Log.i(TAG, "📍 DiDi FULL address card: '${combinedText.take(60)}...'")
