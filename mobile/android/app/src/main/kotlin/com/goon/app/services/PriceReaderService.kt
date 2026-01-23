@@ -8472,6 +8472,7 @@ class PriceReaderService : AccessibilityService() {
         automationState == AutomationState.FAILED
 
     fun resetAutomation() {
+        Log.w(TAG, "🔄 resetAutomation() called - previous state: $automationState, isActiveMonitoring: $isActiveMonitoring")
         automationState = AutomationState.IDLE
         automationStep = 0
         automationRetries = 0

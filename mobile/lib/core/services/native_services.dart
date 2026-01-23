@@ -460,7 +460,8 @@ class NativeServicesManager {
 
   /// Wait for automation to complete and get full price info with vehicle types
   Future<AppPrice?> waitForAutomationAndGetPriceInfo(String packageName) async {
-    // App-specific timeouts: Careem 35s, DiDi 20s, others 12s
+    // App-specific timeouts: Careem 35s, DiDi 45s, others 12s
+    // DiDi needs longer timeout because it has pickup + destination phases with fallbacks
     final isCareem = packageName == 'com.careem.acma';
     final isDiDi = packageName == 'com.didiglobal.passenger';
 
@@ -470,8 +471,8 @@ class NativeServicesManager {
       maxPolls = 140; // 35 seconds (140 * 250ms)
       timeoutSec = 35;
     } else if (isDiDi) {
-      maxPolls = 80;  // 20 seconds
-      timeoutSec = 20;
+      maxPolls = 180;  // 45 seconds (180 * 250ms) - increased from 20s due to pickup+destination phases
+      timeoutSec = 45;
     } else {
       maxPolls = 48;  // 12 seconds
       timeoutSec = 12;
