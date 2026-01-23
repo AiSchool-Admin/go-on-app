@@ -238,10 +238,9 @@ class PriceReaderService : AccessibilityService() {
     private var inDriverAutomationComplete = false
 
     // Track InDriver map swipe attempts (to move pin from GPS location to entered coordinates)
+    // Config values are now in TimingConfig.MapConfig
     private var inDriverMapSwipeAttempts = 0
     private var inDriverLastMapSwipeTime = 0L
-    private val INDRIVER_MAP_SWIPE_COOLDOWN = 800L  // Wait between swipes (reduced for faster movement)
-    private val INDRIVER_MAX_MAP_SWIPES = 6  // Max swipes before clicking تم (increased for distant locations)
 
     enum class AutomationState {
         IDLE,
@@ -7539,32 +7538,39 @@ class PriceReaderService : AccessibilityService() {
             // We need to SWIPE the map to move the pin before clicking "تم"
             // ============================================================
             val timeSinceLastSwipe = currentTime - inDriverLastMapSwipeTime
-            if (inDriverMapSwipeAttempts < INDRIVER_MAX_MAP_SWIPES && timeSinceLastSwipe > INDRIVER_MAP_SWIPE_COOLDOWN) {
+            if (inDriverMapSwipeAttempts < TimingConfig.MapConfig.INDRIVER_MAX_MAP_SWIPES &&
+                timeSinceLastSwipe > TimingConfig.MapConfig.INDRIVER_MAP_SWIPE_COOLDOWN_MS) {
                 Log.i(TAG, "🗺️ MAP SWIPE: Performing swipe #$inDriverMapSwipeAttempts to move pin toward target coordinates")
 
                 val displayMetrics = resources.displayMetrics
                 val screenWidth = displayMetrics.widthPixels.toFloat()
                 val screenHeight = displayMetrics.heightPixels.toFloat()
 
-                // Map is in upper-middle area of screen
+                // Map position from config
                 val mapCenterX = screenWidth / 2
-                val mapCenterY = screenHeight * 0.4f
-                val swipeDistance = screenWidth * 0.4f  // Increased for more movement
+                val mapCenterY = screenHeight * TimingConfig.MapConfig.MAP_CENTER_Y_FRACTION
+                val swipeDistance = screenWidth * TimingConfig.MapConfig.MAP_SWIPE_DISTANCE_FRACTION
 
-                // SMART SWIPE: Calculate direction based on target coordinates
-                // Determine if we're setting pickup or destination based on click count
-                val targetLat = if (inDriverDoneClickCount == 0) pickupLat else destLat
-                val targetLng = if (inDriverDoneClickCount == 0) pickupLng else destLng
+                // SMART SWIPE: Calculate direction based on actual coordinates
+                // The map opens at user's GPS location (approximately pickupLat/pickupLng)
+                // For DESTINATION map (click 0): move from pickup → destination
+                // For PICKUP map (click 1): pin should already be close to pickup
+                val isDestinationMap = (inDriverDoneClickCount == 0)
 
-                // Reference point: Cairo center (approximate GPS location when map opens)
-                val refLat = 30.04  // Cairo center latitude
-                val refLng = 31.24  // Cairo center longitude
+                val targetLat = if (isDestinationMap) destLat else pickupLat
+                val targetLng = if (isDestinationMap) destLng else pickupLng
 
-                // Calculate direction needed
-                val needNorth = targetLat > refLat  // Target is north of reference
-                val needEast = targetLng > refLng   // Target is east of reference
+                // Reference is user's current location (approximated by pickup coordinates)
+                // This works for any city, not just Cairo
+                val refLat = pickupLat
+                val refLng = pickupLng
 
-                Log.i(TAG, "🗺️ Target: ($targetLat, $targetLng), Ref: ($refLat, $refLng)")
+                // Calculate direction needed (only if coordinates are valid)
+                val hasValidCoords = refLat != 0.0 && refLng != 0.0 && targetLat != 0.0 && targetLng != 0.0
+                val needNorth = if (hasValidCoords) targetLat > refLat else true
+                val needEast = if (hasValidCoords) targetLng > refLng else true
+
+                Log.i(TAG, "🗺️ ${if (isDestinationMap) "DESTINATION" else "PICKUP"} map: Target($targetLat, $targetLng) from Ref($refLat, $refLng)")
                 Log.i(TAG, "🗺️ Direction needed: ${if (needNorth) "NORTH" else "SOUTH"}, ${if (needEast) "EAST" else "WEST"}")
 
                 // Swipe direction logic:
@@ -7601,7 +7607,8 @@ class PriceReaderService : AccessibilityService() {
                     path.lineTo(endX, endY)
 
                     val gesture = android.accessibilityservice.GestureDescription.Builder()
-                        .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 500))
+                        .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(
+                            path, 0, TimingConfig.MapConfig.INDRIVER_SWIPE_DURATION_MS))
                         .build()
 
                     dispatchGesture(gesture, null, null)
@@ -7612,7 +7619,7 @@ class PriceReaderService : AccessibilityService() {
                     inDriverLastMapSwipeTime = currentTime
 
                     // Wait for map to settle before next action
-                    Thread.sleep(600)
+                    Thread.sleep(TimingConfig.MapConfig.INDRIVER_SWIPE_SETTLE_MS)
                     return true  // Return true to retry - don't click تم yet
                 } catch (e: Exception) {
                     Log.e(TAG, "🗺️ Map swipe failed: ${e.message}")
@@ -7620,7 +7627,7 @@ class PriceReaderService : AccessibilityService() {
             }
 
             // Reset swipe counter after clicking تم (for next map screen)
-            if (inDriverMapSwipeAttempts >= INDRIVER_MAX_MAP_SWIPES) {
+            if (inDriverMapSwipeAttempts >= TimingConfig.MapConfig.INDRIVER_MAX_MAP_SWIPES) {
                 Log.i(TAG, "🗺️ Max swipes reached ($inDriverMapSwipeAttempts), now clicking تم button")
                 inDriverMapSwipeAttempts = 0  // Reset for next map screen
             }
@@ -9012,11 +9019,12 @@ class PriceReaderService : AccessibilityService() {
         val prices = mutableListOf<Double>()
         var suggestedFare: Double? = null
 
-        // InDriver-specific price blacklist:
-        // - 95.0 = Default price shown on home screen (NOT a real trip price!)
-        // - < 25 = Motorcycle/درجة نارية prices (we want car prices only)
-        val inDriverBlacklist = setOf(95.0)
-        val minCarPrice = 25.0  // Prices below this are motorcycle
+        // Price validation thresholds (from TimingConfig)
+        // Note: No hardcoded blacklist - we rely on inDriverAutomationComplete flag
+        // to ensure we only extract prices when on the actual price screen
+        val minCarPrice = TimingConfig.PriceValidation.GENERAL_MIN_PRICE  // 10.0
+        val maxPrice = TimingConfig.PriceValidation.GENERAL_MAX_PRICE      // 5000.0
+        val minMotorcycleThreshold = 25.0  // Below this is likely motorcycle
 
         // PRIORITY 1: Look for "الأجر المقترح" (Suggested fare) specifically
         // This is the main price shown on the "البحث عن عروض" screen
@@ -9025,7 +9033,7 @@ class PriceReaderService : AccessibilityService() {
                 text.contains("Suggested fare") || text.contains("Suggested price")) {
                 // Try to extract price from this text
                 val price = extractPrice(text)
-                if (price != null && price > minCarPrice && price !in inDriverBlacklist) {
+                if (price != null && price >= minCarPrice && price <= maxPrice) {
                     suggestedFare = price
                     Log.i(TAG, "InDriver: Found suggested fare (الأجر المقترح): $price EGP")
                     break
@@ -9036,15 +9044,10 @@ class PriceReaderService : AccessibilityService() {
         // PRIORITY 2: Extract all other prices as fallback
         for (text in allText) {
             val price = extractPrice(text)
-            if (price != null && price in 15.0..2000.0) {
-                // Filter out InDriver-specific invalid prices
-                if (price in inDriverBlacklist) {
-                    Log.d(TAG, "InDriver: Ignoring blacklisted price $price (home screen default)")
-                    continue
-                }
-                if (price < minCarPrice) {
-                    Log.d(TAG, "InDriver: Ignoring motorcycle price $price (< $minCarPrice)")
-                    continue
+            if (price != null && price >= minCarPrice && price <= maxPrice) {
+                // Filter out motorcycle prices (optional - kept for filtering)
+                if (price < minMotorcycleThreshold) {
+                    Log.d(TAG, "InDriver: Likely motorcycle price $price (< $minMotorcycleThreshold) - including anyway")
                 }
                 prices.add(price)
             }

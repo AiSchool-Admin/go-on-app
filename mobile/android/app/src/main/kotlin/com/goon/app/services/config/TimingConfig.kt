@@ -137,6 +137,32 @@ object TimingConfig {
     }
 
     // ============================================================
+    // MAP SWIPE CONFIGURATION
+    // ============================================================
+
+    object MapConfig {
+        /**
+         * InDriver map swipe settings
+         * When InDriver shows "Choose on map", the map opens at user's GPS location.
+         * We swipe to move the pin toward the target coordinates.
+         */
+        const val INDRIVER_MAP_SWIPE_COOLDOWN_MS = 800L
+        const val INDRIVER_MAX_MAP_SWIPES = 6
+        const val INDRIVER_SWIPE_DURATION_MS = 500L
+        const val INDRIVER_SWIPE_SETTLE_MS = 600L
+
+        /**
+         * Swipe distance as fraction of screen width (0.4 = 40%)
+         */
+        const val MAP_SWIPE_DISTANCE_FRACTION = 0.4f
+
+        /**
+         * Map center position as fraction of screen height (0.4 = 40% from top)
+         */
+        const val MAP_CENTER_Y_FRACTION = 0.4f
+    }
+
+    // ============================================================
     // CALIBRATION METHODS
     // ============================================================
 
