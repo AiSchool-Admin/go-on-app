@@ -227,12 +227,40 @@ object TimingConfig {
         const val BOTTOM_BUTTON_Y_ALT_1 = 0.88f         // Alternative position
         const val BOTTOM_BUTTON_Y_ALT_2 = 0.90f         // Alternative position
         const val BOTTOM_BUTTON_Y_ALT_3 = 0.92f         // Alternative position
+        const val BOTTOM_BUTTON_Y_ALT_4 = 0.95f         // Very bottom position
+
+        /**
+         * Scroll gesture positions
+         */
+        const val SCROLL_START_Y_FRACTION = 0.7f        // Scroll start position (70% from top)
+        const val SCROLL_END_Y_FRACTION = 0.3f          // Scroll end position (30% from top)
 
         /**
          * DiDi specific positions
          */
         const val DIDI_PICKUP_FIELD_Y = 350f            // Pickup field approximate Y position (pixels)
         const val DIDI_PICKUP_FIELD_Y_FRACTION = 0.18f  // As fraction of screen height
+        const val DIDI_SEARCH_Y_FRACTION_1 = 0.30f      // DiDi search bar position 1 (30% from top)
+        const val DIDI_SEARCH_Y_FRACTION_2 = 0.25f      // DiDi search bar position 2 (25% from top)
+        const val DIDI_SEARCH_Y_FRACTION_3 = 0.40f      // DiDi search bar position 3 (40% from top)
+        const val DIDI_SEARCH_Y_FRACTION_4 = 0.35f      // DiDi search bar position 4 (35% from top)
+        const val DIDI_SEARCH_Y_FRACTION_5 = 0.45f      // DiDi search bar position 5 (45% from top)
+
+        /**
+         * Careem specific positions (service grid)
+         */
+        const val CAREEM_BOTTOM_NAV_X = 0.125f          // Bottom nav first item X
+        const val CAREEM_BOTTOM_NAV_Y = 0.92f           // Bottom nav Y
+        const val CAREEM_GRID_TOP_LEFT_X = 0.20f        // Service grid top-left X
+        const val CAREEM_GRID_TOP_LEFT_Y = 0.35f        // Service grid top-left Y
+        const val CAREEM_GRID_TOP_CENTER_X = 0.50f      // Service grid top-center X
+        const val CAREEM_GRID_TOP_CENTER_Y = 0.35f      // Service grid top-center Y
+        const val CAREEM_ROW_FIRST_X = 0.15f            // Service row first item X
+        const val CAREEM_ROW_FIRST_Y = 0.25f            // Service row first item Y
+        const val CAREEM_GRID_MIDDLE_LEFT_X = 0.20f     // Service grid middle-left X
+        const val CAREEM_GRID_MIDDLE_LEFT_Y = 0.45f     // Service grid middle-left Y
+        const val CAREEM_GRID_TOP_AREA_X = 0.25f        // Service grid top area X
+        const val CAREEM_GRID_TOP_AREA_Y = 0.30f        // Service grid top area Y
 
         /**
          * Pin/marker positions

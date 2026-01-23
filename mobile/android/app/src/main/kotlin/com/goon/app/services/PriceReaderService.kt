@@ -2027,20 +2027,20 @@ class PriceReaderService : AccessibilityService() {
 
                 // DiDi search bar is usually at about 25-35% from top
                 val tapX = screenWidth / 2f
-                val tapY = screenHeight * 0.30f  // 30% from top
+                val tapY = screenHeight * TimingConfig.ScreenPositions.DIDI_SEARCH_Y_FRACTION_1  // 30% from top
 
                 Log.i(TAG, "🚕 Fallback: Tapping at ($tapX, $tapY) - center of screen, 30% down")
                 clickAtPositionWithDuration(tapX, tapY, 150)
                 Thread.sleep(TimingConfig.animationWait)
 
                 // Try another tap slightly higher
-                val tapY2 = screenHeight * 0.25f
+                val tapY2 = screenHeight * TimingConfig.ScreenPositions.DIDI_SEARCH_Y_FRACTION_2  // 25% from top
                 Log.i(TAG, "🚕 Fallback: Tapping at ($tapX, $tapY2) - center of screen, 25% down")
                 clickAtPositionWithDuration(tapX, tapY2, 150)
                 Thread.sleep(TimingConfig.animationWait)
 
                 // Try tapping in the middle
-                val tapY3 = screenHeight * 0.40f
+                val tapY3 = screenHeight * TimingConfig.ScreenPositions.DIDI_SEARCH_Y_FRACTION_3  // 40% from top
                 Log.i(TAG, "🚕 Fallback: Tapping at ($tapX, $tapY3) - center of screen, 40% down")
                 clickAtPositionWithDuration(tapX, tapY3, 150)
             } catch (e: Exception) {
@@ -2163,7 +2163,13 @@ class PriceReaderService : AccessibilityService() {
             val tapX = screenWidth / 2f
 
             // Try tapping at several Y positions where DiDi typically shows inputs
-            val tapPositions = listOf(0.25f, 0.30f, 0.35f, 0.40f, 0.45f)
+            val tapPositions = listOf(
+                TimingConfig.ScreenPositions.DIDI_SEARCH_Y_FRACTION_2,  // 25%
+                TimingConfig.ScreenPositions.DIDI_SEARCH_Y_FRACTION_1,  // 30%
+                TimingConfig.ScreenPositions.DIDI_SEARCH_Y_FRACTION_4,  // 35%
+                TimingConfig.ScreenPositions.DIDI_SEARCH_Y_FRACTION_3,  // 40%
+                TimingConfig.ScreenPositions.DIDI_SEARCH_Y_FRACTION_5   // 45%
+            )
             for (yPercent in tapPositions) {
                 val tapY = screenHeight * yPercent
                 Log.i(TAG, "🚕 Aggressive fallback: Tapping at ($tapX, $tapY) - ${(yPercent * 100).toInt()}% from top")
@@ -2899,12 +2905,12 @@ class PriceReaderService : AccessibilityService() {
                     // Position 4: Service grid middle-left (20%, 45%)
                     // Position 5: Service grid top area (25%, 30%)
                     val positions = listOf(
-                        Pair(0.125f, 0.92f),   // Bottom nav, first item
-                        Pair(0.20f, 0.35f),    // Service grid top-left
-                        Pair(0.50f, 0.35f),    // Service grid top-center
-                        Pair(0.15f, 0.25f),    // Service row first item
-                        Pair(0.20f, 0.45f),    // Service grid middle-left
-                        Pair(0.25f, 0.30f)     // Service grid top area
+                        Pair(TimingConfig.ScreenPositions.CAREEM_BOTTOM_NAV_X, TimingConfig.ScreenPositions.CAREEM_BOTTOM_NAV_Y),           // Bottom nav, first item
+                        Pair(TimingConfig.ScreenPositions.CAREEM_GRID_TOP_LEFT_X, TimingConfig.ScreenPositions.CAREEM_GRID_TOP_LEFT_Y),     // Service grid top-left
+                        Pair(TimingConfig.ScreenPositions.CAREEM_GRID_TOP_CENTER_X, TimingConfig.ScreenPositions.CAREEM_GRID_TOP_CENTER_Y), // Service grid top-center
+                        Pair(TimingConfig.ScreenPositions.CAREEM_ROW_FIRST_X, TimingConfig.ScreenPositions.CAREEM_ROW_FIRST_Y),             // Service row first item
+                        Pair(TimingConfig.ScreenPositions.CAREEM_GRID_MIDDLE_LEFT_X, TimingConfig.ScreenPositions.CAREEM_GRID_MIDDLE_LEFT_Y), // Service grid middle-left
+                        Pair(TimingConfig.ScreenPositions.CAREEM_GRID_TOP_AREA_X, TimingConfig.ScreenPositions.CAREEM_GRID_TOP_AREA_Y)      // Service grid top area
                     )
 
                     val (xRatio, yRatio) = positions[careemCarButtonClickAttempts]
@@ -5440,7 +5446,7 @@ class PriceReaderService : AccessibilityService() {
                     val screenHeight = displayMetrics.heightPixels.toFloat()
 
                     // Try clicking at several bottom positions
-                    val bottomY = screenHeight * 0.95f
+                    val bottomY = screenHeight * TimingConfig.ScreenPositions.BOTTOM_BUTTON_Y_ALT_4
                     val centerX = screenWidth / 2
 
                     Log.i(TAG, "🤖 [InDriver] Trying bottom click at ($centerX, $bottomY)")
@@ -6410,7 +6416,7 @@ class PriceReaderService : AccessibilityService() {
             }
 
             // Fallback: gesture tap at bottom center of screen where button typically is
-            val buttonY = screenHeight * 0.90f  // Very near bottom
+            val buttonY = screenHeight * TimingConfig.ScreenPositions.BOTTOM_BUTTON_Y_ALT_2  // Very near bottom
             val centerX = screenWidth / 2f
 
             Log.i(TAG, "🗺️ Button not found by text, trying gesture tap at Y=$buttonY")
@@ -6538,7 +6544,7 @@ class PriceReaderService : AccessibilityService() {
                     when (didiNoAddressCardLoggedCount) {
                         4 -> {
                             // First fallback: try 25% from top (just below destination field)
-                            val tapY = screenHeight * 0.25f
+                            val tapY = screenHeight * TimingConfig.ScreenPositions.DIDI_SEARCH_Y_FRACTION_2
                             Log.i(TAG, "📍 Fallback 1: gesture tap at Y=$tapY (25%)")
                             val path = android.graphics.Path()
                             path.moveTo(tapX, tapY)
@@ -6551,7 +6557,7 @@ class PriceReaderService : AccessibilityService() {
                         }
                         7 -> {
                             // Second fallback: try 30% from top
-                            val tapY = screenHeight * 0.30f
+                            val tapY = screenHeight * TimingConfig.ScreenPositions.DIDI_SEARCH_Y_FRACTION_1
                             Log.i(TAG, "📍 Fallback 2: gesture tap at Y=$tapY (30%)")
                             val path = android.graphics.Path()
                             path.moveTo(tapX, tapY)
@@ -6564,7 +6570,7 @@ class PriceReaderService : AccessibilityService() {
                         }
                         10 -> {
                             // Third fallback: try 35% from top
-                            val tapY = screenHeight * 0.35f
+                            val tapY = screenHeight * TimingConfig.ScreenPositions.DIDI_SEARCH_Y_FRACTION_4
                             Log.i(TAG, "📍 Fallback 3: gesture tap at Y=$tapY (35%)")
                             val path = android.graphics.Path()
                             path.moveTo(tapX, tapY)
@@ -6588,8 +6594,8 @@ class PriceReaderService : AccessibilityService() {
                         val centerX = screenWidth / 2f
 
                         // Scroll down gesture (from Y=70% to Y=30%)
-                        val startY = screenHeight * 0.7f
-                        val endY = screenHeight * 0.3f
+                        val startY = screenHeight * TimingConfig.ScreenPositions.SCROLL_START_Y_FRACTION
+                        val endY = screenHeight * TimingConfig.ScreenPositions.SCROLL_END_Y_FRACTION
 
                         val scrollPath = android.graphics.Path()
                         scrollPath.moveTo(centerX, startY)
@@ -7737,7 +7743,7 @@ class PriceReaderService : AccessibilityService() {
                         val screenWidth = displayMetrics.widthPixels.toFloat()
                         val screenHeight = displayMetrics.heightPixels.toFloat()
                         val hardcodedX = screenWidth / 2
-                        val hardcodedY = screenHeight * 0.90f
+                        val hardcodedY = screenHeight * TimingConfig.ScreenPositions.BOTTOM_BUTTON_Y_ALT_2
 
                         if (clickAtPosition(hardcodedX, hardcodedY)) {
                             Log.i(TAG, "🗺️ ✓✓✓ LOWER POSITION CLICK SUCCESS!")
