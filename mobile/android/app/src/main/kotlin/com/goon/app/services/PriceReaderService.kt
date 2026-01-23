@@ -240,8 +240,8 @@ class PriceReaderService : AccessibilityService() {
     // Track InDriver map swipe attempts (to move pin from GPS location to entered coordinates)
     private var inDriverMapSwipeAttempts = 0
     private var inDriverLastMapSwipeTime = 0L
-    private val INDRIVER_MAP_SWIPE_COOLDOWN = 1200L  // Wait between swipes
-    private val INDRIVER_MAX_MAP_SWIPES = 3  // Max swipes before clicking تم
+    private val INDRIVER_MAP_SWIPE_COOLDOWN = 800L  // Wait between swipes (reduced for faster movement)
+    private val INDRIVER_MAX_MAP_SWIPES = 6  // Max swipes before clicking تم (increased for distant locations)
 
     enum class AutomationState {
         IDLE,
@@ -7505,28 +7505,47 @@ class PriceReaderService : AccessibilityService() {
                 // Map is in upper-middle area of screen
                 val mapCenterX = screenWidth / 2
                 val mapCenterY = screenHeight * 0.4f
-                val swipeDistance = screenWidth * 0.3f
+                val swipeDistance = screenWidth * 0.4f  // Increased for more movement
 
-                // Swipe in different directions based on attempt number
-                val (startX, startY, endX, endY) = when (inDriverMapSwipeAttempts % 4) {
-                    0 -> {
-                        // Swipe DOWN (to move pin south toward Giza/Pyramids)
-                        Log.i(TAG, "🗺️ Swipe DOWN (south)")
+                // SMART SWIPE: Calculate direction based on target coordinates
+                // Determine if we're setting pickup or destination based on click count
+                val targetLat = if (inDriverDoneClickCount == 0) pickupLat else destLat
+                val targetLng = if (inDriverDoneClickCount == 0) pickupLng else destLng
+
+                // Reference point: Cairo center (approximate GPS location when map opens)
+                val refLat = 30.04  // Cairo center latitude
+                val refLng = 31.24  // Cairo center longitude
+
+                // Calculate direction needed
+                val needNorth = targetLat > refLat  // Target is north of reference
+                val needEast = targetLng > refLng   // Target is east of reference
+
+                Log.i(TAG, "🗺️ Target: ($targetLat, $targetLng), Ref: ($refLat, $refLng)")
+                Log.i(TAG, "🗺️ Direction needed: ${if (needNorth) "NORTH" else "SOUTH"}, ${if (needEast) "EAST" else "WEST"}")
+
+                // Swipe direction logic:
+                // - To move pin NORTH: swipe DOWN (drag map down, reveals north)
+                // - To move pin SOUTH: swipe UP (drag map up, reveals south)
+                // - To move pin EAST: swipe LEFT (drag map left, reveals east)
+                // - To move pin WEST: swipe RIGHT (drag map right, reveals west)
+
+                // Alternate between vertical and horizontal swipes for better coverage
+                val (startX, startY, endX, endY) = if (inDriverMapSwipeAttempts % 2 == 0) {
+                    // Vertical swipe (north/south)
+                    if (needNorth) {
+                        Log.i(TAG, "🗺️ Swipe DOWN (to move pin NORTH)")
                         listOf(mapCenterX, mapCenterY - swipeDistance/2, mapCenterX, mapCenterY + swipeDistance/2)
-                    }
-                    1 -> {
-                        // Swipe LEFT (to move pin west)
-                        Log.i(TAG, "🗺️ Swipe LEFT (west)")
-                        listOf(mapCenterX + swipeDistance/2, mapCenterY, mapCenterX - swipeDistance/2, mapCenterY)
-                    }
-                    2 -> {
-                        // Swipe UP (to move pin north)
-                        Log.i(TAG, "🗺️ Swipe UP (north)")
+                    } else {
+                        Log.i(TAG, "🗺️ Swipe UP (to move pin SOUTH)")
                         listOf(mapCenterX, mapCenterY + swipeDistance/2, mapCenterX, mapCenterY - swipeDistance/2)
                     }
-                    else -> {
-                        // Swipe RIGHT (to move pin east)
-                        Log.i(TAG, "🗺️ Swipe RIGHT (east)")
+                } else {
+                    // Horizontal swipe (east/west)
+                    if (needEast) {
+                        Log.i(TAG, "🗺️ Swipe LEFT (to move pin EAST)")
+                        listOf(mapCenterX + swipeDistance/2, mapCenterY, mapCenterX - swipeDistance/2, mapCenterY)
+                    } else {
+                        Log.i(TAG, "🗺️ Swipe RIGHT (to move pin WEST)")
                         listOf(mapCenterX - swipeDistance/2, mapCenterY, mapCenterX + swipeDistance/2, mapCenterY)
                     }
                 }
@@ -7538,12 +7557,12 @@ class PriceReaderService : AccessibilityService() {
                     path.lineTo(endX, endY)
 
                     val gesture = android.accessibilityservice.GestureDescription.Builder()
-                        .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 400))
+                        .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 500))
                         .build()
 
                     dispatchGesture(gesture, null, null)
                     Log.i(TAG, "🗺️ ✓ Map swipe dispatched: ($startX,$startY) -> ($endX,$endY)")
-                    AppLogger.summaryOk("سحب الخريطة #$inDriverMapSwipeAttempts")
+                    AppLogger.summaryOk("سحب الخريطة #$inDriverMapSwipeAttempts", "${if (needNorth) "شمال" else "جنوب"}/${if (needEast) "شرق" else "غرب"}")
 
                     inDriverMapSwipeAttempts++
                     inDriverLastMapSwipeTime = currentTime
