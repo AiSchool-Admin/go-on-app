@@ -237,6 +237,54 @@ object AppLogger {
         timing(tag, "$name completed", duration)
         return Pair(result, duration)
     }
+
+    // ============================================================
+    // SUMMARY LOGGING - للتصفية السهلة
+    // Use: adb logcat | findstr "SUMMARY"
+    // ============================================================
+
+    /**
+     * ملخص - نجاح
+     * Summary log for SUCCESS - easy to filter
+     */
+    fun summaryOk(action: String, details: String = "") {
+        val msg = if (details.isNotEmpty()) "$action | $details" else action
+        Log.i("GO-ON-SUMMARY", "✅ $msg")
+    }
+
+    /**
+     * ملخص - فشل
+     * Summary log for FAILURE - easy to filter
+     */
+    fun summaryFail(action: String, reason: String = "") {
+        val msg = if (reason.isNotEmpty()) "$action | $reason" else action
+        Log.e("GO-ON-SUMMARY", "❌ $msg")
+    }
+
+    /**
+     * ملخص - تحذير
+     * Summary log for WARNING - easy to filter
+     */
+    fun summaryWarn(action: String, details: String = "") {
+        val msg = if (details.isNotEmpty()) "$action | $details" else action
+        Log.w("GO-ON-SUMMARY", "⚠️ $msg")
+    }
+
+    /**
+     * ملخص - خطوة
+     * Summary log for STEP - easy to filter
+     */
+    fun summaryStep(step: String) {
+        Log.i("GO-ON-SUMMARY", "▶ $step")
+    }
+
+    /**
+     * ملخص - سعر
+     * Summary log for PRICE - easy to filter
+     */
+    fun summaryPrice(app: String, price: Double) {
+        Log.i("GO-ON-SUMMARY", "💰 $app = $price EGP")
+    }
 }
 
 // ============================================================

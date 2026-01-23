@@ -300,6 +300,7 @@ class PriceReaderService : AccessibilityService() {
         Log.i(TAG, "🤖 Starting AUTOMATION for $packageName")
         Log.i(TAG, "   From: $pickup")
         Log.i(TAG, "   To: $destination")
+        AppLogger.summaryStep("بدء أتمتة ${packageName.substringAfterLast(".")}")
 
         // ============================================================
         // MODULAR AUTOMATION PATH (Phase 5)
@@ -6944,6 +6945,7 @@ class PriceReaderService : AccessibilityService() {
             Log.i(TAG, "🗺️ ✓✓✓ DETECTED PRICE SCREEN! (البحث عن عروض / الأجر المقترح)")
             Log.i(TAG, "🗺️ hasPriceScreen=$hasPriceScreen, hasPriceIndicator=$hasPriceIndicator, hasVehicleTypes=$hasVehicleTypes")
             Log.i(TAG, "🗺️ Note: hasTam=$hasTamButtonOnScreen (ignored - we're on final screen)")
+            AppLogger.summaryOk("شاشة السعر", "InDriver")
 
             // Enable price detection NOW - we're on the real price screen!
             if (!inDriverAutomationComplete) {
@@ -7541,6 +7543,7 @@ class PriceReaderService : AccessibilityService() {
 
                     dispatchGesture(gesture, null, null)
                     Log.i(TAG, "🗺️ ✓ Map swipe dispatched: ($startX,$startY) -> ($endX,$endY)")
+                    AppLogger.summaryOk("سحب الخريطة #$inDriverMapSwipeAttempts")
 
                     inDriverMapSwipeAttempts++
                     inDriverLastMapSwipeTime = currentTime
@@ -7644,6 +7647,7 @@ class PriceReaderService : AccessibilityService() {
                         inDriverDoneClickCount++
                         val clickTypeMsg = if (inDriverDoneClickCount == 1) "DESTINATION" else "PICKUP"
                         Log.i(TAG, "🗺️ ✓ Clicked '$doneText' button for $clickTypeMsg (click #$inDriverDoneClickCount)")
+                        AppLogger.summaryOk("نقر زر تم", clickTypeMsg)
                         lastInDriverClickTime = currentTime
                         // CRITICAL: Clear cached price after clicking Done - wait for real trip price
                         latestPrices.remove(INDRIVER_PACKAGE)
@@ -7673,6 +7677,7 @@ class PriceReaderService : AccessibilityService() {
                 if (clickAtPosition(x, y)) {
                     inDriverDoneClickCount++
                     Log.i(TAG, "🗺️ ✓ Bottom click at ${(yPercent * 100).toInt()}% worked! (click #$inDriverDoneClickCount)")
+                    AppLogger.summaryOk("نقر أسفل الشاشة", "${(yPercent * 100).toInt()}%")
                     lastInDriverClickTime = currentTime
                     latestPrices.remove(INDRIVER_PACKAGE)
                     inDriverDoneClickedTime = System.currentTimeMillis()
@@ -7683,6 +7688,7 @@ class PriceReaderService : AccessibilityService() {
             // If nothing worked, show toast as fallback
             if (currentTime - lastInDriverToastTime > toastDebounce) {
                 lastInDriverToastTime = currentTime
+                AppLogger.summaryWarn("فشل نقر تم", "يرجى النقر يدويا")
                 handler.post {
                     Toast.makeText(
                         this@PriceReaderService,
@@ -8546,6 +8552,7 @@ class PriceReaderService : AccessibilityService() {
         sendBroadcast(intent)
 
         Log.i(TAG, "✅ PRICE CAPTURED: $appName = $price EGP (via $source)")
+        AppLogger.summaryPrice(appName, price)
         return priceInfo
     }
 
