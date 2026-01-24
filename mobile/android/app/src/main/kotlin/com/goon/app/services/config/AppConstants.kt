@@ -46,7 +46,7 @@ object AppConstants {
         const val UBER_MIN_WAIT_MS = 3000L
         const val CAREEM_TIMEOUT_MS = 25000L
         const val CAREEM_LOADER_EXTENSION_MS = 10000L
-        const val DIDI_TIMEOUT_MS = 20000L
+        const val DIDI_TIMEOUT_MS = 15000L  // Reduced - progressive detection is faster
         const val INDRIVER_MIN_WAIT_AFTER_DONE_MS = 1000L
         const val DEFAULT_TIMEOUT_MS = 12000L
 

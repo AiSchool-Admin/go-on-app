@@ -819,16 +819,50 @@ class PriceReaderService : AccessibilityService() {
                     }
 
                     // CRITICAL: DiDi may show "Select Address" screen here
-                    // IMPORTANT: Wait at least 4 steps (~2 seconds) before searching for suggestions
-                    // This gives DiDi time to load suggestions from the server
+                    // OPTIMIZATION: Try to find and click suggestions immediately (progressive detection)
+                    // This is MUCH faster than waiting fixed 4 steps (~2 seconds)
                     if (packageName == DIDI_PACKAGE) {
-                        if (automationStep <= 4) {
-                            Log.d(TAG, "🚕 DiDi: Waiting for suggestions to load (step $automationStep/4)...")
-                            return  // Don't search yet, give DiDi time to load
-                        }
+                        // Handle intermediate screens first
                         if (handleDiDiIntermediateScreens(rootNode)) {
                             Log.i(TAG, "🤖 📋 Handled DiDi intermediate screen during WAITING_FOR_SUGGESTIONS")
-                            // Don't return - continue to check state transition
+                            return
+                        }
+
+                        // PROGRESSIVE DETECTION: Try to find suggestions on EVERY step
+                        // If found, select immediately - no need to wait the full 4 steps
+                        if (automationStep >= 1) {
+                            val suggestionFound = trySelectDiDiSuggestionFast(rootNode)
+                            if (suggestionFound) {
+                                Log.i(TAG, "🚕 DiDi: FAST suggestion selection at step $automationStep!")
+                                // Mark appropriate phase as complete
+                                if (didiPickupEntered && !didiPickupPhaseComplete) {
+                                    didiPickupPhaseComplete = true
+                                    didiPickupFieldClicked = false
+                                    didiNoAddressCardLoggedCount = 0
+                                    Log.i(TAG, "🚕 [DiDi] PICKUP suggestion selected! Moving to DESTINATION...")
+                                    automationState = AutomationState.FINDING_DESTINATION_FIELD
+                                } else {
+                                    Log.i(TAG, "🚕 [DiDi] DESTINATION suggestion selected! Moving to WAITING_FOR_PRICE...")
+                                    automationState = AutomationState.WAITING_FOR_PRICE
+                                }
+                                automationRetries = 0
+                                automationStep = 0
+                                return
+                            }
+
+                            // Check if already on price screen
+                            if (isDiDiOnPriceScreen(rootNode)) {
+                                Log.i(TAG, "🚕 DiDi: Already on price screen at step $automationStep!")
+                                automationState = AutomationState.WAITING_FOR_PRICE
+                                automationRetries = 0
+                                automationStep = 0
+                                return
+                            }
+                        }
+
+                        // Only log waiting after first few steps to reduce spam
+                        if (automationStep <= 4 && automationStep > 1) {
+                            Log.d(TAG, "🚕 DiDi: Searching for suggestions (step $automationStep)...")
                         }
                     }
 
@@ -2259,8 +2293,8 @@ class PriceReaderService : AccessibilityService() {
                 focusedNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, finalArgs)
 
                 focusedNode.recycle()
-                // Wait longer for suggestions to load from server (DiDi needs ~1.5-2 seconds)
-                Thread.sleep(TimingConfig.suggestionWait * 2)
+                // Wait briefly for text to register - progressive detection handles the rest
+                Thread.sleep(TimingConfig.animationWait)  // ~500ms
                 return true
             } else {
                 Log.w(TAG, "🚕 ✗ ACTION_SET_TEXT failed on focused node")
@@ -5920,6 +5954,106 @@ class PriceReaderService : AccessibilityService() {
             collectInDriverSuggestions(child, suggestions)
             child.recycle()
         }
+    }
+
+    /**
+     * FAST DiDi suggestion selection - used for progressive detection
+     * Tries to find and click a DiDi suggestion immediately
+     * Returns true if a suggestion was found and clicked
+     */
+    private fun trySelectDiDiSuggestionFast(rootNode: AccessibilityNodeInfo): Boolean {
+        val suggestions = mutableListOf<Pair<AccessibilityNodeInfo, String>>()
+        collectDiDiSuggestions(rootNode, suggestions)
+
+        if (suggestions.isEmpty()) {
+            // Also try the generic collectSuggestions
+            collectSuggestions(rootNode, suggestions)
+        }
+
+        if (suggestions.isEmpty()) {
+            return false
+        }
+
+        Log.d(TAG, "🚕 FAST: Found ${suggestions.size} DiDi suggestions")
+
+        // Use the address matching logic from the appropriate phase
+        val addressToMatch = if (didiPickupEntered && !didiPickupPhaseComplete) {
+            pickupAddress
+        } else {
+            destinationAddress
+        }
+
+        val keywords = extractDestinationKeywords(addressToMatch)
+
+        // Find best matching suggestion
+        var bestMatch: AccessibilityNodeInfo? = null
+        var bestScore = 0
+        var bestText = ""
+
+        for ((node, text) in suggestions) {
+            var score = 0
+            val textLower = text.lowercase()
+
+            for ((index, keyword) in keywords.withIndex()) {
+                if (textLower.contains(keyword.lowercase())) {
+                    val weight = keywords.size - index
+                    score += weight
+                }
+            }
+
+            if (score > bestScore) {
+                bestScore = score
+                bestMatch = node
+                bestText = text
+            }
+        }
+
+        // Click the best match (or first suggestion if no good match)
+        val nodeToClick = if (bestMatch != null && bestScore > 0) {
+            Log.i(TAG, "🚕 FAST: Best match '$bestText' (score: $bestScore)")
+            bestMatch
+        } else if (suggestions.isNotEmpty()) {
+            Log.i(TAG, "🚕 FAST: No good match, using first suggestion")
+            suggestions[0].first
+        } else {
+            null
+        }
+
+        val result = if (nodeToClick != null) {
+            smartClick(nodeToClick)
+        } else {
+            false
+        }
+
+        // Recycle all nodes
+        suggestions.forEach { (node, _) ->
+            try { node.recycle() } catch (e: Exception) {}
+        }
+
+        return result
+    }
+
+    /**
+     * Check if DiDi is already on the price screen
+     */
+    private fun isDiDiOnPriceScreen(rootNode: AccessibilityNodeInfo): Boolean {
+        val allText = getAllTextFromNode(rootNode)
+
+        val priceIndicators = listOf(
+            "Choose your driver", "Flex", "Wasalny", "Express",
+            "EGP", "ج.م", "Request", "Book now",
+            "طلب", "احجز", "Comfort", "Dropoff"
+        )
+
+        val hasIndicators = priceIndicators.any { indicator ->
+            allText.any { it.contains(indicator, ignoreCase = true) }
+        }
+
+        val hasPrice = allText.any { text ->
+            PricePatterns.extractPriceForApp(text, DIDI_PACKAGE) != null
+        }
+
+        return hasIndicators && hasPrice
     }
 
     /**
