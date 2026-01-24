@@ -55,6 +55,12 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
       );
 
       if (mounted) {
+        // Sort by price and mark best price
+        options.sort((a, b) => a.price.compareTo(b.price));
+        for (int i = 0; i < options.length; i++) {
+          options[i] = options[i].copyWith(isBestPrice: i == 0);
+        }
+
         setState(() {
           _priceOptions = options;
           _isLoading = false;

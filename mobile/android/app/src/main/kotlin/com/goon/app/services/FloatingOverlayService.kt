@@ -7,6 +7,10 @@ import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.media.AudioAttributes
+import android.media.SoundPool
+import android.media.ToneGenerator
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -155,10 +159,19 @@ class FloatingOverlayService : Service() {
     private var pickupText: String = ""
     private var destinationText: String = ""
 
+    // Sound for success notification
+    private var toneGenerator: ToneGenerator? = null
+
     override fun onCreate() {
         super.onCreate()
         instance = this
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        // Initialize tone generator for success sound
+        try {
+            toneGenerator = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 100)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to initialize ToneGenerator: ${e.message}")
+        }
         Log.i(TAG, "Floating Overlay Service Created")
     }
 
@@ -392,6 +405,13 @@ class FloatingOverlayService : Service() {
         super.onDestroy()
         hideOverlay()
         hideFullScreenOverlay()
+        // Release tone generator
+        try {
+            toneGenerator?.release()
+            toneGenerator = null
+        } catch (e: Exception) {
+            Log.e(TAG, "Error releasing ToneGenerator: ${e.message}")
+        }
         instance = null
         Log.i(TAG, "Floating Overlay Service Destroyed")
     }
@@ -779,23 +799,36 @@ class FloatingOverlayService : Service() {
                 }
                 addView(nameContainer)
 
-                // Price or loading
+                // Price or loading - use horizontal progress bar
+                val priceStatusContainer = LinearLayout(this@FloatingOverlayService).apply {
+                    orientation = LinearLayout.VERTICAL
+                    gravity = Gravity.END
+                    tag = "priceContainer_$packageName"
+                }
+
                 if (appPrice.status == "loading" || appPrice.status == "waiting") {
-                    val loading = ProgressBar(this@FloatingOverlayService).apply {
-                        layoutParams = LinearLayout.LayoutParams((24 * density).toInt(), (24 * density).toInt())
+                    val progressBar = createHorizontalProgressBar(density).apply {
                         tag = "loading_$packageName"
                     }
-                    addView(loading)
+                    priceStatusContainer.addView(progressBar)
                 } else if (appPrice.price != null && appPrice.price > 0) {
                     val priceText = TextView(this@FloatingOverlayService).apply {
                         text = "${appPrice.price.toInt()} ج.م"
-                        setTextColor(0xFF1A365D.toInt())
+                        setTextColor(0xFF38A169.toInt()) // Green for success
                         textSize = 18f
                         setTypeface(null, Typeface.BOLD)
                         tag = "price_$packageName"
                     }
-                    addView(priceText)
+                    priceStatusContainer.addView(priceText)
+                } else if (appPrice.status == "error") {
+                    val errorText = TextView(this@FloatingOverlayService).apply {
+                        text = "✗"
+                        setTextColor(0xFFE53E3E.toInt())
+                        textSize = 24f
+                    }
+                    priceStatusContainer.addView(errorText)
                 }
+                addView(priceStatusContainer)
             }
             addView(topRow)
 
@@ -1058,11 +1091,11 @@ class FloatingOverlayService : Service() {
             }
 
             if (appPrice.status == "loading" || appPrice.status == "waiting") {
-                val loadingIndicator = ProgressBar(this@FloatingOverlayService).apply {
-                    layoutParams = LinearLayout.LayoutParams((24 * density).toInt(), (24 * density).toInt())
+                // Use horizontal progress bar instead of circular spinner
+                val progressBar = createHorizontalProgressBar(density).apply {
                     tag = "loading_$packageName"
                 }
-                priceContainer.addView(loadingIndicator)
+                priceContainer.addView(progressBar)
             } else if (appPrice.price != null && appPrice.price > 0) {
                 val priceText = TextView(this@FloatingOverlayService).apply {
                     text = "${appPrice.price.toInt()} ج.م"
@@ -1196,15 +1229,19 @@ class FloatingOverlayService : Service() {
                 hintView?.visibility = View.GONE
             }
 
-            // Update price container
+            // Update price container - stop any running animations first
             val priceContainer = card.findViewWithTag<LinearLayout>("priceContainer_$packageName")
+            val oldProgressBar = priceContainer?.findViewWithTag<LinearLayout>("loading_$packageName")
+            val animator = oldProgressBar?.tag as? android.animation.ObjectAnimator
+            animator?.cancel()
             priceContainer?.removeAllViews()
 
             if (status == "loading") {
-                val loadingIndicator = ProgressBar(this).apply {
-                    layoutParams = LinearLayout.LayoutParams((24 * density).toInt(), (24 * density).toInt())
+                // Use horizontal progress bar
+                val progressBar = createHorizontalProgressBar(density).apply {
+                    tag = "loading_$packageName"
                 }
-                priceContainer?.addView(loadingIndicator)
+                priceContainer?.addView(progressBar)
             } else if (price != null && price > 0) {
                 val priceText = TextView(this).apply {
                     text = "${price.toInt()} ج.م"
@@ -1213,6 +1250,9 @@ class FloatingOverlayService : Service() {
                     setTypeface(null, Typeface.BOLD)
                 }
                 priceContainer?.addView(priceText)
+
+                // Play success sound
+                playSuccessSound()
 
                 // Highlight best price
                 highlightBestPrice()
@@ -1230,7 +1270,7 @@ class FloatingOverlayService : Service() {
     }
 
     /**
-     * Highlight the best (lowest) price card
+     * Highlight the best (lowest) price card with prominent styling
      */
     private fun highlightBestPrice() {
         val density = resources.displayMetrics.density
@@ -1244,16 +1284,74 @@ class FloatingOverlayService : Service() {
             }
         }
 
-        // Update card backgrounds - MODERN LIGHT THEME
+        // Update card backgrounds - MODERN LIGHT THEME with prominent best price
         for ((pkg, card) in priceCards) {
+            val cardLayout = card as? LinearLayout ?: continue
+
+            // Remove existing best price badge if any
+            val existingBadge = cardLayout.findViewWithTag<View>("bestPriceBadge_$pkg")
+            existingBadge?.let { cardLayout.removeView(it) }
+
             if (pkg == bestPackage) {
-                // Best price: Light green background with green border
+                // Best price: Light green background with thick green border
                 card.background = GradientDrawable().apply {
                     shape = GradientDrawable.RECTANGLE
                     cornerRadius = 12 * density
                     setColor(0xFFF0FFF4.toInt()) // Very light green background
-                    setStroke((2 * density).toInt(), 0xFF38A169.toInt()) // Green border
+                    setStroke((3 * density).toInt(), 0xFF22C55E.toInt()) // Thick green border
                 }
+
+                // Add "Best Price" badge at the top of the card
+                val bestBadge = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.RECTANGLE
+                        cornerRadii = floatArrayOf(
+                            12 * density, 12 * density, // Top corners
+                            12 * density, 12 * density,
+                            0f, 0f, // Bottom corners
+                            0f, 0f
+                        )
+                        colors = intArrayOf(0xFF22C55E.toInt(), 0xFF16A34A.toInt())
+                        orientation = GradientDrawable.Orientation.LEFT_RIGHT
+                    }
+                    setPadding((8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt())
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    )
+                    tag = "bestPriceBadge_$pkg"
+
+                    // Trophy icon
+                    val trophy = TextView(this@FloatingOverlayService).apply {
+                        text = "🏆"
+                        textSize = 14f
+                        setPadding(0, 0, (6 * density).toInt(), 0)
+                    }
+                    addView(trophy)
+
+                    // Best price text
+                    val badgeText = TextView(this@FloatingOverlayService).apply {
+                        text = "أفضل سعر"
+                        setTextColor(0xFFFFFFFF.toInt())
+                        textSize = 13f
+                        setTypeface(null, Typeface.BOLD)
+                    }
+                    addView(badgeText)
+                }
+                cardLayout.addView(bestBadge, 0) // Add at top
+
+                // Update price text to be larger and green
+                val priceContainer = card.findViewWithTag<LinearLayout>("priceContainer_$pkg")
+                val priceText = priceContainer?.getChildAt(0) as? TextView
+                priceText?.apply {
+                    textSize = 24f
+                    setTextColor(0xFF22C55E.toInt()) // Bright green
+                }
+
+                // Update card elevation for emphasis
+                card.elevation = 8 * density
             } else {
                 // Normal: White background
                 card.background = GradientDrawable().apply {
@@ -1261,6 +1359,7 @@ class FloatingOverlayService : Service() {
                     cornerRadius = 12 * density
                     setColor(0xFFFFFFFF.toInt()) // White
                 }
+                card.elevation = 4 * density
             }
         }
     }
@@ -1346,6 +1445,69 @@ class FloatingOverlayService : Service() {
             "error" -> 0xFFFF5252.toInt()   // Red
             "waiting" -> 0xFF9E9E9E.toInt() // Grey
             else -> 0xFFFFFFFF.toInt()
+        }
+    }
+
+    /**
+     * Play success sound when price is fetched
+     */
+    private fun playSuccessSound() {
+        try {
+            toneGenerator?.startTone(ToneGenerator.TONE_PROP_ACK, 150)
+            Log.i(TAG, "✓ Success sound played")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to play success sound: ${e.message}")
+        }
+    }
+
+    /**
+     * Create horizontal progress bar for loading state
+     */
+    private fun createHorizontalProgressBar(density: Float): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                (80 * density).toInt(),
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+
+            // Progress bar container with rounded corners
+            val progressContainer = FrameLayout(this@FloatingOverlayService).apply {
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = 4 * density
+                    setColor(0xFFE2E8F0.toInt()) // Light gray track
+                }
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    (6 * density).toInt()
+                )
+            }
+
+            // Animated progress indicator
+            val progressBar = View(this@FloatingOverlayService).apply {
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = 4 * density
+                    setColor(0xFF3182CE.toInt()) // Blue progress
+                }
+                layoutParams = FrameLayout.LayoutParams(
+                    (30 * density).toInt(),
+                    FrameLayout.LayoutParams.MATCH_PARENT
+                )
+                tag = "progressIndicator"
+            }
+            progressContainer.addView(progressBar)
+            addView(progressContainer)
+
+            // Animate the progress bar
+            val animator = android.animation.ObjectAnimator.ofFloat(progressBar, "translationX", 0f, (50 * density))
+            animator.duration = 800
+            animator.repeatCount = android.animation.ObjectAnimator.INFINITE
+            animator.repeatMode = android.animation.ObjectAnimator.REVERSE
+            animator.start()
+            tag = animator // Store animator to stop it later
         }
     }
 }
