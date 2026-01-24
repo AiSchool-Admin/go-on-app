@@ -8424,11 +8424,11 @@ class PriceReaderService : AccessibilityService() {
     }
 
     /**
-     * Special click for Careem suggestions - uses ONLY gesture tap
-     * ACTION_CLICK doesn't work on Careem suggestion rows
+     * Special click for Careem suggestions - uses multi-strategy approach
      *
-     * ENHANCED: Uses longer gesture duration (350ms) and clicks at left side
-     * where the icon/interactive area typically is, not just center
+     * FIXED: Uses shorter tap durations first (100ms, 150ms) since 350ms may be
+     * interpreted as long press by Flutter. Also tries ACTION_CLICK on parent
+     * containers as a fallback.
      */
     private fun careemGestureClick(node: AccessibilityNodeInfo): Boolean {
         val rect = android.graphics.Rect()
@@ -8437,7 +8437,6 @@ class PriceReaderService : AccessibilityService() {
         val centerY = rect.centerY()
 
         // Click at the left side of the suggestion (where icon usually is)
-        // This is often more reliable than center for Careem's Flutter UI
         val leftX = rect.left + (rect.width() * 0.15).toInt()  // 15% from left edge
         val rightX = rect.left + (rect.width() * 0.85).toInt() // 85% from left (for fallback)
 
@@ -8454,38 +8453,63 @@ class PriceReaderService : AccessibilityService() {
             Log.w(TAG, "🚖 WARNING: Bounds height ${rect.height()} is large - might be clicking container instead of suggestion row")
         }
 
+        // STRATEGY 1: Try ACTION_CLICK on parent containers first (works on some Flutter views)
+        if (careemGestureClickAttempt == 0 || careemGestureClickAttempt % 5 == 0) {
+            Log.i(TAG, "🚖 Strategy 1: Trying ACTION_CLICK on node and parent containers...")
+            var currentNode: AccessibilityNodeInfo? = node
+            for (level in 0..3) {
+                if (currentNode == null) break
+                if (currentNode.isClickable) {
+                    Log.i(TAG, "🚖 Found clickable node at level $level, trying ACTION_CLICK...")
+                    if (currentNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        Log.i(TAG, "🚖 ✓ ACTION_CLICK SUCCESS at level $level!")
+                        if (level > 0 && currentNode != node) currentNode.recycle()
+                        Thread.sleep(800)
+                        careemGestureClickAttempt++
+                        return true
+                    }
+                }
+                val parent = currentNode.parent
+                if (level > 0 && currentNode != node) currentNode.recycle()
+                currentNode = parent
+            }
+            if (currentNode != null && currentNode != node) currentNode.recycle()
+        }
+
         // Determine click position based on attempt count
-        // Alternate between: left side (icon area), center, right side
         val attemptPositions = listOf(
-            Pair(leftX, centerY),   // Try left side first (icon area)
-            Pair(centerX, centerY), // Then center
-            Pair(rightX, centerY),  // Then right side
+            Pair(centerX, centerY), // Center first (most reliable)
+            Pair(leftX, centerY),   // Left side (icon area)
+            Pair(rightX, centerY),  // Right side
             Pair(centerX, rect.top + (rect.height() * 0.3).toInt()), // Upper area
             Pair(centerX, rect.top + (rect.height() * 0.7).toInt())  // Lower area
         )
 
+        // STRATEGY 2: Use varying tap durations - SHORTER FIRST (100ms, 150ms are normal taps)
+        // 350ms may be interpreted as long press by Flutter
+        val tapDurations = listOf(100L, 150L, 200L, 350L, 100L) // Cycle through durations
+
         val positionIndex = careemGestureClickAttempt % attemptPositions.size
+        val durationIndex = (careemGestureClickAttempt / attemptPositions.size) % tapDurations.size
         val (clickX, clickY) = attemptPositions[positionIndex]
+        val duration = tapDurations[durationIndex]
         careemGestureClickAttempt++
 
-        Log.i(TAG, "🚖 Click position #$positionIndex: ($clickX, $clickY) [attempt $careemGestureClickAttempt]")
+        Log.i(TAG, "🚖 Strategy 2: Position #$positionIndex ($clickX, $clickY), duration ${duration}ms [attempt $careemGestureClickAttempt]")
 
-        // Use gesture tap directly (ACTION_CLICK doesn't work on Careem)
         try {
             val path = android.graphics.Path()
             path.moveTo(clickX.toFloat(), clickY.toFloat())
 
-            // Use 350ms duration - longer tap for better recognition by Careem's Flutter gestures
             val gesture = android.accessibilityservice.GestureDescription.Builder()
-                .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 350))
+                .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, duration))
                 .build()
 
-            // Use null callback to avoid anonymous class compilation issues
             dispatchGesture(gesture, null, null)
-            Log.i(TAG, "🚖 Careem gesture tap dispatched at ($clickX, $clickY) with 350ms duration")
+            Log.i(TAG, "🚖 Careem gesture tap dispatched at ($clickX, $clickY) with ${duration}ms duration")
 
-            // Wait longer for Careem to process the tap
-            Thread.sleep(1000)
+            // Wait for Careem to process the tap
+            Thread.sleep(800)
             Log.i(TAG, "🚖 Careem click attempted, waiting for screen change...")
             return true
         } catch (e: Exception) {
