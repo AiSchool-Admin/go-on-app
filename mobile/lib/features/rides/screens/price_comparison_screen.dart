@@ -432,18 +432,14 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
         });
 
         if (priceInfo != null && priceInfo.price > 0) {
-          // Show dialog with all vehicle prices if available
-          if (priceInfo.vehiclePrices.isNotEmpty) {
-            _showVehiclePricesDialog(appName, priceInfo);
-          } else {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('✅ $appName: ${priceInfo.price.round()} ج.م'),
-                backgroundColor: AppColors.success,
-                duration: const Duration(seconds: 5),
-              ),
-            );
-          }
+          // Show success snackbar with price (no popup dialog)
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('✅ $appName: ${priceInfo.price.round()} ج.م'),
+              backgroundColor: AppColors.success,
+              duration: const Duration(seconds: 3),
+            ),
+          );
 
           // Update the price in the list (use best car price)
           if (_priceOptions != null) {
@@ -881,43 +877,68 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
 
   Widget _buildPriceCard(PriceOption option, bool isBest) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: EdgeInsets.only(bottom: isBest ? 16 : 12),
       decoration: BoxDecoration(
-        color: AppColors.surface,
+        gradient: isBest
+            ? LinearGradient(
+                colors: [
+                  AppColors.success.withOpacity(0.08),
+                  AppColors.success.withOpacity(0.03),
+                ],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+              )
+            : null,
+        color: isBest ? null : AppColors.surface,
         borderRadius: BorderRadius.circular(16),
         border: isBest
-            ? Border.all(color: AppColors.success, width: 2)
+            ? Border.all(color: AppColors.success, width: 3)
             : null,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
+            color: isBest
+                ? AppColors.success.withOpacity(0.25)
+                : Colors.black.withOpacity(0.05),
+            blurRadius: isBest ? 16 : 8,
+            offset: const Offset(0, 4),
+            spreadRadius: isBest ? 2 : 0,
           ),
         ],
       ),
       child: Column(
         children: [
-          // Best price badge
+          // Best price badge - more prominent
           if (isBest)
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              decoration: const BoxDecoration(
-                color: AppColors.success,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(14)),
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF22C55E), Color(0xFF16A34A)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(13)),
               ),
-              child: const Row(
+              child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.star, color: Colors.white, size: 16),
-                  SizedBox(width: 4),
-                  Text(
-                    'أفضل سعر',
+                  Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Icon(Icons.emoji_events, color: Colors.white, size: 18),
+                  ),
+                  const SizedBox(width: 8),
+                  const Text(
+                    '🏆 أفضل سعر',
                     style: TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.bold,
-                      fontSize: 12,
+                      fontSize: 14,
+                      letterSpacing: 0.5,
                     ),
                   ),
                 ],
@@ -1043,44 +1064,73 @@ class _PriceComparisonScreenState extends ConsumerState<PriceComparisonScreen> {
                   ),
                 ),
 
-                // Price
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    if (option.discount != null) ...[
-                      Text(
-                        '${(option.price * (1 + option.discount! / 100)).round()} ج.م',
-                        style: const TextStyle(
-                          decoration: TextDecoration.lineThrough,
-                          color: AppColors.textSecondary,
-                          fontSize: 12,
-                        ),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: AppColors.error.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          '-${option.discount}%',
+                // Price - enhanced for best price
+                Container(
+                  padding: isBest ? const EdgeInsets.all(12) : EdgeInsets.zero,
+                  decoration: isBest
+                      ? BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [
+                              AppColors.success.withOpacity(0.15),
+                              AppColors.success.withOpacity(0.08),
+                            ],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: AppColors.success.withOpacity(0.3),
+                            width: 1,
+                          ),
+                        )
+                      : null,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      if (option.discount != null) ...[
+                        Text(
+                          '${(option.price * (1 + option.discount! / 100)).round()} ج.م',
                           style: const TextStyle(
-                            color: AppColors.error,
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
+                            decoration: TextDecoration.lineThrough,
+                            color: AppColors.textSecondary,
+                            fontSize: 12,
                           ),
                         ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: AppColors.error.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            '-${option.discount}%',
+                            style: const TextStyle(
+                              color: AppColors.error,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ],
+                      Text(
+                        option.formattedPrice,
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: isBest ? 26 : 20,
+                          color: isBest ? AppColors.success : AppColors.textPrimary,
+                        ),
                       ),
+                      if (isBest)
+                        const Text(
+                          'وفّر معنا!',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: AppColors.success,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
                     ],
-                    Text(
-                      option.formattedPrice,
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 20,
-                        color: isBest ? AppColors.success : AppColors.textPrimary,
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ],
             ),

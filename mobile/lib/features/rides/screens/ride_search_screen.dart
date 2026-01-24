@@ -9,6 +9,7 @@ import '../../../core/constants/app_colors.dart';
 import '../../../core/routes/app_router.dart';
 import '../services/ride_service.dart';
 import '../models/price_option.dart';
+import '../widgets/place_search_sheet.dart';
 import 'map_location_picker_screen.dart';
 
 // Providers for location state
@@ -473,108 +474,21 @@ class _RideSearchScreenState extends ConsumerState<RideSearchScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
+      backgroundColor: Colors.transparent,
       builder: (context) => DraggableScrollableSheet(
-        initialChildSize: 0.7,
+        initialChildSize: 0.75,
         minChildSize: 0.5,
-        maxChildSize: 0.9,
+        maxChildSize: 0.95,
         expand: false,
-        builder: (context, scrollController) => Column(
-          children: [
-            Container(
-              width: 40,
-              height: 4,
-              margin: const EdgeInsets.symmetric(vertical: 12),
-              decoration: BoxDecoration(
-                color: AppColors.divider,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Text(
-                isOrigin ? 'اختر نقطة الانطلاق' : 'اختر الوجهة',
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            // Map Picker Button
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    _openMapPicker(isOrigin: isOrigin);
-                  },
-                  icon: const Icon(Icons.map),
-                  label: const Text('اختر من الخريطة'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: isOrigin ? AppColors.success : AppColors.primary,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            const Divider(height: 1),
-            Expanded(
-              child: ListView(
-                controller: scrollController,
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                children: [
-                  const SizedBox(height: 12),
-                  if (isOrigin) ...[
-                    _buildPlaceOption(
-                      icon: Icons.my_location,
-                      title: 'موقعي الحالي',
-                      subtitle: 'استخدم GPS',
-                      iconColor: AppColors.primary,
-                      onTap: () {
-                        Navigator.pop(context);
-                        _getCurrentLocation();
-                      },
-                    ),
-                    const Divider(),
-                  ],
-                  const Text(
-                    'الأماكن المحفوظة',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  ..._savedPlaces.entries.map((entry) => _buildPlaceOption(
-                    icon: Icons.location_on,
-                    title: entry.key,
-                    subtitle: entry.value['address'] as String,
-                    iconColor: AppColors.secondary,
-                    onTap: () {
-                      Navigator.pop(context);
-                      _selectPlace(
-                        entry.key,
-                        entry.value['location'] as LatLng,
-                        entry.value['address'] as String,
-                        isOrigin,
-                      );
-                    },
-                  )),
-                ],
-              ),
-            ),
-          ],
+        builder: (context, scrollController) => PlaceSearchSheet(
+          isOrigin: isOrigin,
+          currentLocation: ref.read(originLocationProvider),
+          savedPlaces: _savedPlaces,
+          onCurrentLocationTap: _getCurrentLocation,
+          onMapPickerTap: () => _openMapPicker(isOrigin: isOrigin),
+          onPlaceSelected: (name, location, address) {
+            _selectPlace(name, location, address, isOrigin);
+          },
         ),
       ),
     );
@@ -612,32 +526,4 @@ class _RideSearchScreenState extends ConsumerState<RideSearchScreen> {
     }
   }
 
-  Widget _buildPlaceOption({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required Color iconColor,
-    required VoidCallback onTap,
-  }) {
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: Container(
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: iconColor.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Icon(icon, color: iconColor, size: 20),
-      ),
-      title: Text(title),
-      subtitle: Text(
-        subtitle,
-        style: const TextStyle(
-          color: AppColors.textSecondary,
-          fontSize: 12,
-        ),
-      ),
-      onTap: onTap,
-    );
-  }
 }
