@@ -484,8 +484,14 @@ class PriceReaderService : AccessibilityService() {
                         // For Careem: First need to click "سيارة" button on home screen
                         val found = findAndClickCareemPickupFieldFirst(rootNode)
                         if (found) {
-                            Log.i(TAG, "🤖 ✓✓✓ [Careem] Found pickup field! Transitioning to ENTERING_PICKUP...")
-                            automationState = AutomationState.ENTERING_PICKUP
+                            // Check if deep link mode completed pickup phase
+                            if (careemDeepLinkModeDetected && careemPickupPhaseComplete) {
+                                Log.i(TAG, "🤖 ✓✓✓ [Careem] Deep link flow complete! Going directly to READING_PRICES...")
+                                automationState = AutomationState.READING_PRICES
+                            } else {
+                                Log.i(TAG, "🤖 ✓✓✓ [Careem] Found pickup field! Transitioning to ENTERING_PICKUP...")
+                                automationState = AutomationState.ENTERING_PICKUP
+                            }
                             automationRetries = 0
                         } else {
                             automationRetries++
