@@ -1311,10 +1311,45 @@ class PriceReaderService : AccessibilityService() {
                         if (serviceNotAvailable) {
                             Log.w(TAG, "🚖 ⚠️ Careem service NOT AVAILABLE message detected!")
 
+                            // Check if confirm button is visible - try clicking it first!
+                            // The "service not available" message might be stale
+                            val confirmButtonVisible = allText.any { text ->
+                                normalizedContains(text, "تأكيد الانطلاق") ||
+                                normalizedContains(text, "تأكيد الإنطلاق") ||
+                                normalizedContains(text, "Confirm pickup")
+                            }
+
                             // If we're in deep link mode and just changed pickup, give UI time to update
                             if (careemDeepLinkModeDetected && careemPickupPhaseComplete) {
                                 careemServiceUnavailableGracePeriod++
                                 Log.i(TAG, "🚖 [DEEP LINK] Grace period check ${careemServiceUnavailableGracePeriod}/5 after pickup change")
+
+                                // During grace period, try clicking confirm button - message might be stale
+                                if (confirmButtonVisible && careemServiceUnavailableGracePeriod <= 3) {
+                                    Log.i(TAG, "🚖 [DEEP LINK] Confirm button visible! Trying to click it (message might be stale)...")
+                                    val confirmTexts = listOf("تأكيد الانطلاق", "تأكيد الإنطلاق", "Confirm pickup", "تأكيد")
+                                    for (confirmText in confirmTexts) {
+                                        val nodes = rootNode.findAccessibilityNodeInfosByText(confirmText)
+                                        for (node in nodes) {
+                                            val parent = node.parent
+                                            if (parent != null && parent.isClickable) {
+                                                if (parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                                                    Log.i(TAG, "🚖 [DEEP LINK] ✓ Clicked confirm button during grace period!")
+                                                    nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                                                    Thread.sleep(500)
+                                                    return
+                                                }
+                                            }
+                                            if (careemGestureClick(node)) {
+                                                Log.i(TAG, "🚖 [DEEP LINK] ✓ Gesture clicked confirm during grace period!")
+                                                nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                                                Thread.sleep(500)
+                                                return
+                                            }
+                                        }
+                                        nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                                    }
+                                }
 
                                 if (careemServiceUnavailableGracePeriod < 5) {
                                     // Wait for UI to update - Careem may need time after pickup change
@@ -2823,33 +2858,60 @@ class PriceReaderService : AccessibilityService() {
                 if (isPickupSearchScreen) {
                     Log.i(TAG, "🚖 [DEEP LINK] On pickup SEARCH screen! (retry attempt ${careemDeepLinkPickupChangeAttempts + 1})")
 
-                    // FALLBACK: On last retry attempt, try "Use my current location" first
-                    if (careemDeepLinkPickupChangeAttempts >= 2) {
-                        Log.i(TAG, "🚖 [DEEP LINK] Last retry - trying 'Use my current location' fallback...")
-                        val currentLocationTexts = listOf(
-                            "استخدم موقعي الحالي",  // Use my current location
-                            "موقعي الحالي",         // My current location
-                            "Use my current location",
-                            "Current location",
-                            "استخدم موقعك الحالي"   // Use your current location
-                        )
-                        for (locText in currentLocationTexts) {
-                            val locNodes = rootNode.findAccessibilityNodeInfosByText(locText)
-                            for (node in locNodes) {
-                                Log.i(TAG, "🚖 [DEEP LINK] Found '$locText' button - clicking!")
+                    // STRATEGY 1: Try clicking a SAVED LOCATION first (البيت, مدرسة, etc.)
+                    // Saved locations are guaranteed to be in Careem's coverage area!
+                    val savedLocationNames = listOf(
+                        "البيت",           // Home - most reliable
+                        "مدرسة الفرسان",    // Al-Forsan school
+                        "مدرسة جرين فالى",  // Green Valley school
+                        "اكاديمية الشروق",  // Shorouk Academy
+                        "العمل",           // Work
+                        "Home",
+                        "Work"
+                    )
+                    Log.i(TAG, "🚖 [DEEP LINK] Looking for saved locations...")
+                    for (savedName in savedLocationNames) {
+                        val savedNodes = rootNode.findAccessibilityNodeInfosByText(savedName)
+                        for (node in savedNodes) {
+                            val nodeText = node.text?.toString() ?: ""
+                            // Skip if this is just a label, not a clickable saved location
+                            if (nodeText == savedName || nodeText.contains(savedName)) {
+                                Log.i(TAG, "🚖 [DEEP LINK] Found saved location '$savedName' - clicking!")
                                 if (clickNodeOrParent(node) || careemGestureClick(node)) {
-                                    Log.i(TAG, "🚖 [DEEP LINK] ✓ Clicked '$locText' - using device GPS!")
+                                    Log.i(TAG, "🚖 [DEEP LINK] ✓ Clicked saved location '$savedName'!")
                                     careemPickupSuggestionClicked = true
-                                    locNodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                                    savedNodes.forEach { try { it.recycle() } catch (e: Exception) {} }
                                     return false
                                 }
                             }
-                            locNodes.forEach { try { it.recycle() } catch (e: Exception) {} }
                         }
-                        Log.w(TAG, "🚖 [DEEP LINK] 'Use current location' button not found, falling back to address entry...")
+                        savedNodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                    }
+                    Log.w(TAG, "🚖 [DEEP LINK] No saved locations found, trying other methods...")
+
+                    // STRATEGY 2: Try "Use my current location" button if available
+                    val currentLocationTexts = listOf(
+                        "استخدم موقعي الحالي",  // Use my current location
+                        "موقعي الحالي",         // My current location
+                        "Use my current location",
+                        "Current location",
+                        "استخدم موقعك الحالي"   // Use your current location
+                    )
+                    for (locText in currentLocationTexts) {
+                        val locNodes = rootNode.findAccessibilityNodeInfosByText(locText)
+                        for (node in locNodes) {
+                            Log.i(TAG, "🚖 [DEEP LINK] Found '$locText' button - clicking!")
+                            if (clickNodeOrParent(node) || careemGestureClick(node)) {
+                                Log.i(TAG, "🚖 [DEEP LINK] ✓ Clicked '$locText' - using device GPS!")
+                                careemPickupSuggestionClicked = true
+                                locNodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                                return false
+                            }
+                        }
+                        locNodes.forEach { try { it.recycle() } catch (e: Exception) {} }
                     }
 
-                    // Find EditText field and enter pickup address
+                    // STRATEGY 3: Find EditText field and enter pickup address
                     val editTexts = mutableListOf<AccessibilityNodeInfo>()
                     findAllEditTexts(rootNode, editTexts)
 
@@ -2909,11 +2971,10 @@ class PriceReaderService : AccessibilityService() {
                         text.contains("Egypt") || text.contains("Obour")
                     }
 
-                    // On retries, skip previous suggestions and try different ones
-                    // Skip first N suggestions based on pickup change attempts
-                    val skipCount = careemDeepLinkPickupChangeAttempts
-                    val suggestionsToTry = suggestionPatterns.drop(skipCount).take(3)
-                    Log.i(TAG, "🚖 [DEEP LINK] Found ${suggestionPatterns.size} suggestions, skipping $skipCount, trying ${suggestionsToTry.size}")
+                    // ALWAYS try the CLOSEST suggestions first (sorted by distance)
+                    // Don't skip - closer locations are more likely to be in coverage
+                    val suggestionsToTry = suggestionPatterns.take(3)
+                    Log.i(TAG, "🚖 [DEEP LINK] Found ${suggestionPatterns.size} suggestions, trying first ${suggestionsToTry.size} (closest ones)")
 
                     for (suggestionText in suggestionsToTry) {
                         val nodes = rootNode.findAccessibilityNodeInfosByText(suggestionText)
