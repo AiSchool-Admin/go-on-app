@@ -2772,9 +2772,76 @@ class PriceReaderService : AccessibilityService() {
             if (isPickupScreen) {
                 Log.i(TAG, "🚖 [DEEP LINK] On pickup screen!")
 
-                // SIMPLIFIED: Just click "تأكيد الانطلاق" (Confirm pickup) directly
-                // We can't change pickup location programmatically (Careem uses GPS)
-                // If location is valid, it will proceed. If not, it will fail.
+                // Check if Careem shows "service not available" message
+                val serviceNotAvailable = allText.any { text ->
+                    normalizedContains(text, "كريم لا يعمل في هذه المنطقة") ||
+                    normalizedContains(text, "كريم لا يعمل فى هذه المنطقة") ||
+                    normalizedContains(text, "Careem is not available") ||
+                    normalizedContains(text, "not available in this area")
+                }
+
+                if (serviceNotAvailable) {
+                    Log.w(TAG, "🚖 [DEEP LINK] Service not available at default GPS location!")
+                    Log.i(TAG, "🚖 [DEEP LINK] Trying to change pickup location...")
+
+                    // Strategy 1: Click on coordinates field [30.xx, 31.xx] to open location picker
+                    val coordPattern = allText.find { it.matches(Regex("\\[\\d+\\.\\d+,\\s*\\d+\\.\\d+\\]")) }
+                    if (coordPattern != null) {
+                        val coordNodes = rootNode.findAccessibilityNodeInfosByText(coordPattern)
+                        for (node in coordNodes) {
+                            Log.i(TAG, "🚖 [DEEP LINK] Clicking on coordinates: $coordPattern")
+                            if (findAndClickParent(node) || careemGestureClick(node) || smartClick(node)) {
+                                Log.i(TAG, "🚖 [DEEP LINK] ✓ Clicked coordinates field!")
+                                coordNodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                                // Wait for search screen to open
+                                Thread.sleep(500)
+                                return false
+                            }
+                        }
+                        coordNodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                    }
+
+                    // Strategy 2: Click on "تفاصيل نقطة الإنطلاق" (Pickup details) header
+                    val pickupDetailsTexts = listOf(
+                        "تفاصيل نقطة الإنطلاق",
+                        "تفاصيل نقطة الانطلاق",
+                        "Pickup details"
+                    )
+                    for (detailText in pickupDetailsTexts) {
+                        val detailNodes = rootNode.findAccessibilityNodeInfosByText(detailText)
+                        for (node in detailNodes) {
+                            Log.i(TAG, "🚖 [DEEP LINK] Clicking on pickup details: $detailText")
+                            if (findAndClickParent(node) || careemGestureClick(node)) {
+                                Log.i(TAG, "🚖 [DEEP LINK] ✓ Clicked pickup details!")
+                                detailNodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                                Thread.sleep(500)
+                                return false
+                            }
+                        }
+                        detailNodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                    }
+
+                    // Strategy 3: Click anywhere on the map area to change location
+                    // The map is usually in the upper portion of the screen
+                    try {
+                        val displayMetrics = resources.displayMetrics
+                        val screenWidth = displayMetrics.widthPixels
+                        val screenHeight = displayMetrics.heightPixels
+                        val mapCenterX = screenWidth / 2f
+                        val mapCenterY = screenHeight * 0.35f  // 35% from top (map area)
+
+                        Log.i(TAG, "🚖 [DEEP LINK] Clicking on map area at ($mapCenterX, $mapCenterY)")
+                        clickAtPosition(mapCenterX, mapCenterY)
+                        Thread.sleep(500)
+                        return false
+                    } catch (e: Exception) {
+                        Log.e(TAG, "🚖 [DEEP LINK] Map click failed: ${e.message}")
+                    }
+
+                    Log.w(TAG, "🚖 [DEEP LINK] Could not change pickup location, will try confirm anyway...")
+                }
+
+                // Try to click "تأكيد الانطلاق" (Confirm pickup)
                 val confirmTexts = listOf(
                     "تأكيد الانطلاق",
                     "تأكيد الإنطلاق",
