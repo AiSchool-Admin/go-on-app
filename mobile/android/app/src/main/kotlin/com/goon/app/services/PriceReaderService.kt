@@ -2621,40 +2621,120 @@ class PriceReaderService : AccessibilityService() {
             return false
         }
 
-        // DEEP LINK MODE: After clicking destination, handle pickup confirmation screen
+        // DEEP LINK MODE: After clicking destination, handle pickup screen
+        // We need to ENTER the pickup address, not just confirm (default GPS might be wrong)
         if (careemDeepLinkModeDetected && careemDeepLinkDestinationClicked) {
-            Log.i(TAG, "🚖 [DEEP LINK] Checking for pickup confirmation screen...")
+            Log.i(TAG, "🚖 [DEEP LINK] Checking for pickup screen...")
 
-            val isPickupConfirmScreen = allText.any { text ->
+            val isPickupScreen = allText.any { text ->
                 normalizedContains(text, "تفاصيل نقطة الإنطلاق") ||
                 normalizedContains(text, "تفاصيل نقطة الانطلاق") ||
                 normalizedContains(text, "Pickup details") ||
-                normalizedContains(text, "تأكيد الانطلاق") ||
-                normalizedContains(text, "تأكيد الإنطلاق") ||
-                normalizedContains(text, "Confirm pickup")
+                normalizedContains(text, "نقطة الانطلاق") ||
+                normalizedContains(text, "Pickup location")
             }
 
-            if (isPickupConfirmScreen) {
-                Log.i(TAG, "🚖 [DEEP LINK] On pickup confirmation screen - clicking confirm button...")
+            if (isPickupScreen) {
+                // Check if we already entered pickup
+                if (!careemPickupEntered) {
+                    Log.i(TAG, "🚖 [DEEP LINK] On pickup screen - need to enter pickup address...")
 
-                val confirmTexts = listOf("تأكيد الانطلاق", "تأكيد الإنطلاق", "Confirm pickup", "تأكيد")
-                for (confirmText in confirmTexts) {
-                    val nodes = rootNode.findAccessibilityNodeInfosByText(confirmText)
-                    for (node in nodes) {
-                        if (careemGestureClick(node) || smartClick(node)) {
-                            Log.i(TAG, "🚖 [DEEP LINK] ✓ Clicked '$confirmText' - waiting for prices...")
-                            careemPickupPhaseComplete = true
-                            careemPickupSuggestionClicked = true
-                            nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
-                            return true
-                        }
+                    // Strategy 1: Find and click the coordinate field to edit it
+                    val coordinatePattern = allText.find { text ->
+                        text.matches(Regex(".*\\[\\d+\\.\\d+.*,.*\\d+\\.\\d+.*\\].*"))
                     }
-                    nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                    if (coordinatePattern != null) {
+                        val nodes = rootNode.findAccessibilityNodeInfosByText(coordinatePattern)
+                        for (node in nodes) {
+                            if (smartClick(node) || careemGestureClick(node)) {
+                                Log.i(TAG, "🚖 [DEEP LINK] Clicked coordinate field to edit pickup")
+                                nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                                return false // Wait for edit screen
+                            }
+                        }
+                        nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                    }
+
+                    // Strategy 2: Find search/edit field on the pickup screen
+                    val editTexts = mutableListOf<AccessibilityNodeInfo>()
+                    findAllEditTexts(rootNode, editTexts)
+
+                    if (editTexts.isNotEmpty()) {
+                        val editText = editTexts.first()
+                        clearTextField(editText)
+                        Thread.sleep(100)
+
+                        if (enterTextInField(editText, pickupAddress)) {
+                            Log.i(TAG, "🚖 [DEEP LINK] ✓ Entered pickup address: $pickupAddress")
+                            careemPickupEntered = true
+                            editTexts.forEach { try { it.recycle() } catch (e: Exception) {} }
+                            return false // Wait for suggestions
+                        }
+                        editTexts.forEach { try { it.recycle() } catch (e: Exception) {} }
+                    }
+
+                    // Strategy 3: Look for a search icon or "بحث" button to open search
+                    val searchTexts = listOf("بحث", "Search", "تغيير", "Change", "اختر موقع", "Select location")
+                    for (searchText in searchTexts) {
+                        val nodes = rootNode.findAccessibilityNodeInfosByText(searchText)
+                        for (node in nodes) {
+                            if (smartClick(node) || careemGestureClick(node)) {
+                                Log.i(TAG, "🚖 [DEEP LINK] Clicked '$searchText' to open pickup search")
+                                nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                                return false // Wait for search screen
+                            }
+                        }
+                        nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                    }
+
+                    // Strategy 4: Click on the map area to change location (fallback)
+                    Log.w(TAG, "🚖 [DEEP LINK] Could not find pickup edit field, trying map click...")
+                }
+
+                // If pickup entered, look for suggestions and click
+                if (careemPickupEntered && !careemPickupSuggestionClicked) {
+                    Log.i(TAG, "🚖 [DEEP LINK] Looking for pickup suggestions...")
+
+                    // Look for suggestion that matches pickup address
+                    val pickupKeywords = pickupAddress.split(" ").filter { it.length > 3 }
+                    for (keyword in pickupKeywords) {
+                        val nodes = rootNode.findAccessibilityNodeInfosByText(keyword)
+                        for (node in nodes) {
+                            val nodeText = node.text?.toString() ?: node.contentDescription?.toString() ?: ""
+                            // Skip if it's the input field itself
+                            if (nodeText.length > 15 && !nodeText.contains("[") && !nodeText.contains("]")) {
+                                if (careemGestureClick(node) || smartClick(node)) {
+                                    Log.i(TAG, "🚖 [DEEP LINK] ✓ Clicked pickup suggestion: '$nodeText'")
+                                    careemPickupSuggestionClicked = true
+                                    nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                                    return false // Wait for confirm screen
+                                }
+                            }
+                        }
+                        nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                    }
+                }
+
+                // If pickup suggestion clicked, now click confirm
+                if (careemPickupSuggestionClicked || careemPickupEntered) {
+                    val confirmTexts = listOf("تأكيد الانطلاق", "تأكيد الإنطلاق", "Confirm pickup", "تأكيد", "احجز")
+                    for (confirmText in confirmTexts) {
+                        val nodes = rootNode.findAccessibilityNodeInfosByText(confirmText)
+                        for (node in nodes) {
+                            if (careemGestureClick(node) || smartClick(node)) {
+                                Log.i(TAG, "🚖 [DEEP LINK] ✓ Clicked '$confirmText' - waiting for prices...")
+                                careemPickupPhaseComplete = true
+                                nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                                return true
+                            }
+                        }
+                        nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                    }
                 }
             }
 
-            // If not on pickup confirm screen yet, wait
-            Log.i(TAG, "🚖 [DEEP LINK] Waiting for pickup confirmation screen...")
+            // If not on pickup screen yet, wait
+            Log.i(TAG, "🚖 [DEEP LINK] Waiting for pickup screen...")
             return false
         }
 
