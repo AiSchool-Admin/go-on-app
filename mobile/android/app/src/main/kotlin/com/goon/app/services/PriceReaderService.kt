@@ -2587,35 +2587,28 @@ class PriceReaderService : AccessibilityService() {
 
             Log.i(TAG, "🚖 [DEEP LINK] Found ${addressPatterns.size} address-like suggestions (attempt ${careemDeepLinkDestinationClickAttempts})")
 
-            // Helper function to try different click methods based on attempt number
-            fun tryClickNode(node: AccessibilityNodeInfo, description: String): Boolean {
-                val clickSuccess = when (careemDeepLinkDestinationClickAttempts % 3) {
-                    0 -> {
-                        // Attempt 0, 3: gesture click first
-                        Log.i(TAG, "🚖 [DEEP LINK] Trying gesture click for: $description")
-                        careemGestureClick(node) || smartClick(node)
-                    }
-                    1 -> {
-                        // Attempt 1, 4: smart click first
-                        Log.i(TAG, "🚖 [DEEP LINK] Trying smart click for: $description")
-                        smartClick(node) || careemGestureClick(node)
-                    }
-                    else -> {
-                        // Attempt 2, 5: direct ACTION_CLICK
-                        Log.i(TAG, "🚖 [DEEP LINK] Trying direct ACTION_CLICK for: $description")
-                        node.performAction(AccessibilityNodeInfo.ACTION_CLICK) ||
-                        findClickableParent(node)?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false ||
-                        careemGestureClick(node)
-                    }
-                }
-                return clickSuccess
-            }
-
             for (address in addressPatterns) {
                 val nodes = rootNode.findAccessibilityNodeInfosByText(address)
                 if (nodes.isNotEmpty()) {
                     for (node in nodes) {
-                        if (tryClickNode(node, address)) {
+                        // Try different click methods based on attempt number
+                        val clickSuccess = when (careemDeepLinkDestinationClickAttempts % 3) {
+                            0 -> {
+                                Log.i(TAG, "🚖 [DEEP LINK] Trying gesture click for: $address")
+                                careemGestureClick(node) || smartClick(node)
+                            }
+                            1 -> {
+                                Log.i(TAG, "🚖 [DEEP LINK] Trying smart click for: $address")
+                                smartClick(node) || careemGestureClick(node)
+                            }
+                            else -> {
+                                Log.i(TAG, "🚖 [DEEP LINK] Trying ACTION_CLICK for: $address")
+                                val directClick = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                                val parentClick = findClickableParent(node)?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false
+                                directClick || parentClick || careemGestureClick(node)
+                            }
+                        }
+                        if (clickSuccess) {
                             Log.i(TAG, "🚖 [DEEP LINK] ✓ Clicked destination suggestion: '$address'")
                             careemDeepLinkDestinationClicked = true
                             careemPickupPhaseComplete = false  // Need to confirm pickup next
@@ -2634,7 +2627,16 @@ class PriceReaderService : AccessibilityService() {
             for (distText in distancePatterns) {
                 val nodes = rootNode.findAccessibilityNodeInfosByText(distText)
                 for (node in nodes) {
-                    if (tryClickNode(node, distText)) {
+                    val clickSuccess = when (careemDeepLinkDestinationClickAttempts % 3) {
+                        0 -> careemGestureClick(node) || smartClick(node)
+                        1 -> smartClick(node) || careemGestureClick(node)
+                        else -> {
+                            val directClick = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                            val parentClick = findClickableParent(node)?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false
+                            directClick || parentClick || careemGestureClick(node)
+                        }
+                    }
+                    if (clickSuccess) {
                         Log.i(TAG, "🚖 [DEEP LINK] ✓ Clicked suggestion by distance: '$distText'")
                         careemDeepLinkDestinationClicked = true
                         nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
