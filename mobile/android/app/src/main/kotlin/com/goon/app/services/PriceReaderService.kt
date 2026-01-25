@@ -2772,6 +2772,93 @@ class PriceReaderService : AccessibilityService() {
             if (isPickupScreen) {
                 Log.i(TAG, "🚖 [DEEP LINK] On pickup screen!")
 
+                // FIRST: Check if we're on the pickup SEARCH screen (after clicking coordinates)
+                // This screen has "أدخل موقع الانطلاق" (Enter pickup location) search field
+                val isPickupSearchScreen = allText.any { text ->
+                    normalizedContains(text, "أدخل موقع الانطلاق") ||
+                    normalizedContains(text, "ادخل موقع الانطلاق") ||
+                    normalizedContains(text, "Enter pickup location") ||
+                    normalizedContains(text, "Enter pickup")
+                }
+
+                if (isPickupSearchScreen) {
+                    Log.i(TAG, "🚖 [DEEP LINK] On pickup SEARCH screen! Entering pickup address...")
+
+                    // Find EditText field and enter pickup address
+                    val editTexts = mutableListOf<AccessibilityNodeInfo>()
+                    findAllEditTexts(rootNode, editTexts)
+
+                    if (editTexts.isNotEmpty()) {
+                        val editText = editTexts.first()
+                        Log.i(TAG, "🚖 [DEEP LINK] Found EditText for pickup, entering: $pickupAddress")
+
+                        // Clear and enter pickup address
+                        val clearArgs = android.os.Bundle()
+                        clearArgs.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "")
+                        editText.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, clearArgs)
+                        Thread.sleep(100)
+
+                        val textArgs = android.os.Bundle()
+                        textArgs.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, pickupAddress)
+                        if (editText.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, textArgs)) {
+                            Log.i(TAG, "🚖 [DEEP LINK] ✓ Entered pickup address!")
+                            editTexts.forEach { try { it.recycle() } catch (e: Exception) {} }
+                            // Mark that we've entered pickup, next iteration will click suggestion
+                            careemPickupEntered = true
+                            return false  // Wait for suggestions to appear
+                        }
+                    }
+
+                    // If no EditText but we have saved locations, try clicking a saved location
+                    val savedLocationKeywords = pickupAddress.split(" ").filter { it.length > 3 }
+                    for (keyword in savedLocationKeywords) {
+                        val nodes = rootNode.findAccessibilityNodeInfosByText(keyword)
+                        for (node in nodes) {
+                            val nodeText = node.text?.toString() ?: node.contentDescription?.toString() ?: ""
+                            if (nodeText.length > 10) {  // Avoid short matches
+                                Log.i(TAG, "🚖 [DEEP LINK] Trying to click saved location matching '$keyword': $nodeText")
+                                if (clickNodeOrParent(node) || careemGestureClick(node)) {
+                                    Log.i(TAG, "🚖 [DEEP LINK] ✓ Clicked saved location!")
+                                    careemPickupSuggestionClicked = true
+                                    nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                                    return false
+                                }
+                            }
+                        }
+                        nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                    }
+
+                    editTexts.forEach { try { it.recycle() } catch (e: Exception) {} }
+                    Log.w(TAG, "🚖 [DEEP LINK] Could not enter pickup address, waiting...")
+                    return false
+                }
+
+                // If pickup was entered, look for suggestions and click one
+                if (careemPickupEntered && !careemPickupSuggestionClicked) {
+                    Log.i(TAG, "🚖 [DEEP LINK] Looking for pickup suggestions...")
+
+                    // Look for suggestions with distance indicators
+                    val suggestionPatterns = allText.filter { text ->
+                        text.contains("كيلومتر") || text.contains("km") ||
+                        text.contains("متر") || text.contains("Cairo") ||
+                        text.contains("Egypt") || text.contains("Obour")
+                    }
+
+                    for (suggestionText in suggestionPatterns.take(3)) {
+                        val nodes = rootNode.findAccessibilityNodeInfosByText(suggestionText)
+                        for (node in nodes) {
+                            Log.i(TAG, "🚖 [DEEP LINK] Clicking pickup suggestion: $suggestionText")
+                            if (clickNodeOrParent(node) || careemGestureClick(node)) {
+                                Log.i(TAG, "🚖 [DEEP LINK] ✓ Clicked pickup suggestion!")
+                                careemPickupSuggestionClicked = true
+                                nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                                return false
+                            }
+                        }
+                        nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                    }
+                }
+
                 // Check if Careem shows "service not available" message
                 val serviceNotAvailable = allText.any { text ->
                     normalizedContains(text, "كريم لا يعمل في هذه المنطقة") ||
