@@ -367,6 +367,7 @@ class PriceReaderService : AccessibilityService() {
         careemDeepLinkModeDetected = false  // Reset deep link mode detection
         careemDeepLinkDestinationClicked = false  // Reset deep link destination clicked flag
         careemDeepLinkPickupSearchOpened = false  // Reset deep link pickup search opened flag
+        careemDeepLinkDestinationClickAttempts = 0  // Reset deep link destination click attempts
         inDriverDestinationEntered = false  // Reset InDriver destination flag
         inDriverDoneClickedTime = 0L  // Reset InDriver Done click time
         inDriverDoneClickCount = 0  // Reset Done click counter (3 clicks needed for InDriver)
@@ -2518,6 +2519,7 @@ class PriceReaderService : AccessibilityService() {
     private var careemDeepLinkModeDetected = false  // True when we detect destination picker from deep link
     private var careemDeepLinkDestinationClicked = false  // True when we clicked the destination suggestion
     private var careemDeepLinkPickupSearchOpened = false  // True when we clicked to open pickup search from confirmation
+    private var careemDeepLinkDestinationClickAttempts = 0  // Count click attempts to retry with different methods
 
     /**
      * Find and click Careem PICKUP field for PICKUP FIRST flow
@@ -2583,14 +2585,37 @@ class PriceReaderService : AccessibilityService() {
                  (text.contains(",") && text.length > 15 && !text.matches(Regex(".*\\d+\\.\\d+.*,.*\\d+\\.\\d+.*"))))
             }
 
-            Log.i(TAG, "🚖 [DEEP LINK] Found ${addressPatterns.size} address-like suggestions")
+            Log.i(TAG, "🚖 [DEEP LINK] Found ${addressPatterns.size} address-like suggestions (attempt ${careemDeepLinkDestinationClickAttempts})")
+
+            // Helper function to try different click methods based on attempt number
+            fun tryClickNode(node: AccessibilityNodeInfo, description: String): Boolean {
+                val clickSuccess = when (careemDeepLinkDestinationClickAttempts % 3) {
+                    0 -> {
+                        // Attempt 0, 3: gesture click first
+                        Log.i(TAG, "🚖 [DEEP LINK] Trying gesture click for: $description")
+                        careemGestureClick(node) || smartClick(node)
+                    }
+                    1 -> {
+                        // Attempt 1, 4: smart click first
+                        Log.i(TAG, "🚖 [DEEP LINK] Trying smart click for: $description")
+                        smartClick(node) || careemGestureClick(node)
+                    }
+                    else -> {
+                        // Attempt 2, 5: direct ACTION_CLICK
+                        Log.i(TAG, "🚖 [DEEP LINK] Trying direct ACTION_CLICK for: $description")
+                        node.performAction(AccessibilityNodeInfo.ACTION_CLICK) ||
+                        findClickableParent(node)?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false ||
+                        careemGestureClick(node)
+                    }
+                }
+                return clickSuccess
+            }
 
             for (address in addressPatterns) {
                 val nodes = rootNode.findAccessibilityNodeInfosByText(address)
                 if (nodes.isNotEmpty()) {
                     for (node in nodes) {
-                        // Try gesture click (more reliable for Careem)
-                        if (careemGestureClick(node) || smartClick(node)) {
+                        if (tryClickNode(node, address)) {
                             Log.i(TAG, "🚖 [DEEP LINK] ✓ Clicked destination suggestion: '$address'")
                             careemDeepLinkDestinationClicked = true
                             careemPickupPhaseComplete = false  // Need to confirm pickup next
@@ -2609,7 +2634,7 @@ class PriceReaderService : AccessibilityService() {
             for (distText in distancePatterns) {
                 val nodes = rootNode.findAccessibilityNodeInfosByText(distText)
                 for (node in nodes) {
-                    if (careemGestureClick(node) || smartClick(node)) {
+                    if (tryClickNode(node, distText)) {
                         Log.i(TAG, "🚖 [DEEP LINK] ✓ Clicked suggestion by distance: '$distText'")
                         careemDeepLinkDestinationClicked = true
                         nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
@@ -2628,12 +2653,27 @@ class PriceReaderService : AccessibilityService() {
         if (careemDeepLinkModeDetected && careemDeepLinkDestinationClicked) {
             Log.i(TAG, "🚖 [DEEP LINK] Checking for pickup screen...")
 
+            // Check if we're still on destination picker (click didn't work)
+            val stillOnDestinationPicker = allText.any { text ->
+                normalizedContains(text, "إلى أين") || normalizedContains(text, "Where to")
+            }
+
+            if (stillOnDestinationPicker && careemDeepLinkDestinationClickAttempts < 5) {
+                // Click didn't work - reset and try again with different method
+                Log.w(TAG, "🚖 [DEEP LINK] Screen didn't change after click! Retrying... (attempt ${careemDeepLinkDestinationClickAttempts + 1})")
+                careemDeepLinkDestinationClicked = false
+                careemDeepLinkDestinationClickAttempts++
+                return false  // Will retry clicking in next iteration
+            }
+
             val isPickupScreen = allText.any { text ->
                 normalizedContains(text, "تفاصيل نقطة الإنطلاق") ||
                 normalizedContains(text, "تفاصيل نقطة الانطلاق") ||
                 normalizedContains(text, "Pickup details") ||
                 normalizedContains(text, "نقطة الانطلاق") ||
-                normalizedContains(text, "Pickup location")
+                normalizedContains(text, "Pickup location") ||
+                normalizedContains(text, "تأكيد الانطلاق") ||  // Confirm pickup button
+                normalizedContains(text, "Confirm pickup")
             }
 
             if (isPickupScreen) {
