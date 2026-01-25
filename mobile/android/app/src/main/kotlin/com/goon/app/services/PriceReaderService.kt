@@ -1288,6 +1288,60 @@ class PriceReaderService : AccessibilityService() {
                             return
                         }
 
+                        // CRITICAL: Check if Careem shows "service not available" message
+                        // This happens when the GPS location is outside Careem's coverage area
+                        val serviceNotAvailable = allText.any { text ->
+                            normalizedContains(text, "كريم لا يعمل في هذه المنطقة") ||
+                            normalizedContains(text, "كريم لا يعمل فى هذه المنطقة") ||
+                            normalizedContains(text, "Careem is not available") ||
+                            normalizedContains(text, "not available in this area")
+                        }
+
+                        // Also check if we're still on pickup confirmation screen (not price screen)
+                        val stillOnPickupConfirmation = allText.any { text ->
+                            normalizedContains(text, "تفاصيل نقطة الإنطلاق") ||
+                            normalizedContains(text, "تفاصيل نقطة الانطلاق") ||
+                            normalizedContains(text, "Pickup details") ||
+                            normalizedContains(text, "تأكيد الانطلاق") ||
+                            normalizedContains(text, "تأكيد الإنطلاق")
+                        }
+
+                        if (serviceNotAvailable) {
+                            Log.e(TAG, "🚖 ✗✗✗ Careem service NOT AVAILABLE in this area!")
+                            Log.e(TAG, "🚖 GPS location is outside Careem's coverage area")
+                            Log.e(TAG, "🚖 Cannot proceed with automation - FAILING")
+                            automationState = AutomationState.FAILED
+                            return
+                        }
+
+                        // If we've been waiting for price but still on pickup screen, something went wrong
+                        if (stillOnPickupConfirmation && elapsedTime > 5000) {
+                            Log.w(TAG, "🚖 Still on pickup confirmation screen after ${elapsedTime}ms")
+                            Log.w(TAG, "🚖 Confirm button click may have failed - trying again...")
+
+                            // Try clicking confirm button again
+                            val confirmTexts = listOf("تأكيد الانطلاق", "تأكيد الإنطلاق", "Confirm pickup", "تأكيد")
+                            for (confirmText in confirmTexts) {
+                                val nodes = rootNode.findAccessibilityNodeInfosByText(confirmText)
+                                for (node in nodes) {
+                                    val parent = node.parent
+                                    if (parent != null && parent.isClickable) {
+                                        if (parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                                            Log.i(TAG, "🚖 Re-clicked confirm button via parent")
+                                            nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                                            return
+                                        }
+                                    }
+                                    if (careemGestureClick(node)) {
+                                        Log.i(TAG, "🚖 Re-clicked confirm button via gesture")
+                                        nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                                        return
+                                    }
+                                }
+                                nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                            }
+                        }
+
                         if (isOnPickupScreen || hasSuggestionDistances) {
                             // CRITICAL FIX: Check if we're in DESTINATION phase first
                             // If careemPickupPhaseComplete=true, we're past pickup and need to handle destination suggestions
