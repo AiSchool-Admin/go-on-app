@@ -368,6 +368,8 @@ class PriceReaderService : AccessibilityService() {
         careemDeepLinkDestinationClicked = false  // Reset deep link destination clicked flag
         careemDeepLinkPickupSearchOpened = false  // Reset deep link pickup search opened flag
         careemDeepLinkDestinationClickAttempts = 0  // Reset deep link destination click attempts
+        careemDeepLinkPickupChangeAttempts = 0  // Reset deep link pickup change attempts
+        careemServiceUnavailableGracePeriod = 0  // Reset service unavailable grace period
         inDriverDestinationEntered = false  // Reset InDriver destination flag
         inDriverDoneClickedTime = 0L  // Reset InDriver Done click time
         inDriverDoneClickCount = 0  // Reset Done click counter (3 clicks needed for InDriver)
@@ -1307,9 +1309,44 @@ class PriceReaderService : AccessibilityService() {
                         }
 
                         if (serviceNotAvailable) {
-                            Log.e(TAG, "🚖 ✗✗✗ Careem service NOT AVAILABLE in this area!")
+                            Log.w(TAG, "🚖 ⚠️ Careem service NOT AVAILABLE message detected!")
+
+                            // If we're in deep link mode and just changed pickup, give UI time to update
+                            if (careemDeepLinkModeDetected && careemPickupPhaseComplete) {
+                                careemServiceUnavailableGracePeriod++
+                                Log.i(TAG, "🚖 [DEEP LINK] Grace period check ${careemServiceUnavailableGracePeriod}/5 after pickup change")
+
+                                if (careemServiceUnavailableGracePeriod < 5) {
+                                    // Wait for UI to update - Careem may need time after pickup change
+                                    Log.i(TAG, "🚖 [DEEP LINK] Waiting for Careem UI to update...")
+                                    Thread.sleep(500)
+                                    return
+                                }
+
+                                // Grace period expired - try changing pickup location again
+                                if (careemDeepLinkPickupChangeAttempts < 3) {
+                                    careemDeepLinkPickupChangeAttempts++
+                                    Log.w(TAG, "🚖 [DEEP LINK] Service still unavailable! Trying different pickup (attempt ${careemDeepLinkPickupChangeAttempts}/3)")
+
+                                    // Reset pickup flags to retry with a different location
+                                    careemPickupEntered = false
+                                    careemPickupSuggestionClicked = false
+                                    careemPickupPhaseComplete = false
+                                    careemServiceUnavailableGracePeriod = 0
+
+                                    // Go back to FINDING_PICKUP_FIELD to try changing pickup
+                                    automationState = AutomationState.FINDING_PICKUP_FIELD
+                                    Log.i(TAG, "🚖 [DEEP LINK] Returning to FINDING_PICKUP_FIELD to change pickup location...")
+                                    return
+                                }
+
+                                // Exhausted all retries
+                                Log.e(TAG, "🚖 ✗✗✗ [DEEP LINK] Exhausted all ${careemDeepLinkPickupChangeAttempts} pickup change attempts!")
+                            }
+
+                            // Final failure - either not deep link mode or exhausted retries
+                            Log.e(TAG, "🚖 ✗✗✗ Careem service NOT AVAILABLE - FAILING")
                             Log.e(TAG, "🚖 GPS location is outside Careem's coverage area")
-                            Log.e(TAG, "🚖 Cannot proceed with automation - FAILING")
                             automationState = AutomationState.FAILED
                             return
                         }
@@ -2580,6 +2617,8 @@ class PriceReaderService : AccessibilityService() {
     private var careemDeepLinkDestinationClicked = false  // True when we clicked the destination suggestion
     private var careemDeepLinkPickupSearchOpened = false  // True when we clicked to open pickup search from confirmation
     private var careemDeepLinkDestinationClickAttempts = 0  // Count click attempts to retry with different methods
+    private var careemDeepLinkPickupChangeAttempts = 0  // Count pickup location change attempts when service unavailable
+    private var careemServiceUnavailableGracePeriod = 0  // Grace period counter after pickup change before failing
 
     /**
      * Find and click Careem PICKUP field for PICKUP FIRST flow
@@ -2782,7 +2821,33 @@ class PriceReaderService : AccessibilityService() {
                 }
 
                 if (isPickupSearchScreen) {
-                    Log.i(TAG, "🚖 [DEEP LINK] On pickup SEARCH screen! Entering pickup address...")
+                    Log.i(TAG, "🚖 [DEEP LINK] On pickup SEARCH screen! (retry attempt ${careemDeepLinkPickupChangeAttempts + 1})")
+
+                    // FALLBACK: On last retry attempt, try "Use my current location" first
+                    if (careemDeepLinkPickupChangeAttempts >= 2) {
+                        Log.i(TAG, "🚖 [DEEP LINK] Last retry - trying 'Use my current location' fallback...")
+                        val currentLocationTexts = listOf(
+                            "استخدم موقعي الحالي",  // Use my current location
+                            "موقعي الحالي",         // My current location
+                            "Use my current location",
+                            "Current location",
+                            "استخدم موقعك الحالي"   // Use your current location
+                        )
+                        for (locText in currentLocationTexts) {
+                            val locNodes = rootNode.findAccessibilityNodeInfosByText(locText)
+                            for (node in locNodes) {
+                                Log.i(TAG, "🚖 [DEEP LINK] Found '$locText' button - clicking!")
+                                if (clickNodeOrParent(node) || careemGestureClick(node)) {
+                                    Log.i(TAG, "🚖 [DEEP LINK] ✓ Clicked '$locText' - using device GPS!")
+                                    careemPickupSuggestionClicked = true
+                                    locNodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                                    return false
+                                }
+                            }
+                            locNodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                        }
+                        Log.w(TAG, "🚖 [DEEP LINK] 'Use current location' button not found, falling back to address entry...")
+                    }
 
                     // Find EditText field and enter pickup address
                     val editTexts = mutableListOf<AccessibilityNodeInfo>()
@@ -2835,7 +2900,7 @@ class PriceReaderService : AccessibilityService() {
 
                 // If pickup was entered, look for suggestions and click one
                 if (careemPickupEntered && !careemPickupSuggestionClicked) {
-                    Log.i(TAG, "🚖 [DEEP LINK] Looking for pickup suggestions...")
+                    Log.i(TAG, "🚖 [DEEP LINK] Looking for pickup suggestions (attempt ${careemDeepLinkPickupChangeAttempts + 1})...")
 
                     // Look for suggestions with distance indicators
                     val suggestionPatterns = allText.filter { text ->
@@ -2844,7 +2909,13 @@ class PriceReaderService : AccessibilityService() {
                         text.contains("Egypt") || text.contains("Obour")
                     }
 
-                    for (suggestionText in suggestionPatterns.take(3)) {
+                    // On retries, skip previous suggestions and try different ones
+                    // Skip first N suggestions based on pickup change attempts
+                    val skipCount = careemDeepLinkPickupChangeAttempts
+                    val suggestionsToTry = suggestionPatterns.drop(skipCount).take(3)
+                    Log.i(TAG, "🚖 [DEEP LINK] Found ${suggestionPatterns.size} suggestions, skipping $skipCount, trying ${suggestionsToTry.size}")
+
+                    for (suggestionText in suggestionsToTry) {
                         val nodes = rootNode.findAccessibilityNodeInfosByText(suggestionText)
                         for (node in nodes) {
                             Log.i(TAG, "🚖 [DEEP LINK] Clicking pickup suggestion: $suggestionText")
