@@ -436,18 +436,10 @@ class MainActivity : FlutterActivity() {
                     openDeepLink(deepLink, packageName)
                 }
                 PriceReaderService.CAREEM_PACKAGE -> {
-                    // Try multiple Careem deep link formats
-                    val success = tryMultipleDeepLinks(packageName, listOf(
-                        // Format 1: careem://booking
-                        "careem://booking?pickup_lat=$pickupLat&pickup_lng=$pickupLng" +
-                            "&dropoff_lat=$dropoffLat&dropoff_lng=$dropoffLng",
-                        // Format 2: careem://ride
-                        "careem://ride?pickup_latitude=$pickupLat&pickup_longitude=$pickupLng" +
-                            "&dropoff_latitude=$dropoffLat&dropoff_longitude=$dropoffLng",
-                        // Format 3: https scheme
-                        "https://app.careem.com/ride?pickup_lat=$pickupLat&pickup_lng=$pickupLng" +
-                            "&dropoff_lat=$dropoffLat&dropoff_lng=$dropoffLng"
-                    ))
+                    // OPTIMIZED: Use DropOffGeoDeeplinkActivity to open directly to destination picker
+                    // This skips home screen and "سيارة" button - goes straight to ride booking!
+                    // Format: geo:0,0?q=LAT,LNG opens location picker with coordinates pre-searched
+                    val success = openCareemWithExplicitIntent(dropoffLat, dropoffLng)
                     if (!success) openApp(packageName) else true
                 }
                 PriceReaderService.INDRIVER_PACKAGE -> {
@@ -549,6 +541,37 @@ class MainActivity : FlutterActivity() {
         } catch (e: Exception) {
             Log.e(TAG, "Deep link error: ${e.message}")
             openApp(packageName)
+        }
+    }
+
+    /**
+     * Open Careem using explicit component intent to DropOffGeoDeeplinkActivity
+     * This opens directly to the destination picker screen with coordinates pre-searched,
+     * skipping the home screen and "سيارة" button click entirely!
+     *
+     * Flow: Opens destination picker → User clicks suggestion → Pickup screen → Prices
+     * (Cuts 12 steps down to ~4 steps)
+     */
+    private fun openCareemWithExplicitIntent(dropoffLat: Double, dropoffLng: Double): Boolean {
+        return try {
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                // Use explicit component to open DropOffGeoDeeplinkActivity directly
+                setClassName(
+                    "com.careem.acma",
+                    "com.careem.acma.booking.DropOffGeoDeeplinkActivity"
+                )
+                // Format: geo:0,0?q=LAT,LNG - this pre-fills coordinates in search
+                data = android.net.Uri.parse("geo:0,0?q=$dropoffLat,$dropoffLng")
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+
+            startActivity(intent)
+            Log.i(TAG, "✓ Opened Careem DropOffGeoDeeplinkActivity with coords: $dropoffLat,$dropoffLng")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to open Careem with explicit intent: ${e.message}")
+            // Fallback to regular app open
+            false
         }
     }
 

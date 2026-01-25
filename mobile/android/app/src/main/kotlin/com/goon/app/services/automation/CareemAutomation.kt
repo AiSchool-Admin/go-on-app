@@ -16,10 +16,16 @@ import com.goon.app.utils.AppLogger
  * أتمتة تطبيق كريم
  * Careem app automation
  *
- * Flow: Home → Click "سيارة" → Click Pickup → Enter Pickup → Select Pickup Suggestion →
- *       Click Destination → Enter Destination → Select Destination Suggestion → Get Price
+ * OPTIMIZED FLOW (with deep link):
+ * DropOffGeoDeeplinkActivity opens → Destination pre-searched → Click suggestion →
+ * Pickup screen → Confirm pickup → Get Prices
  *
- * PICKUP FIRST: Careem requires entering pickup FIRST to avoid suggestion refresh issues
+ * FALLBACK FLOW (without deep link):
+ * Home → Click "سيارة" → Click Pickup → Enter Pickup → Select Pickup Suggestion →
+ * Click Destination → Enter Destination → Select Destination Suggestion → Get Price
+ *
+ * The deep link (geo:0,0?q=LAT,LNG) opens directly to destination picker with
+ * coordinates pre-searched, cutting 12 steps down to ~4 steps!
  */
 class CareemAutomation(
     service: AccessibilityService
@@ -35,8 +41,8 @@ class CareemAutomation(
 
     override val packageName: String = AppConstants.Packages.CAREEM
     override val displayName: String = "كريم"
-    override val supportsFullDeepLink: Boolean = false
-    override val requiresPickupFirst: Boolean = true
+    override val supportsFullDeepLink: Boolean = false  // Partial support via DropOffGeoDeeplinkActivity
+    override val requiresPickupFirst: Boolean = false   // Changed: Now destination first with deep link!
 
     // ============================================================
     // STATE TRACKING
@@ -60,6 +66,10 @@ class CareemAutomation(
     private var destinationMismatchRetries = 0
     private var positionBasedClickAttempt = 0
     private var gestureClickAttempt = 0
+
+    // Deep link optimization state
+    private var deepLinkModeDetected = false
+    private var destinationPickerScreenDetected = false
 
     // Trip details (set by caller)
     var pickupAddress: String = ""
@@ -92,6 +102,8 @@ class CareemAutomation(
         destinationMismatchRetries = 0
         positionBasedClickAttempt = 0
         gestureClickAttempt = 0
+        deepLinkModeDetected = false
+        destinationPickerScreenDetected = false
     }
 
     // ============================================================
@@ -99,11 +111,50 @@ class CareemAutomation(
     // ============================================================
 
     override fun findAndClickPickupField(rootNode: AccessibilityNodeInfo): AutomationResult {
-        AppLogger.automation(TAG, "Finding pickup field (PICKUP FIRST flow)", state = "FINDING_PICKUP")
+        val flowType = if (deepLinkModeDetected) "DEEP_LINK" else "NORMAL"
+        AppLogger.automation(TAG, "Finding pickup field ($flowType flow)", state = "FINDING_PICKUP")
 
         val allText = getAllTextFromNode(rootNode)
 
-        // STEP 1: Check if we're on Careem HOME screen
+        // DEEP LINK MODE: Check if we're on pickup confirmation screen
+        // (appears after selecting destination from deep link)
+        if (deepLinkModeDetected && destinationSuggestionClicked) {
+            // Check for pickup confirmation screen
+            val isPickupConfirmScreen = allText.any { text ->
+                normalizedContains(text, "تفاصيل نقطة الإنطلاق") ||
+                normalizedContains(text, "تفاصيل نقطة الانطلاق") ||
+                normalizedContains(text, "Pickup details") ||
+                normalizedContains(text, "تأكيد الانطلاق") ||
+                normalizedContains(text, "تأكيد الإنطلاق") ||
+                normalizedContains(text, "Confirm pickup")
+            }
+
+            if (isPickupConfirmScreen) {
+                AppLogger.automation(TAG, "On pickup confirmation screen (deep link mode)", state = "PICKUP_CONFIRM_SCREEN")
+
+                // Click "تأكيد الانطلاق" (Confirm pickup) button
+                val confirmTexts = listOf("تأكيد الانطلاق", "تأكيد الإنطلاق", "Confirm pickup", "تأكيد")
+                for (confirmText in confirmTexts) {
+                    val nodes = findAllNodesWithText(rootNode, confirmText)
+                    for (node in nodes) {
+                        if (smartClick(node) || careemGestureClick(node)) {
+                            AppLogger.automation(TAG, "Clicked '$confirmText' button", state = "PICKUP_CONFIRMED")
+                            pickupSuggestionClicked = true
+                            pickupPhaseComplete = true
+                            nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                            Thread.sleep(TimingConfig.animationWait)
+                            return AutomationResult(true, "Confirmed pickup location (deep link mode)")
+                        }
+                    }
+                    nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                }
+
+                pickupClickAttempts++
+                return AutomationResult(false, "Could not click confirm pickup", shouldRetry = pickupClickAttempts < 5)
+            }
+        }
+
+        // STEP 1: Check if we're on Careem HOME screen (fallback mode)
         val isOnHomeScreen = isHomeScreen(allText)
 
         AppLogger.d(TAG, "Home screen detection: isOnHomeScreen=$isOnHomeScreen, carButtonClicked=$carButtonClicked")
@@ -279,7 +330,31 @@ class CareemAutomation(
 
         val allText = getAllTextFromNode(rootNode)
 
-        // If on home screen, click car button first
+        // DEEP LINK OPTIMIZATION: Check if we're on destination picker screen
+        // (opened via DropOffGeoDeeplinkActivity with coordinates pre-searched)
+        if (!deepLinkModeDetected && isDestinationPickerScreen(allText)) {
+            deepLinkModeDetected = true
+            destinationPickerScreenDetected = true
+            AppLogger.automation(TAG, "Deep link mode detected - destination picker screen!", state = "DEEP_LINK_MODE")
+
+            // Try to click the first destination suggestion (coordinates should already be searched)
+            val suggestionResult = clickFirstDestinationSuggestion(rootNode, allText)
+            if (suggestionResult.success) {
+                destinationSuggestionClicked = true
+                return suggestionResult
+            }
+        }
+
+        // If deep link mode was detected but suggestion not clicked yet, keep trying
+        if (deepLinkModeDetected && !destinationSuggestionClicked) {
+            val suggestionResult = clickFirstDestinationSuggestion(rootNode, allText)
+            if (suggestionResult.success) {
+                destinationSuggestionClicked = true
+                return suggestionResult
+            }
+        }
+
+        // If on home screen, click car button first (fallback mode)
         val isOnHomeScreen = isHomeScreen(allText)
         if (isOnHomeScreen && !carButtonClicked) {
             return clickCarButton(rootNode)
@@ -325,6 +400,103 @@ class CareemAutomation(
         editTexts.forEach { try { it.recycle() } catch (e: Exception) {} }
 
         return AutomationResult(false, "Could not find destination field", shouldRetry = true)
+    }
+
+    /**
+     * Check if we're on the destination picker screen (opened via deep link)
+     * This screen shows "إلى أين؟" with search field and suggestions
+     */
+    private fun isDestinationPickerScreen(allText: List<String>): Boolean {
+        val hasDestinationHeader = allText.any { text ->
+            normalizedContains(text, "إلى أين") ||
+            normalizedContains(text, "Where to")
+        }
+
+        val hasSearchPrompt = allText.any { text ->
+            normalizedContains(text, "أدخل وجهتك") ||
+            normalizedContains(text, "Enter your destination")
+        }
+
+        // Check if coordinates are in search (from deep link)
+        val hasCoordinates = allText.any { text ->
+            text.matches(Regex(".*\\d+\\.\\d+.*\\d+\\.\\d+.*"))
+        }
+
+        // Not on home screen (no car button with other services)
+        val notOnHomeScreen = !allText.any { text ->
+            normalizedContains(text, "حوّل محلياً") ||
+            normalizedContains(text, "طعام") ||
+            normalizedContains(text, "Super App")
+        }
+
+        return (hasDestinationHeader || hasSearchPrompt || hasCoordinates) && notOnHomeScreen
+    }
+
+    /**
+     * Click the first destination suggestion when in deep link mode
+     * The coordinates are pre-searched, so we just need to click the first result
+     */
+    private fun clickFirstDestinationSuggestion(
+        rootNode: AccessibilityNodeInfo,
+        allText: List<String>
+    ): AutomationResult {
+        AppLogger.automation(TAG, "Clicking first destination suggestion (deep link mode)", state = "CLICK_DEST_SUGGESTION")
+
+        // Look for address-like text (from the coordinate search results)
+        val addressPatterns = allText.filter { text ->
+            text.length > 10 &&
+            !normalizedContains(text, "إلى أين") &&
+            !normalizedContains(text, "Where to") &&
+            !normalizedContains(text, "أدخل وجهتك") &&
+            !normalizedContains(text, "تخطي") &&
+            !normalizedContains(text, "Skip") &&
+            (text.contains("شارع") || text.contains("ش.") ||
+             text.contains("ميدان") || text.contains("منطقة") ||
+             text.contains("حي") || text.contains("مصر") ||
+             text.contains("Egypt") || text.contains("Cairo") ||
+             text.contains("كم") || text.contains("km") ||
+             text.contains("Mohammed") || text.contains("محمد") ||
+             text.contains(",") && text.length > 15)
+        }
+
+        AppLogger.d(TAG, "Found ${addressPatterns.size} address-like suggestions")
+
+        if (addressPatterns.isNotEmpty()) {
+            for (address in addressPatterns) {
+                val nodes = findAllNodesWithText(rootNode, address)
+                for (node in nodes) {
+                    if (careemGestureClickLong(node) || smartClick(node)) {
+                        AppLogger.automation(TAG, "Clicked destination suggestion: '$address'", state = "DEST_SUGGESTION_CLICKED")
+                        nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                        Thread.sleep(TimingConfig.animationWait)
+                        return AutomationResult(true, "Clicked destination suggestion from deep link")
+                    }
+                }
+                nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+            }
+        }
+
+        // Fallback: Try clicking any item that looks like a suggestion (has distance indicator)
+        val distancePatterns = allText.filter { text ->
+            text.contains("كيلومتر") || text.contains("km") || text.contains("متر")
+        }
+
+        for (distText in distancePatterns) {
+            val nodes = findAllNodesWithText(rootNode, distText)
+            for (node in nodes) {
+                // Click the parent which is likely the suggestion item
+                if (clickNodeOrParent(node) || careemGestureClick(node)) {
+                    AppLogger.automation(TAG, "Clicked suggestion by distance: '$distText'", state = "DEST_SUGGESTION_CLICKED")
+                    nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                    Thread.sleep(TimingConfig.animationWait)
+                    return AutomationResult(true, "Clicked destination by distance indicator")
+                }
+            }
+            nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+        }
+
+        destinationClickAttempts++
+        return AutomationResult(false, "Could not click destination suggestion", shouldRetry = destinationClickAttempts < 5)
     }
 
     // ============================================================
