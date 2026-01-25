@@ -2748,41 +2748,6 @@ class PriceReaderService : AccessibilityService() {
                 // If we can't find confirm button, log and wait
                 Log.w(TAG, "🚖 [DEEP LINK] Could not find confirm button, waiting...")
             }
-                    for (keyword in pickupKeywords) {
-                        val nodes = rootNode.findAccessibilityNodeInfosByText(keyword)
-                        for (node in nodes) {
-                            val nodeText = node.text?.toString() ?: node.contentDescription?.toString() ?: ""
-                            // Skip if it's the input field itself
-                            if (nodeText.length > 15 && !nodeText.contains("[") && !nodeText.contains("]")) {
-                                if (careemGestureClick(node) || smartClick(node)) {
-                                    Log.i(TAG, "🚖 [DEEP LINK] ✓ Clicked pickup suggestion: '$nodeText'")
-                                    careemPickupSuggestionClicked = true
-                                    nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
-                                    return false // Wait for confirm screen
-                                }
-                            }
-                        }
-                        nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
-                    }
-                }
-
-                // If pickup suggestion clicked, now click confirm
-                if (careemPickupSuggestionClicked || careemPickupEntered) {
-                    val confirmTexts = listOf("تأكيد الانطلاق", "تأكيد الإنطلاق", "Confirm pickup", "تأكيد", "احجز")
-                    for (confirmText in confirmTexts) {
-                        val nodes = rootNode.findAccessibilityNodeInfosByText(confirmText)
-                        for (node in nodes) {
-                            if (careemGestureClick(node) || smartClick(node)) {
-                                Log.i(TAG, "🚖 [DEEP LINK] ✓ Clicked '$confirmText' - waiting for prices...")
-                                careemPickupPhaseComplete = true
-                                nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
-                                return true
-                            }
-                        }
-                        nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
-                    }
-                }
-            }
 
             // If not on pickup screen yet, wait
             Log.i(TAG, "🚖 [DEEP LINK] Waiting for pickup screen...")
