@@ -2859,6 +2859,35 @@ class PriceReaderService : AccessibilityService() {
                     }
                 }
 
+                // CRITICAL: If pickup suggestion was clicked, try to click confirm button
+                // The coordinates should have changed - just click confirm regardless of "service not available" message
+                if (careemPickupSuggestionClicked) {
+                    Log.i(TAG, "🚖 [DEEP LINK] Pickup suggestion was clicked - trying to confirm...")
+
+                    val confirmTexts = listOf("تأكيد الانطلاق", "تأكيد الإنطلاق", "Confirm pickup", "تأكيد")
+                    for (confirmText in confirmTexts) {
+                        val nodes = rootNode.findAccessibilityNodeInfosByText(confirmText)
+                        for (node in nodes) {
+                            var clickSuccess = false
+                            val parent = node.parent
+                            if (parent != null && parent.isClickable) {
+                                clickSuccess = parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                            }
+                            if (!clickSuccess) {
+                                clickSuccess = clickNodeOrParent(node) || careemGestureClick(node)
+                            }
+                            if (clickSuccess) {
+                                Log.i(TAG, "🚖 [DEEP LINK] ✓ Clicked confirm after pickup change!")
+                                careemPickupPhaseComplete = true
+                                nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                                return true  // Move to WAITING_FOR_PRICE
+                            }
+                        }
+                        nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                    }
+                    Log.w(TAG, "🚖 [DEEP LINK] Could not find confirm button after pickup change")
+                }
+
                 // Check if Careem shows "service not available" message
                 val serviceNotAvailable = allText.any { text ->
                     normalizedContains(text, "كريم لا يعمل في هذه المنطقة") ||
