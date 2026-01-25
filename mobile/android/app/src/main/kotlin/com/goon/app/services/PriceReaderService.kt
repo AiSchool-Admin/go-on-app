@@ -2661,10 +2661,17 @@ class PriceReaderService : AccessibilityService() {
 
                     if (editTexts.isNotEmpty()) {
                         val editText = editTexts.first()
-                        clearTextField(editText)
+
+                        // Clear existing text
+                        val clearArgs = android.os.Bundle()
+                        clearArgs.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "")
+                        editText.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, clearArgs)
                         Thread.sleep(100)
 
-                        if (enterTextInField(editText, pickupAddress)) {
+                        // Enter pickup address
+                        val textArgs = android.os.Bundle()
+                        textArgs.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, pickupAddress)
+                        if (editText.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, textArgs)) {
                             Log.i(TAG, "🚖 [DEEP LINK] ✓ Entered pickup address: $pickupAddress")
                             careemPickupEntered = true
                             editTexts.forEach { try { it.recycle() } catch (e: Exception) {} }
