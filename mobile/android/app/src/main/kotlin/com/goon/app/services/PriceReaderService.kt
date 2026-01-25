@@ -366,6 +366,7 @@ class PriceReaderService : AccessibilityService() {
         careemLoaderFirstSeenTime = 0L  // Reset Careem loader time
         careemDeepLinkModeDetected = false  // Reset deep link mode detection
         careemDeepLinkDestinationClicked = false  // Reset deep link destination clicked flag
+        careemDeepLinkPickupSearchOpened = false  // Reset deep link pickup search opened flag
         inDriverDestinationEntered = false  // Reset InDriver destination flag
         inDriverDoneClickedTime = 0L  // Reset InDriver Done click time
         inDriverDoneClickCount = 0  // Reset Done click counter (3 clicks needed for InDriver)
@@ -2516,6 +2517,7 @@ class PriceReaderService : AccessibilityService() {
     // DEEP LINK OPTIMIZATION: Track when we opened via DropOffGeoDeeplinkActivity
     private var careemDeepLinkModeDetected = false  // True when we detect destination picker from deep link
     private var careemDeepLinkDestinationClicked = false  // True when we clicked the destination suggestion
+    private var careemDeepLinkPickupSearchOpened = false  // True when we clicked to open pickup search from confirmation
 
     /**
      * Find and click Careem PICKUP field for PICKUP FIRST flow
@@ -2593,7 +2595,7 @@ class PriceReaderService : AccessibilityService() {
                             careemDeepLinkDestinationClicked = true
                             careemPickupPhaseComplete = false  // Need to confirm pickup next
                             nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
-                            return true
+                            return false  // Stay in this function, wait for pickup screen
                         }
                     }
                     nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
@@ -2611,7 +2613,7 @@ class PriceReaderService : AccessibilityService() {
                         Log.i(TAG, "🚖 [DEEP LINK] ✓ Clicked suggestion by distance: '$distText'")
                         careemDeepLinkDestinationClicked = true
                         nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
-                        return true
+                        return false  // Stay in this function, wait for pickup screen
                     }
                 }
                 nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
@@ -2639,20 +2641,48 @@ class PriceReaderService : AccessibilityService() {
                 if (!careemPickupEntered) {
                     Log.i(TAG, "🚖 [DEEP LINK] On pickup screen - need to enter pickup address...")
 
-                    // Strategy 1: Find and click the coordinate field to edit it
-                    val coordinatePattern = allText.find { text ->
-                        text.matches(Regex(".*\\[\\d+\\.\\d+.*,.*\\d+\\.\\d+.*\\].*"))
-                    }
-                    if (coordinatePattern != null) {
-                        val nodes = rootNode.findAccessibilityNodeInfosByText(coordinatePattern)
-                        for (node in nodes) {
-                            if (smartClick(node) || careemGestureClick(node)) {
-                                Log.i(TAG, "🚖 [DEEP LINK] Clicked coordinate field to edit pickup")
-                                nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
-                                return false // Wait for edit screen
+                    // Strategy 0: Click on "كريم لا يعمل في هذه المنطقة" (Careem doesn't work in this area)
+                    // or any pickup location indicator to open the search screen
+                    if (!careemDeepLinkPickupSearchOpened) {
+                        val pickupClickTexts = listOf(
+                            "كريم لا يعمل في هذه المنطقة",
+                            "Careem is not available in this area",
+                            "تعديل",  // Edit
+                            "Edit",
+                            "Change pickup",
+                            "تغيير نقطة الانطلاق"
+                        )
+                        for (clickText in pickupClickTexts) {
+                            val nodes = rootNode.findAccessibilityNodeInfosByText(clickText)
+                            for (node in nodes) {
+                                if (careemGestureClick(node) || smartClick(node)) {
+                                    Log.i(TAG, "🚖 [DEEP LINK] Clicked '$clickText' to open pickup search")
+                                    careemDeepLinkPickupSearchOpened = true
+                                    nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                                    return false // Wait for search screen
+                                }
                             }
+                            nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
                         }
-                        nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                    }
+
+                    // Strategy 1: Find and click the coordinate field to edit it
+                    if (!careemDeepLinkPickupSearchOpened) {
+                        val coordinatePattern = allText.find { text ->
+                            text.matches(Regex(".*\\[\\d+\\.\\d+.*,.*\\d+\\.\\d+.*\\].*"))
+                        }
+                        if (coordinatePattern != null) {
+                            val nodes = rootNode.findAccessibilityNodeInfosByText(coordinatePattern)
+                            for (node in nodes) {
+                                if (smartClick(node) || careemGestureClick(node)) {
+                                    Log.i(TAG, "🚖 [DEEP LINK] Clicked coordinate field to edit pickup")
+                                    careemDeepLinkPickupSearchOpened = true
+                                    nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                                    return false // Wait for edit screen
+                                }
+                            }
+                            nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                        }
                     }
 
                     // Strategy 2: Find search/edit field on the pickup screen
