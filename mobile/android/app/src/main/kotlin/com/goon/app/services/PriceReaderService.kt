@@ -364,6 +364,8 @@ class PriceReaderService : AccessibilityService() {
         careemPositionBasedClickAttempt = 0  // Reset position-based click attempts
         careemGestureClickAttempt = 0  // Reset gesture click attempts
         careemLoaderFirstSeenTime = 0L  // Reset Careem loader time
+        careemDeepLinkModeDetected = false  // Reset deep link mode detection
+        careemDeepLinkDestinationClicked = false  // Reset deep link destination clicked flag
         inDriverDestinationEntered = false  // Reset InDriver destination flag
         inDriverDoneClickedTime = 0L  // Reset InDriver Done click time
         inDriverDoneClickCount = 0  // Reset Done click counter (3 clicks needed for InDriver)
@@ -2511,10 +2513,18 @@ class PriceReaderService : AccessibilityService() {
     private var careemPositionBasedClickAttempt = 0  // Track position-based click attempts for suggestions
     private var careemGestureClickAttempt = 0  // Track gesture click attempts for cycling through positions
 
+    // DEEP LINK OPTIMIZATION: Track when we opened via DropOffGeoDeeplinkActivity
+    private var careemDeepLinkModeDetected = false  // True when we detect destination picker from deep link
+    private var careemDeepLinkDestinationClicked = false  // True when we clicked the destination suggestion
+
     /**
      * Find and click Careem PICKUP field for PICKUP FIRST flow
      * This is called BEFORE destination entry to solve the suggestion refresh issue
      * Flow: Click "سيارة" → Find pickup field → Click it → Enter pickup address
+     *
+     * OPTIMIZED FLOW (with deep link):
+     * DropOffGeoDeeplinkActivity opens → Destination pre-searched → Click suggestion →
+     * Pickup confirmation screen → Confirm pickup → Get Prices
      */
     private fun findAndClickCareemPickupFieldFirst(rootNode: AccessibilityNodeInfo): Boolean {
         Log.i(TAG, "🚖 ========== CAREEM PICKUP FIELD FIRST SEARCH ==========")
@@ -2526,6 +2536,131 @@ class PriceReaderService : AccessibilityService() {
             Log.i(TAG, "🚖 [$index] '$text'")
         }
         Log.i(TAG, "🚖 === END OF VISIBLE TEXT (${allText.size} items) ===")
+
+        // ================================================================
+        // DEEP LINK OPTIMIZATION: Check if we're on destination picker screen
+        // (opened via DropOffGeoDeeplinkActivity with coordinates pre-searched)
+        // ================================================================
+        if (!careemDeepLinkModeDetected) {
+            val hasDestinationHeader = allText.any { text ->
+                normalizedContains(text, "إلى أين") || normalizedContains(text, "Where to")
+            }
+            val hasCoordinatesInSearch = allText.any { text ->
+                text.matches(Regex(".*\\d+\\.\\d+.*,.*\\d+\\.\\d+.*"))
+            }
+            val notOnHomeScreen = !allText.any { text ->
+                normalizedContains(text, "حوّل محلياً") ||
+                normalizedContains(text, "طعام") ||
+                normalizedContains(text, "Super App") ||
+                normalizedContains(text, "Bike")
+            }
+
+            if (hasDestinationHeader && hasCoordinatesInSearch && notOnHomeScreen) {
+                careemDeepLinkModeDetected = true
+                Log.i(TAG, "🚖 ✨ DEEP LINK MODE DETECTED! Destination picker screen with coordinates pre-searched")
+                Log.i(TAG, "🚖 ✨ Skipping PICKUP FIRST flow - will click destination suggestion directly")
+            }
+        }
+
+        // DEEP LINK MODE: Click the first destination suggestion
+        if (careemDeepLinkModeDetected && !careemDeepLinkDestinationClicked) {
+            Log.i(TAG, "🚖 [DEEP LINK] Looking for destination suggestion to click...")
+
+            // Look for address-like text (from the coordinate search results)
+            val addressPatterns = allText.filter { text ->
+                text.length > 10 &&
+                !normalizedContains(text, "إلى أين") &&
+                !normalizedContains(text, "Where to") &&
+                !normalizedContains(text, "أدخل وجهتك") &&
+                !normalizedContains(text, "تخطي") &&
+                (text.contains("شارع") || text.contains("ش.") ||
+                 text.contains("ميدان") || text.contains("منطقة") ||
+                 text.contains("حي") || text.contains("Egypt") ||
+                 text.contains("Cairo") || text.contains("Obour") ||
+                 text.contains("كيلومتر") || text.contains("km") ||
+                 (text.contains(",") && text.length > 15 && !text.matches(Regex(".*\\d+\\.\\d+.*,.*\\d+\\.\\d+.*"))))
+            }
+
+            Log.i(TAG, "🚖 [DEEP LINK] Found ${addressPatterns.size} address-like suggestions")
+
+            for (address in addressPatterns) {
+                val nodes = rootNode.findAccessibilityNodeInfosByText(address)
+                if (nodes.isNotEmpty()) {
+                    for (node in nodes) {
+                        // Try gesture click (more reliable for Careem)
+                        if (careemGestureClick(node) || smartClick(node)) {
+                            Log.i(TAG, "🚖 [DEEP LINK] ✓ Clicked destination suggestion: '$address'")
+                            careemDeepLinkDestinationClicked = true
+                            careemPickupPhaseComplete = false  // Need to confirm pickup next
+                            nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                            return true
+                        }
+                    }
+                    nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                }
+            }
+
+            // Fallback: click any suggestion with distance indicator
+            val distancePatterns = allText.filter { text ->
+                text.contains("كيلومتر") || text.contains("km") || text.contains("متر")
+            }
+            for (distText in distancePatterns) {
+                val nodes = rootNode.findAccessibilityNodeInfosByText(distText)
+                for (node in nodes) {
+                    if (careemGestureClick(node) || smartClick(node)) {
+                        Log.i(TAG, "🚖 [DEEP LINK] ✓ Clicked suggestion by distance: '$distText'")
+                        careemDeepLinkDestinationClicked = true
+                        nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                        return true
+                    }
+                }
+                nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+            }
+
+            Log.w(TAG, "🚖 [DEEP LINK] Could not click destination suggestion, will retry...")
+            return false
+        }
+
+        // DEEP LINK MODE: After clicking destination, handle pickup confirmation screen
+        if (careemDeepLinkModeDetected && careemDeepLinkDestinationClicked) {
+            Log.i(TAG, "🚖 [DEEP LINK] Checking for pickup confirmation screen...")
+
+            val isPickupConfirmScreen = allText.any { text ->
+                normalizedContains(text, "تفاصيل نقطة الإنطلاق") ||
+                normalizedContains(text, "تفاصيل نقطة الانطلاق") ||
+                normalizedContains(text, "Pickup details") ||
+                normalizedContains(text, "تأكيد الانطلاق") ||
+                normalizedContains(text, "تأكيد الإنطلاق") ||
+                normalizedContains(text, "Confirm pickup")
+            }
+
+            if (isPickupConfirmScreen) {
+                Log.i(TAG, "🚖 [DEEP LINK] On pickup confirmation screen - clicking confirm button...")
+
+                val confirmTexts = listOf("تأكيد الانطلاق", "تأكيد الإنطلاق", "Confirm pickup", "تأكيد")
+                for (confirmText in confirmTexts) {
+                    val nodes = rootNode.findAccessibilityNodeInfosByText(confirmText)
+                    for (node in nodes) {
+                        if (careemGestureClick(node) || smartClick(node)) {
+                            Log.i(TAG, "🚖 [DEEP LINK] ✓ Clicked '$confirmText' - waiting for prices...")
+                            careemPickupPhaseComplete = true
+                            careemPickupSuggestionClicked = true
+                            nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                            return true
+                        }
+                    }
+                    nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                }
+            }
+
+            // If not on pickup confirm screen yet, wait
+            Log.i(TAG, "🚖 [DEEP LINK] Waiting for pickup confirmation screen...")
+            return false
+        }
+
+        // ================================================================
+        // FALLBACK: Original PICKUP FIRST flow (when deep link didn't work)
+        // ================================================================
 
         // STEP 1: Check if we're on Careem HOME screen (need to click "سيارة" first)
         // Use normalized string matching to handle invisible Unicode characters (RTL marks, zero-width spaces)
