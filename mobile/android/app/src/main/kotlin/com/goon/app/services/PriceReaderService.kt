@@ -486,8 +486,8 @@ class PriceReaderService : AccessibilityService() {
                         if (found) {
                             // Check if deep link mode completed pickup phase
                             if (careemDeepLinkModeDetected && careemPickupPhaseComplete) {
-                                Log.i(TAG, "🤖 ✓✓✓ [Careem] Deep link flow complete! Going directly to READING_PRICES...")
-                                automationState = AutomationState.READING_PRICES
+                                Log.i(TAG, "🤖 ✓✓✓ [Careem] Deep link flow complete! Going directly to WAITING_FOR_PRICE...")
+                                automationState = AutomationState.WAITING_FOR_PRICE
                             } else {
                                 Log.i(TAG, "🤖 ✓✓✓ [Careem] Found pickup field! Transitioning to ENTERING_PICKUP...")
                                 automationState = AutomationState.ENTERING_PICKUP
