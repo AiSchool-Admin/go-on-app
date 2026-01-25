@@ -2604,8 +2604,7 @@ class PriceReaderService : AccessibilityService() {
                             else -> {
                                 Log.i(TAG, "🚖 [DEEP LINK] Trying ACTION_CLICK for: $address")
                                 val directClick = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                                val parentClick = findClickableParent(node)?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false
-                                directClick || parentClick || careemGestureClick(node)
+                                directClick || careemGestureClick(node)
                             }
                         }
                         if (clickSuccess) {
@@ -2632,8 +2631,7 @@ class PriceReaderService : AccessibilityService() {
                         1 -> smartClick(node) || careemGestureClick(node)
                         else -> {
                             val directClick = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                            val parentClick = findClickableParent(node)?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false
-                            directClick || parentClick || careemGestureClick(node)
+                            directClick || careemGestureClick(node)
                         }
                     }
                     if (clickSuccess) {
