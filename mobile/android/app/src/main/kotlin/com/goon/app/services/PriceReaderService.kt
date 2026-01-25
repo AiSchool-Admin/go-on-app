@@ -2710,103 +2710,44 @@ class PriceReaderService : AccessibilityService() {
             }
 
             if (isPickupScreen) {
-                // Check if we already entered pickup
-                if (!careemPickupEntered) {
-                    Log.i(TAG, "🚖 [DEEP LINK] On pickup screen - need to enter pickup address...")
+                Log.i(TAG, "🚖 [DEEP LINK] On pickup screen!")
 
-                    // Strategy 0: Click on "كريم لا يعمل في هذه المنطقة" (Careem doesn't work in this area)
-                    // or any pickup location indicator to open the search screen
-                    if (!careemDeepLinkPickupSearchOpened) {
-                        val pickupClickTexts = listOf(
-                            "كريم لا يعمل في هذه المنطقة",
-                            "Careem is not available in this area",
-                            "تعديل",  // Edit
-                            "Edit",
-                            "Change pickup",
-                            "تغيير نقطة الانطلاق"
-                        )
-                        for (clickText in pickupClickTexts) {
-                            val nodes = rootNode.findAccessibilityNodeInfosByText(clickText)
-                            for (node in nodes) {
-                                if (careemGestureClick(node) || smartClick(node)) {
-                                    Log.i(TAG, "🚖 [DEEP LINK] Clicked '$clickText' to open pickup search")
-                                    careemDeepLinkPickupSearchOpened = true
-                                    nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
-                                    return false // Wait for search screen
-                                }
-                            }
+                // SIMPLIFIED: Just click "تأكيد الانطلاق" (Confirm pickup) directly
+                // We can't change pickup location programmatically (Careem uses GPS)
+                // If location is valid, it will proceed. If not, it will fail.
+                val confirmTexts = listOf(
+                    "تأكيد الانطلاق",
+                    "تأكيد الإنطلاق",
+                    "Confirm pickup",
+                    "تأكيد",
+                    "Confirm"
+                )
+                for (confirmText in confirmTexts) {
+                    val nodes = rootNode.findAccessibilityNodeInfosByText(confirmText)
+                    for (node in nodes) {
+                        // Try parent click first (worked for destination)
+                        var clickSuccess = false
+                        val parent = node.parent
+                        if (parent != null && parent.isClickable) {
+                            clickSuccess = parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                            Log.i(TAG, "🚖 [DEEP LINK] Tried parent click on '$confirmText': $clickSuccess")
+                        }
+                        if (!clickSuccess) {
+                            clickSuccess = careemGestureClick(node) || smartClick(node)
+                        }
+                        if (clickSuccess) {
+                            Log.i(TAG, "🚖 [DEEP LINK] ✓ Clicked '$confirmText' - waiting for prices...")
+                            careemPickupPhaseComplete = true
                             nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
+                            return true  // Move to price reading state
                         }
                     }
-
-                    // Strategy 1: Find and click the coordinate field to edit it
-                    if (!careemDeepLinkPickupSearchOpened) {
-                        val coordinatePattern = allText.find { text ->
-                            text.matches(Regex(".*\\[\\d+\\.\\d+.*,.*\\d+\\.\\d+.*\\].*"))
-                        }
-                        if (coordinatePattern != null) {
-                            val nodes = rootNode.findAccessibilityNodeInfosByText(coordinatePattern)
-                            for (node in nodes) {
-                                if (smartClick(node) || careemGestureClick(node)) {
-                                    Log.i(TAG, "🚖 [DEEP LINK] Clicked coordinate field to edit pickup")
-                                    careemDeepLinkPickupSearchOpened = true
-                                    nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
-                                    return false // Wait for edit screen
-                                }
-                            }
-                            nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
-                        }
-                    }
-
-                    // Strategy 2: Find search/edit field on the pickup screen
-                    val editTexts = mutableListOf<AccessibilityNodeInfo>()
-                    findAllEditTexts(rootNode, editTexts)
-
-                    if (editTexts.isNotEmpty()) {
-                        val editText = editTexts.first()
-
-                        // Clear existing text
-                        val clearArgs = android.os.Bundle()
-                        clearArgs.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "")
-                        editText.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, clearArgs)
-                        Thread.sleep(100)
-
-                        // Enter pickup address
-                        val textArgs = android.os.Bundle()
-                        textArgs.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, pickupAddress)
-                        if (editText.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, textArgs)) {
-                            Log.i(TAG, "🚖 [DEEP LINK] ✓ Entered pickup address: $pickupAddress")
-                            careemPickupEntered = true
-                            editTexts.forEach { try { it.recycle() } catch (e: Exception) {} }
-                            return false // Wait for suggestions
-                        }
-                        editTexts.forEach { try { it.recycle() } catch (e: Exception) {} }
-                    }
-
-                    // Strategy 3: Look for a search icon or "بحث" button to open search
-                    val searchTexts = listOf("بحث", "Search", "تغيير", "Change", "اختر موقع", "Select location")
-                    for (searchText in searchTexts) {
-                        val nodes = rootNode.findAccessibilityNodeInfosByText(searchText)
-                        for (node in nodes) {
-                            if (smartClick(node) || careemGestureClick(node)) {
-                                Log.i(TAG, "🚖 [DEEP LINK] Clicked '$searchText' to open pickup search")
-                                nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
-                                return false // Wait for search screen
-                            }
-                        }
-                        nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
-                    }
-
-                    // Strategy 4: Click on the map area to change location (fallback)
-                    Log.w(TAG, "🚖 [DEEP LINK] Could not find pickup edit field, trying map click...")
+                    nodes.forEach { try { it.recycle() } catch (e: Exception) {} }
                 }
 
-                // If pickup entered, look for suggestions and click
-                if (careemPickupEntered && !careemPickupSuggestionClicked) {
-                    Log.i(TAG, "🚖 [DEEP LINK] Looking for pickup suggestions...")
-
-                    // Look for suggestion that matches pickup address
-                    val pickupKeywords = pickupAddress.split(" ").filter { it.length > 3 }
+                // If we can't find confirm button, log and wait
+                Log.w(TAG, "🚖 [DEEP LINK] Could not find confirm button, waiting...")
+            }
                     for (keyword in pickupKeywords) {
                         val nodes = rootNode.findAccessibilityNodeInfosByText(keyword)
                         for (node in nodes) {
