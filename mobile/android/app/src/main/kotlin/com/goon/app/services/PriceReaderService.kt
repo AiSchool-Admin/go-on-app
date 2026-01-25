@@ -2790,7 +2790,7 @@ class PriceReaderService : AccessibilityService() {
                         val coordNodes = rootNode.findAccessibilityNodeInfosByText(coordPattern)
                         for (node in coordNodes) {
                             Log.i(TAG, "🚖 [DEEP LINK] Clicking on coordinates: $coordPattern")
-                            if (findAndClickParent(node) || careemGestureClick(node) || smartClick(node)) {
+                            if (clickNodeOrParent(node) || careemGestureClick(node) || smartClick(node)) {
                                 Log.i(TAG, "🚖 [DEEP LINK] ✓ Clicked coordinates field!")
                                 coordNodes.forEach { try { it.recycle() } catch (e: Exception) {} }
                                 // Wait for search screen to open
@@ -2811,7 +2811,7 @@ class PriceReaderService : AccessibilityService() {
                         val detailNodes = rootNode.findAccessibilityNodeInfosByText(detailText)
                         for (node in detailNodes) {
                             Log.i(TAG, "🚖 [DEEP LINK] Clicking on pickup details: $detailText")
-                            if (findAndClickParent(node) || careemGestureClick(node)) {
+                            if (clickNodeOrParent(node) || careemGestureClick(node)) {
                                 Log.i(TAG, "🚖 [DEEP LINK] ✓ Clicked pickup details!")
                                 detailNodes.forEach { try { it.recycle() } catch (e: Exception) {} }
                                 Thread.sleep(500)
