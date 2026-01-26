@@ -573,31 +573,47 @@ class MainActivity : FlutterActivity() {
 
     /**
      * Open Careem using explicit component intent to Geo deeplink activities
-     * Tries both PickupGeoDeeplinkActivity and DropOffGeoDeeplinkActivity
+     * Tries multiple activities and URI formats to find one that sets location directly
      */
     private fun openCareemWithExplicitIntent(lat: Double, lng: Double): Boolean {
         // List of Careem activities to try (Pickup first, then DropOff)
         val careemActivities = listOf(
-            "com.careem.acma.booking.PickupGeoDeeplinkActivity",   // Try pickup first!
+            "com.careem.acma.booking.PickupGeoDeeplinkActivity",
             "com.careem.acma.booking.DropOffGeoDeeplinkActivity",
-            "com.careem.acma.booking.GeoDeeplinkActivity",         // Generic geo activity
-            "com.careem.acma.deeplink.DeeplinkActivity"            // Generic deeplink
+            "com.careem.acma.booking.GeoDeeplinkActivity",
+            "com.careem.acma.deeplink.DeeplinkActivity"
+        )
+
+        // Multiple URI formats to try - some may set location directly without search
+        val uriFormats = listOf(
+            "geo:$lat,$lng",                              // Direct coordinates, no search
+            "geo:$lat,$lng?z=17",                         // With zoom level
+            "geo:0,0?q=$lat,$lng",                        // Coordinates as query (current)
+            "geo:$lat,$lng?q=$lat,$lng"                   // Both center and query
         )
 
         for (activity in careemActivities) {
-            try {
-                val intent = Intent(Intent.ACTION_VIEW).apply {
-                    setClassName("com.careem.acma", activity)
-                    // Format: geo:LAT,LNG?q=LAT,LNG - centers map AND pre-fills search
-                    data = android.net.Uri.parse("geo:$lat,$lng?q=$lat,$lng")
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                }
+            for (uriFormat in uriFormats) {
+                try {
+                    val intent = Intent(Intent.ACTION_VIEW).apply {
+                        setClassName("com.careem.acma", activity)
+                        data = android.net.Uri.parse(uriFormat)
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                        // Also pass coordinates as extras (some apps read from extras)
+                        putExtra("lat", lat)
+                        putExtra("lng", lng)
+                        putExtra("latitude", lat)
+                        putExtra("longitude", lng)
+                        putExtra("pickup_lat", lat)
+                        putExtra("pickup_lng", lng)
+                    }
 
-                startActivity(intent)
-                Log.i(TAG, "✓ Opened Careem $activity with coords: $lat,$lng")
-                return true
-            } catch (e: Exception) {
-                Log.w(TAG, "✗ Failed to open $activity: ${e.message}")
+                    startActivity(intent)
+                    Log.i(TAG, "✓ Opened Careem $activity with URI: $uriFormat")
+                    return true
+                } catch (e: Exception) {
+                    Log.d(TAG, "✗ Failed: $activity with $uriFormat - ${e.message}")
+                }
             }
         }
 
