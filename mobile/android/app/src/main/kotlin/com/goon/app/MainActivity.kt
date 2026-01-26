@@ -436,11 +436,38 @@ class MainActivity : FlutterActivity() {
                     openDeepLink(deepLink, packageName)
                 }
                 PriceReaderService.CAREEM_PACKAGE -> {
-                    // OPTIMIZED: Use DropOffGeoDeeplinkActivity to open directly to destination picker
-                    // This skips home screen and "سيارة" button - goes straight to ride booking!
-                    // Format: geo:0,0?q=LAT,LNG opens location picker with coordinates pre-searched
-                    val success = openCareemWithExplicitIntent(dropoffLat, dropoffLng)
-                    if (!success) openApp(packageName) else true
+                    // Try multiple Careem deep link formats to find one that specifies BOTH pickup AND dropoff
+                    // This bypasses the GPS location issue that causes "كريم لا يعمل في هذه المنطقة"
+                    Log.i(TAG, "🚖 Trying Careem deep links with pickup($pickupLat,$pickupLng) and dropoff($dropoffLat,$dropoffLng)")
+                    val success = tryMultipleDeepLinks(packageName, listOf(
+                        // Format 1: Full booking with pickup AND dropoff
+                        "careem://booking?pickup_lat=$pickupLat&pickup_lng=$pickupLng" +
+                            "&pickup_address=${android.net.Uri.encode(pickupAddress)}" +
+                            "&dropoff_lat=$dropoffLat&dropoff_lng=$dropoffLng" +
+                            "&dropoff_address=${android.net.Uri.encode(dropoffAddress)}",
+                        // Format 2: Alternative booking format
+                        "careem://booking?from_lat=$pickupLat&from_lng=$pickupLng" +
+                            "&to_lat=$dropoffLat&to_lng=$dropoffLng",
+                        // Format 3: Ride format
+                        "careem://ride?pickup_lat=$pickupLat&pickup_lng=$pickupLng" +
+                            "&dropoff_lat=$dropoffLat&dropoff_lng=$dropoffLng",
+                        // Format 4: Order format (like Uber)
+                        "careem://order?pickup[latitude]=$pickupLat&pickup[longitude]=$pickupLng" +
+                            "&dropoff[latitude]=$dropoffLat&dropoff[longitude]=$dropoffLng",
+                        // Format 5: HTTPS universal link
+                        "https://go.careem.com/booking?pickup_lat=$pickupLat&pickup_lng=$pickupLng" +
+                            "&dropoff_lat=$dropoffLat&dropoff_lng=$dropoffLng",
+                        // Format 6: Alternative HTTPS
+                        "https://www.careem.com/ride?from=$pickupLat,$pickupLng&to=$dropoffLat,$dropoffLng",
+                        // Format 7: Geo intent with PICKUP location centered (not dropoff)
+                        "geo:$pickupLat,$pickupLng?q=$pickupLat,$pickupLng"
+                    ))
+                    // If all deep links fail, try DropOffGeoDeeplinkActivity as fallback
+                    if (!success) {
+                        Log.i(TAG, "🚖 Deep links failed, trying DropOffGeoDeeplinkActivity...")
+                        val explicitSuccess = openCareemWithExplicitIntent(dropoffLat, dropoffLng)
+                        if (!explicitSuccess) openApp(packageName) else true
+                    } else true
                 }
                 PriceReaderService.INDRIVER_PACKAGE -> {
                     // InDriver: Try geo intent then regular open
@@ -495,7 +522,8 @@ class MainActivity : FlutterActivity() {
      * Try multiple deep link formats until one works
      */
     private fun tryMultipleDeepLinks(packageName: String, deepLinks: List<String>): Boolean {
-        for (deepLink in deepLinks) {
+        Log.i(TAG, "🔗 Trying ${deepLinks.size} deep link formats for $packageName")
+        for ((index, deepLink) in deepLinks.withIndex()) {
             try {
                 val uri = android.net.Uri.parse(deepLink)
                 val intent = Intent(Intent.ACTION_VIEW, uri)
@@ -509,15 +537,19 @@ class MainActivity : FlutterActivity() {
 
                 intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
 
-                if (intent.resolveActivity(packageManager) != null) {
+                val canResolve = intent.resolveActivity(packageManager) != null
+                Log.i(TAG, "🔗 [${index + 1}/${deepLinks.size}] ${if (canResolve) "✓ CAN" else "✗ CANNOT"} resolve: ${deepLink.take(80)}...")
+
+                if (canResolve) {
                     startActivity(intent)
-                    Log.i(TAG, "✓ Opened $packageName with: $deepLink")
+                    Log.i(TAG, "✓ SUCCESS! Opened $packageName with deep link format #${index + 1}")
                     return true
                 }
             } catch (e: Exception) {
-                Log.d(TAG, "Deep link failed: $deepLink - ${e.message}")
+                Log.w(TAG, "🔗 [${index + 1}/${deepLinks.size}] EXCEPTION: ${e.message}")
             }
         }
+        Log.w(TAG, "🔗 All ${deepLinks.size} deep link formats failed for $packageName")
         return false
     }
 
