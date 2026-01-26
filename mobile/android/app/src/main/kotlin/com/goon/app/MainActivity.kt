@@ -436,36 +436,31 @@ class MainActivity : FlutterActivity() {
                     openDeepLink(deepLink, packageName)
                 }
                 PriceReaderService.CAREEM_PACKAGE -> {
-                    // Try multiple Careem deep link formats to find one that specifies BOTH pickup AND dropoff
-                    // This bypasses the GPS location issue that causes "كريم لا يعمل في هذه المنطقة"
-                    Log.i(TAG, "🚖 Trying Careem deep links with pickup($pickupLat,$pickupLng) and dropoff($dropoffLat,$dropoffLng)")
+                    // Try multiple Careem deep link formats using GPS COORDINATES ONLY (no text addresses)
+                    // This is simpler and more reliable
+                    Log.i(TAG, "🚖 Trying Careem deep links with GPS coordinates only")
+                    Log.i(TAG, "🚖 Pickup: $pickupLat,$pickupLng | Dropoff: $dropoffLat,$dropoffLng")
                     val success = tryMultipleDeepLinks(packageName, listOf(
-                        // Format 1: Full booking with pickup AND dropoff
+                        // Format 1: Simple booking with coordinates only
                         "careem://booking?pickup_lat=$pickupLat&pickup_lng=$pickupLng" +
-                            "&pickup_address=${android.net.Uri.encode(pickupAddress)}" +
-                            "&dropoff_lat=$dropoffLat&dropoff_lng=$dropoffLng" +
-                            "&dropoff_address=${android.net.Uri.encode(dropoffAddress)}",
-                        // Format 2: Alternative booking format
+                            "&dropoff_lat=$dropoffLat&dropoff_lng=$dropoffLng",
+                        // Format 2: Alternative with from/to
                         "careem://booking?from_lat=$pickupLat&from_lng=$pickupLng" +
                             "&to_lat=$dropoffLat&to_lng=$dropoffLng",
-                        // Format 3: Ride format
+                        // Format 3: Ride with coordinates
                         "careem://ride?pickup_lat=$pickupLat&pickup_lng=$pickupLng" +
                             "&dropoff_lat=$dropoffLat&dropoff_lng=$dropoffLng",
-                        // Format 4: Order format (like Uber)
-                        "careem://order?pickup[latitude]=$pickupLat&pickup[longitude]=$pickupLng" +
-                            "&dropoff[latitude]=$dropoffLat&dropoff[longitude]=$dropoffLng",
-                        // Format 5: HTTPS universal link
-                        "https://go.careem.com/booking?pickup_lat=$pickupLat&pickup_lng=$pickupLng" +
-                            "&dropoff_lat=$dropoffLat&dropoff_lng=$dropoffLng",
-                        // Format 6: Alternative HTTPS
-                        "https://www.careem.com/ride?from=$pickupLat,$pickupLng&to=$dropoffLat,$dropoffLng",
-                        // Format 7: Geo intent with PICKUP location centered (not dropoff)
-                        "geo:$pickupLat,$pickupLng?q=$pickupLat,$pickupLng"
+                        // Format 4: Just coordinates as query
+                        "careem://ride?pickup=$pickupLat,$pickupLng&dropoff=$dropoffLat,$dropoffLng",
+                        // Format 5: Geo intent centered on PICKUP location
+                        "geo:$pickupLat,$pickupLng?q=$pickupLat,$pickupLng",
+                        // Format 6: Geo intent with dropoff as query but pickup as center
+                        "geo:$pickupLat,$pickupLng?q=$dropoffLat,$dropoffLng"
                     ))
-                    // If all deep links fail, try DropOffGeoDeeplinkActivity as fallback
+                    // If all deep links fail, try DropOffGeoDeeplinkActivity with PICKUP coords (not dropoff!)
                     if (!success) {
-                        Log.i(TAG, "🚖 Deep links failed, trying DropOffGeoDeeplinkActivity...")
-                        val explicitSuccess = openCareemWithExplicitIntent(dropoffLat, dropoffLng)
+                        Log.i(TAG, "🚖 Deep links failed, trying explicit intent with PICKUP coordinates...")
+                        val explicitSuccess = openCareemWithExplicitIntent(pickupLat, pickupLng)
                         if (!explicitSuccess) openApp(packageName) else true
                     } else true
                 }
@@ -577,34 +572,37 @@ class MainActivity : FlutterActivity() {
     }
 
     /**
-     * Open Careem using explicit component intent to DropOffGeoDeeplinkActivity
-     * This opens directly to the destination picker screen with coordinates pre-searched,
-     * skipping the home screen and "سيارة" button click entirely!
-     *
-     * Flow: Opens destination picker → User clicks suggestion → Pickup screen → Prices
-     * (Cuts 12 steps down to ~4 steps)
+     * Open Careem using explicit component intent to Geo deeplink activities
+     * Tries both PickupGeoDeeplinkActivity and DropOffGeoDeeplinkActivity
      */
-    private fun openCareemWithExplicitIntent(dropoffLat: Double, dropoffLng: Double): Boolean {
-        return try {
-            val intent = Intent(Intent.ACTION_VIEW).apply {
-                // Use explicit component to open DropOffGeoDeeplinkActivity directly
-                setClassName(
-                    "com.careem.acma",
-                    "com.careem.acma.booking.DropOffGeoDeeplinkActivity"
-                )
-                // Format: geo:0,0?q=LAT,LNG - this pre-fills coordinates in search
-                data = android.net.Uri.parse("geo:0,0?q=$dropoffLat,$dropoffLng")
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            }
+    private fun openCareemWithExplicitIntent(lat: Double, lng: Double): Boolean {
+        // List of Careem activities to try (Pickup first, then DropOff)
+        val careemActivities = listOf(
+            "com.careem.acma.booking.PickupGeoDeeplinkActivity",   // Try pickup first!
+            "com.careem.acma.booking.DropOffGeoDeeplinkActivity",
+            "com.careem.acma.booking.GeoDeeplinkActivity",         // Generic geo activity
+            "com.careem.acma.deeplink.DeeplinkActivity"            // Generic deeplink
+        )
 
-            startActivity(intent)
-            Log.i(TAG, "✓ Opened Careem DropOffGeoDeeplinkActivity with coords: $dropoffLat,$dropoffLng")
-            true
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to open Careem with explicit intent: ${e.message}")
-            // Fallback to regular app open
-            false
+        for (activity in careemActivities) {
+            try {
+                val intent = Intent(Intent.ACTION_VIEW).apply {
+                    setClassName("com.careem.acma", activity)
+                    // Format: geo:LAT,LNG?q=LAT,LNG - centers map AND pre-fills search
+                    data = android.net.Uri.parse("geo:$lat,$lng?q=$lat,$lng")
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                }
+
+                startActivity(intent)
+                Log.i(TAG, "✓ Opened Careem $activity with coords: $lat,$lng")
+                return true
+            } catch (e: Exception) {
+                Log.w(TAG, "✗ Failed to open $activity: ${e.message}")
+            }
         }
+
+        Log.e(TAG, "All Careem explicit intents failed")
+        return false
     }
 
     /**
