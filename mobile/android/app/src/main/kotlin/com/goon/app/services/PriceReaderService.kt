@@ -2677,7 +2677,7 @@ class PriceReaderService : AccessibilityService() {
 
         // ================================================================
         // DEEP LINK OPTIMIZATION: Check if we're on destination picker screen
-        // (opened via DropOffGeoDeeplinkActivity with coordinates pre-searched)
+        // (opened via deep link - with coordinates OR text in search)
         // ================================================================
         if (!careemDeepLinkModeDetected) {
             val hasDestinationHeader = allText.any { text ->
@@ -2686,6 +2686,10 @@ class PriceReaderService : AccessibilityService() {
             val hasCoordinatesInSearch = allText.any { text ->
                 text.matches(Regex(".*\\d+\\.\\d+.*,.*\\d+\\.\\d+.*"))
             }
+            // Also detect when there are suggestions with distance indicators (كم, km)
+            val hasSuggestionsWithDistance = allText.any { text ->
+                text.matches(Regex(".*\\d+\\s*(كم|كيلومتر|km|متر).*"))
+            }
             val notOnHomeScreen = !allText.any { text ->
                 normalizedContains(text, "حوّل محلياً") ||
                 normalizedContains(text, "طعام") ||
@@ -2693,10 +2697,14 @@ class PriceReaderService : AccessibilityService() {
                 normalizedContains(text, "Bike")
             }
 
-            if (hasDestinationHeader && hasCoordinatesInSearch && notOnHomeScreen) {
+            // Detect deep link mode if:
+            // 1. Has destination header + coordinates in search, OR
+            // 2. Has destination header + suggestions with distance (means search was done)
+            if (hasDestinationHeader && notOnHomeScreen && (hasCoordinatesInSearch || hasSuggestionsWithDistance)) {
                 careemDeepLinkModeDetected = true
-                Log.i(TAG, "🚖 ✨ DEEP LINK MODE DETECTED! Destination picker screen with coordinates pre-searched")
-                Log.i(TAG, "🚖 ✨ Skipping PICKUP FIRST flow - will click destination suggestion directly")
+                Log.i(TAG, "🚖 ✨ DEEP LINK MODE DETECTED! Destination picker with suggestions")
+                Log.i(TAG, "🚖 ✨ hasCoords=$hasCoordinatesInSearch, hasSuggestions=$hasSuggestionsWithDistance")
+                Log.i(TAG, "🚖 ✨ Will click destination suggestion directly")
             }
         }
 
@@ -2711,11 +2719,18 @@ class PriceReaderService : AccessibilityService() {
                 !normalizedContains(text, "Where to") &&
                 !normalizedContains(text, "أدخل وجهتك") &&
                 !normalizedContains(text, "تخطي") &&
+                !normalizedContains(text, "Skip") &&
+                !text.startsWith("burgerMenu") &&
                 (text.contains("شارع") || text.contains("ش.") ||
                  text.contains("ميدان") || text.contains("منطقة") ||
-                 text.contains("حي") || text.contains("Egypt") ||
-                 text.contains("Cairo") || text.contains("Obour") ||
-                 text.contains("كيلومتر") || text.contains("km") ||
+                 text.contains("حي") || text.contains("شركة") ||  // Added شركة (company)
+                 text.contains("مدرسة") || text.contains("مستشفى") ||  // School, Hospital
+                 text.contains("Egypt") || text.contains("مصر") ||
+                 text.contains("Cairo") || text.contains("القاهرة") ||
+                 text.contains("Obour") || text.contains("العبور") ||
+                 text.contains("كيلومتر") || text.contains("كم") ||  // Added كم
+                 text.contains("km") || text.contains("متر") ||
+                 text.contains("Street") || text.contains("Road") ||
                  (text.contains(",") && text.length > 15 && !text.matches(Regex(".*\\d+\\.\\d+.*,.*\\d+\\.\\d+.*"))))
             }
 
@@ -2785,9 +2800,12 @@ class PriceReaderService : AccessibilityService() {
                 }
             }
 
-            // Fallback: click any suggestion with distance indicator
+            // Fallback: click any suggestion with distance indicator (كم = km in Arabic)
             val distancePatterns = allText.filter { text ->
-                text.contains("كيلومتر") || text.contains("km") || text.contains("متر")
+                text.length > 5 &&
+                (text.contains("كيلومتر") || text.contains("كم") ||
+                 text.contains("km") || text.contains("متر") ||
+                 text.matches(Regex(".*\\d+\\s*كم.*")))  // Match "X كم" pattern
             }
             for (distText in distancePatterns) {
                 val nodes = rootNode.findAccessibilityNodeInfosByText(distText)
