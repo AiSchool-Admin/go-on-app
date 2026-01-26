@@ -14,6 +14,7 @@ const multer = require('multer');
 const ocrService = require('./services/ocr/ocrService');
 const whatsappService = require('./services/whatsapp/whatsappService');
 const notificationService = require('./services/notifications/notificationService');
+const pricingService = require('./services/pricing/pricingService');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -40,6 +41,9 @@ app.use(express.json());
     // Initialize OCR service (lazy - on first use)
     console.log('✓ OCR service ready (lazy initialization)');
 
+    // Initialize pricing service
+    await pricingService.initialize();
+
     // Initialize WhatsApp service if credentials are available
     if (process.env.WHATSAPP_ENABLED === 'true') {
       await whatsappService.initialize();
@@ -63,6 +67,7 @@ app.get('/health', (req, res) => {
       ocr: 'ready',
       whatsapp: whatsappService.isReady ? 'connected' : 'disconnected',
       notifications: notificationService.isInitialized ? 'ready' : 'disabled',
+      pricing: pricingService.isInitialized ? 'ready' : 'initializing',
     },
   });
 });
@@ -73,6 +78,13 @@ app.get('/api', (req, res) => {
     message: 'GO-ON API',
     endpoints: {
       health: '/health',
+      pricing: {
+        getPrices: 'POST /api/pricing/prices',
+        saveCache: 'POST /api/pricing/cache',
+        getConfig: 'GET /api/pricing/config',
+        getApps: 'GET /api/pricing/apps',
+        getEstimated: 'POST /api/pricing/estimated',
+      },
       ocr: {
         extract: 'POST /api/ocr/extract-prices',
         batch: 'POST /api/ocr/batch-extract',
@@ -343,6 +355,156 @@ app.post('/api/notifications/promotion', async (req, res) => {
     });
   } catch (error) {
     console.error('Promotion notification error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ==================== Pricing Routes ====================
+
+/**
+ * Get prices for a route
+ * Supports: server, client, estimated, auto modes
+ */
+app.post('/api/pricing/prices', async (req, res) => {
+  try {
+    const {
+      originLat,
+      originLng,
+      destLat,
+      destLng,
+      originAddress,
+      destAddress,
+      mode,
+      forceRefresh,
+    } = req.body;
+
+    // Validate required fields
+    if (!originLat || !originLng || !destLat || !destLng) {
+      return res.status(400).json({
+        error: 'Missing required coordinates',
+        required: ['originLat', 'originLng', 'destLat', 'destLng'],
+      });
+    }
+
+    const result = await pricingService.getPrices({
+      originLat: parseFloat(originLat),
+      originLng: parseFloat(originLng),
+      destLat: parseFloat(destLat),
+      destLng: parseFloat(destLng),
+      originAddress,
+      destAddress,
+      mode: mode || 'auto',
+      forceRefresh: forceRefresh === true,
+    });
+
+    res.json(result);
+  } catch (error) {
+    console.error('Pricing error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Save prices to cache (from client or emulator)
+ */
+app.post('/api/pricing/cache', async (req, res) => {
+  try {
+    const {
+      originLat,
+      originLng,
+      destLat,
+      destLng,
+      originAddress,
+      destAddress,
+      distanceKm,
+      estimatedMinutes,
+      prices,
+      fetchSource,
+      fetchDurationMs,
+      requestId,
+      userId,
+    } = req.body;
+
+    // Validate required fields
+    if (!originLat || !originLng || !destLat || !destLng || !prices) {
+      return res.status(400).json({
+        error: 'Missing required fields',
+        required: ['originLat', 'originLng', 'destLat', 'destLng', 'prices'],
+      });
+    }
+
+    const result = await pricingService.savePricesToCache({
+      originLat: parseFloat(originLat),
+      originLng: parseFloat(originLng),
+      destLat: parseFloat(destLat),
+      destLng: parseFloat(destLng),
+      originAddress,
+      destAddress,
+      distanceKm: distanceKm ? parseFloat(distanceKm) : null,
+      estimatedMinutes: estimatedMinutes ? parseInt(estimatedMinutes) : null,
+      prices,
+      fetchSource: fetchSource || 'client',
+      fetchDurationMs: fetchDurationMs ? parseInt(fetchDurationMs) : null,
+      requestId,
+      userId,
+    });
+
+    res.json(result);
+  } catch (error) {
+    console.error('Cache save error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Get estimated prices only (fast, no real fetching)
+ */
+app.post('/api/pricing/estimated', async (req, res) => {
+  try {
+    const { originLat, originLng, destLat, destLng } = req.body;
+
+    if (!originLat || !originLng || !destLat || !destLng) {
+      return res.status(400).json({
+        error: 'Missing required coordinates',
+      });
+    }
+
+    const result = await pricingService.getEstimatedPrices(
+      parseFloat(originLat),
+      parseFloat(originLng),
+      parseFloat(destLat),
+      parseFloat(destLng)
+    );
+
+    res.json(result);
+  } catch (error) {
+    console.error('Estimated prices error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Get pricing configuration
+ */
+app.get('/api/pricing/config', async (req, res) => {
+  try {
+    const config = await pricingService.getConfig();
+    res.json({ success: true, config });
+  } catch (error) {
+    console.error('Config error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Get list of supported apps
+ */
+app.get('/api/pricing/apps', (req, res) => {
+  try {
+    const apps = pricingService.getAppList();
+    res.json({ success: true, apps });
+  } catch (error) {
+    console.error('Apps list error:', error);
     res.status(500).json({ error: error.message });
   }
 });

@@ -5,6 +5,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 import '../../../core/services/supabase_service.dart';
 import '../../../core/services/native_services.dart';
+import '../../../core/services/pricing_strategy_service.dart';
 import '../models/driver_model.dart';
 import '../models/price_option.dart';
 import 'egypt_pricing_service.dart';
@@ -13,8 +14,9 @@ import 'egypt_pricing_service.dart';
 class RideService {
   final SupabaseClient _client;
   final NativeServicesManager _nativeServices;
+  final PricingStrategyService _pricingStrategy;
 
-  RideService(this._client, this._nativeServices);
+  RideService(this._client, this._nativeServices, this._pricingStrategy);
 
   /// Calculate distance between two points in km
   double calculateDistance(LatLng origin, LatLng destination) {
@@ -112,8 +114,111 @@ class RideService {
   }
 
   /// Get price comparison for a route
-  /// Uses accurate Egyptian pricing formulas - INSTANT, NO APP AUTOMATION NEEDED
+  /// Supports dual mode: server-side or client-side pricing
   Future<List<PriceOption>> getPriceComparison({
+    required LatLng origin,
+    required LatLng destination,
+    String? originAddress,
+    String? destAddress,
+    PricingMode? mode,
+    Function(String app, String status)? onProgress,
+  }) async {
+    final distanceKm = calculateDistance(origin, destination);
+    final estimatedMinutes = calculateEstimatedMinutes(distanceKm);
+    final now = DateTime.now();
+
+    // Get nearby drivers for independent option
+    final nearbyDrivers = await findNearbyDrivers(userLocation: origin);
+
+    final options = <PriceOption>[];
+
+    // 1. GO-ON Independent Drivers (always from local calculation)
+    if (nearbyDrivers.isNotEmpty) {
+      final calculatedPrices = EgyptPricingService.getAllPrices(
+        distanceKm: distanceKm,
+        estimatedMinutes: estimatedMinutes,
+        tripTime: now,
+      );
+      final independentPrice = calculatedPrices['independent']!.price;
+      final bestDriver = nearbyDrivers.first;
+
+      options.add(PriceOption(
+        id: 'independent',
+        name: 'سائق مستقل',
+        provider: 'GO-ON',
+        price: independentPrice,
+        currency: 'EGP',
+        estimatedMinutes: estimatedMinutes,
+        etaMinutes: 5,
+        rating: bestDriver.rating,
+        totalRides: bestDriver.totalRides,
+        driverName: bestDriver.name,
+        driverPhone: bestDriver.phone,
+        vehicleInfo: '${bestDriver.vehicleMake} ${bestDriver.vehicleModel}',
+        vehicleColor: bestDriver.vehicleColor,
+        isAvailable: true,
+        isBestPrice: true,
+        isEstimate: false,
+      ));
+
+      _nativeServices.setGoonBestPrice(independentPrice);
+    }
+
+    // 2. Get prices for other apps using PricingStrategyService
+    final pricingResult = await _pricingStrategy.getPrices(
+      origin: origin,
+      destination: destination,
+      originAddress: originAddress,
+      destAddress: destAddress,
+      mode: mode,
+      onProgress: onProgress,
+    );
+
+    // Convert pricing result to PriceOptions
+    final isEstimated = pricingResult.source.contains('estimated');
+
+    // Map app names to display info
+    final appDisplayInfo = {
+      'uber': ('أوبر', 'Uber', 'UberX', 3),
+      'careem': ('كريم', 'Careem', 'Go', 4),
+      'indriver': ('إندرايف', 'InDriver', 'السعر المقترح', 4),
+      'bolt': ('بولت', 'Bolt', 'Bolt', 4),
+      'didi': ('ديدي', 'DiDi', 'DiDi Express', 5),
+    };
+
+    pricingResult.prices.forEach((appId, priceInfo) {
+      final displayInfo = appDisplayInfo[appId];
+      if (displayInfo != null) {
+        options.add(PriceOption(
+          id: appId,
+          name: displayInfo.$1,
+          provider: displayInfo.$2,
+          price: priceInfo.price,
+          currency: 'EGP',
+          estimatedMinutes: estimatedMinutes,
+          etaMinutes: priceInfo.eta ?? displayInfo.$4,
+          isAvailable: true,
+          isEstimate: isEstimated || priceInfo.isEstimated,
+          category: priceInfo.vehicleType ?? displayInfo.$3,
+          surgeMultiplier: priceInfo.surge ?? 1.0,
+        ));
+      }
+    });
+
+    // Sort by price
+    options.sort((a, b) => a.price.compareTo(b.price));
+
+    // Mark best price
+    if (options.isNotEmpty) {
+      options[0] = options[0].copyWith(isBestPrice: true);
+    }
+
+    return options;
+  }
+
+  /// Get price comparison using only estimated prices (fast, formula-based)
+  /// This is the legacy method that doesn't use server or client automation
+  Future<List<PriceOption>> getPriceComparisonEstimated({
     required LatLng origin,
     required LatLng destination,
   }) async {
@@ -125,7 +230,6 @@ class RideService {
     final nearbyDrivers = await findNearbyDrivers(userLocation: origin);
 
     // Get calculated prices using Egyptian pricing formulas
-    // These are based on real fare structures (base fare + per km + per minute)
     final calculatedPrices = EgyptPricingService.getAllPrices(
       distanceKm: distanceKm,
       estimatedMinutes: estimatedMinutes,
@@ -172,7 +276,7 @@ class RideService {
       estimatedMinutes: estimatedMinutes,
       etaMinutes: 5,
       isAvailable: true,
-      isEstimate: false,
+      isEstimate: true,
       category: 'DiDi Express',
       surgeMultiplier: didiPrice.surge,
     ));
@@ -188,7 +292,7 @@ class RideService {
       estimatedMinutes: estimatedMinutes,
       etaMinutes: 4,
       isAvailable: true,
-      isEstimate: false,
+      isEstimate: true,
       category: 'السعر المقترح',
       surgeMultiplier: indriverPrice.surge,
     ));
@@ -204,7 +308,7 @@ class RideService {
       estimatedMinutes: estimatedMinutes,
       etaMinutes: 4,
       isAvailable: true,
-      isEstimate: false,
+      isEstimate: true,
       category: 'Bolt',
       surgeMultiplier: boltPrice.surge,
     ));
@@ -220,7 +324,7 @@ class RideService {
       estimatedMinutes: estimatedMinutes,
       etaMinutes: 4,
       isAvailable: true,
-      isEstimate: false,
+      isEstimate: true,
       category: 'Go',
       surgeMultiplier: careemPrice.surge,
     ));
@@ -236,7 +340,7 @@ class RideService {
       estimatedMinutes: estimatedMinutes,
       etaMinutes: 3,
       isAvailable: true,
-      isEstimate: false,
+      isEstimate: true,
       category: 'UberX',
       surgeMultiplier: uberPrice.surge,
     ));
@@ -326,5 +430,6 @@ class RideService {
 final rideServiceProvider = Provider<RideService>((ref) {
   final client = ref.watch(supabaseClientProvider);
   final nativeServices = ref.watch(nativeServicesProvider);
-  return RideService(client, nativeServices);
+  final pricingStrategy = ref.watch(pricingStrategyProvider);
+  return RideService(client, nativeServices, pricingStrategy);
 });
